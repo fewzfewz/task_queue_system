@@ -23,6 +23,10 @@ type Queue interface {
 	Ack(ctx context.Context, jobID string) error
 
 	// Fail marks a job as failed, providing an error reason.
-	// The underlying implementation can use this to handle retries or dead-letter queues.
+	// The underlying implementation moves it to a dead-letter queue.
 	Fail(ctx context.Context, jobID string, err error) error
+
+	// GetFailedJobs retrieves all jobs that have permanently failed
+	// and are currently in the dead-letter queue.
+	GetFailedJobs(ctx context.Context) ([]*jobs.Job, error)
 }

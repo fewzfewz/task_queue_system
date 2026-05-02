@@ -28,6 +28,7 @@ const (
 type RedisQueue struct {
 	client   *redis.Client
 	queueKey string // allows multiple logical queues on one Redis instance
+	dlqKey   string // dead letter queue key
 }
 
 // New creates a new RedisQueue. The provided client must already be connected.
@@ -40,6 +41,7 @@ func New(client *redis.Client, queueName string) *RedisQueue {
 	return &RedisQueue{
 		client:   client,
 		queueKey: key,
+		dlqKey:   key + ":dead_letter",
 	}
 }
 
@@ -126,9 +128,8 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// Fail marks a job as failed. If it has remaining retries it is re-enqueued
-// with an incremented retry count; otherwise it is removed from the processing
-// hash and left for dead-letter handling (extendable).
+// Fail marks a job as permanently failed. It is removed from the processing
+// hash and pushed directly into the dead-letter list for future inspection.
 func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error {
 	if jobID == "" {
 		return fmt.Errorf("queue: jobID must not be empty")
@@ -153,19 +154,47 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 		return fmt.Errorf("queue: HDel failed for job %s: %w", jobID, err)
 	}
 
-	job.Retries++
+	job.Status = jobs.StatusFailed
 	job.UpdatedAt = time.Now().UTC()
-
-	if job.Retries <= job.MaxRetries {
-		// Re-enqueue for another attempt.
-		job.Status = jobs.StatusPending
-		return q.Enqueue(ctx, &job)
+	// Optionally embed the reason string into the job payload for debugging
+	if reason != nil {
+		if job.Payload == nil {
+			job.Payload = make(map[string]interface{})
+		}
+		job.Payload["_error_reason"] = reason.Error()
 	}
 
-	// Exhausted retries — mark as permanently failed.
-	// A real system might push to a dead-letter list here.
-	job.Status = jobs.StatusFailed
-	_ = reason // available for structured logging / dead-letter enrichment
+	failedPayload, err := json.Marshal(&job)
+	if err != nil {
+		return fmt.Errorf("queue: failed to serialise failed job: %w", err)
+	}
+
+	// Push the job to the dead letter queue (Left push to allow chronologic access)
+	if err := q.client.LPush(ctx, q.dlqKey, failedPayload).Err(); err != nil {
+		return fmt.Errorf("queue: failed to push job %s to dead-letter queue: %w", job.ID, err)
+	}
 
 	return nil
+}
+
+// GetFailedJobs retrieves all jobs currently in the dead-letter queue.
+// It returns them without removing them from Redis (like a peek).
+func (q *RedisQueue) GetFailedJobs(ctx context.Context) ([]*jobs.Job, error) {
+	// Fetch all elements from the list
+	items, err := q.client.LRange(ctx, q.dlqKey, 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("queue: failed to fetch dead-letter queue: %w", err)
+	}
+
+	var failedJobs []*jobs.Job
+	for _, item := range items {
+		var job jobs.Job
+		if err := json.Unmarshal([]byte(item), &job); err != nil {
+			// If one is corrupt, we ignore it or log it, but we shouldn't fail everything
+			continue
+		}
+		failedJobs = append(failedJobs, &job)
+	}
+
+	return failedJobs, nil
 }
