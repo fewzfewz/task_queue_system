@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	httpSwagger "github.com/swaggo/http-swagger/v2"
+
+	_ "task-queue-system/docs" // Import generated swagger files natively
 	"task-queue-system/internal/api/handler"
 	"task-queue-system/internal/api/service"
 	"task-queue-system/internal/queue"
@@ -30,6 +33,12 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger) http.Hand
 
 	// GET  /metrics     → system performance numbers
 	mux.HandleFunc("GET /metrics", h.GetMetrics)
+
+	// Swagger UI integration
+	// The http-swagger driver handles the static asset serving natively.
+	mux.HandleFunc("GET /swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"), // Provides the canonical JSON schema natively
+	))
 
 	return mux
 }

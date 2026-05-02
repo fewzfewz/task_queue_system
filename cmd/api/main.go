@@ -1,10 +1,14 @@
+// @title           Task Queue API
+// @version         1.0
+// @description     A distributed task queue API for enqueuing and monitoring jobs.
+// @host            localhost:8080
+// @BasePath        /
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"

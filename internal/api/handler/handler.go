@@ -26,9 +26,16 @@ func New(svc *service.JobService, logger *slog.Logger) *JobHandler {
 
 // CreateJob handles POST /jobs.
 //
-//	Request  body: dto.CreateJobRequest  (JSON)
-//	Response body: dto.JobResponse       (JSON, 201 Created)
-//	Error    body: dto.ErrorResponse     (JSON, 4xx / 5xx)
+// @Summary      Create a new job
+// @Description  Submits a job to the queue for asynchronous execution.
+// @Tags         jobs
+// @Accept       json
+// @Produce      json
+// @Param        request  body      dto.CreateJobRequest  true  "Job Creation Request"
+// @Success      201      {object}  dto.JobResponse
+// @Failure      400      {object}  dto.ErrorResponse
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /jobs [post]
 func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	// ── Parse ─────────────────────────────────────────────────────────────────
 	var req dto.CreateJobRequest
@@ -57,8 +64,16 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 
 // GetJobStatus handles GET /jobs/{id}.
 //
-//	Response body: dto.JobResponse   (JSON, 200 OK)
-//	Error    body: dto.ErrorResponse (JSON, 404 / 501 / 500)
+// @Summary      Get job status
+// @Description  Retrieves the current execution status and metadata of a specific job by ID.
+// @Tags         jobs
+// @Produce      json
+// @Param        id       path      string  true  "Job ID"
+// @Success      200      {object}  dto.JobResponse
+// @Failure      400      {object}  dto.ErrorResponse
+// @Failure      404      {object}  dto.ErrorResponse
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /jobs/{id} [get]
 func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	// ── Extract path parameter ─────────────────────────────────────────────
 	// Compatible with both net/http 1.22+ path params and manual parsing.
@@ -93,7 +108,13 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 
 // GetMetrics handles GET /metrics.
 //
-//	Response body: queue.QueueMetrics (JSON, 200 OK)
+// @Summary      Get queue metrics
+// @Description  Retrieves system-wide execution statistics including totals, active jobs, and failure counts.
+// @Tags         metrics
+// @Produce      json
+// @Success      200      {object}  queue.QueueMetrics
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /metrics [get]
 func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics, err := h.service.GetMetrics(r.Context())
 	if err != nil {

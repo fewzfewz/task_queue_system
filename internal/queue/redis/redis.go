@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/queue"
 )
 
 const (

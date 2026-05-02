@@ -1,0 +1,146 @@
+basePath: /
+definitions:
+  dto.CreateJobRequest:
+    properties:
+      max_retries:
+        description: MaxRetries defaults to 3 if omitted (zero value).
+        type: integer
+      payload:
+        additionalProperties: true
+        description: Payload is an arbitrary map of key/value pairs specific to the
+          job type.
+        type: object
+      priority:
+        description: Priority is optional, defaults to "medium"
+        type: string
+      type:
+        description: Type must match one of the registered handler types (e.g. "email",
+          "image").
+        type: string
+    type: object
+  dto.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  dto.JobResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      max_retries:
+        type: integer
+      payload:
+        additionalProperties: true
+        type: object
+      priority:
+        type: string
+      retries:
+        type: integer
+      status:
+        type: string
+      type:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  queue.QueueMetrics:
+    properties:
+      active_jobs:
+        type: integer
+      completed_jobs:
+        type: integer
+      failed_jobs:
+        type: integer
+      total_jobs:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: A distributed task queue API for enqueuing and monitoring jobs.
+  title: Task Queue API
+  version: "1.0"
+paths:
+  /jobs:
+    post:
+      consumes:
+      - application/json
+      description: Submits a job to the queue for asynchronous execution.
+      parameters:
+      - description: Job Creation Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.CreateJobRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.JobResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Create a new job
+      tags:
+      - jobs
+  /jobs/{id}:
+    get:
+      description: Retrieves the current execution status and metadata of a specific
+        job by ID.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.JobResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get job status
+      tags:
+      - jobs
+  /metrics:
+    get:
+      description: Retrieves system-wide execution statistics including totals, active
+        jobs, and failure counts.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/queue.QueueMetrics'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get queue metrics
+      tags:
+      - metrics
+swagger: "2.0"
