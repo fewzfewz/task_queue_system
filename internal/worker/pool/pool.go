@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 
+	"golang.org/x/time/rate"
+
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/worker/executor"
 )
@@ -16,6 +18,9 @@ type Config struct {
 	// NumWorkers is the number of concurrent worker goroutines.
 	// Must be at least 1.
 	NumWorkers int
+	// JobsPerSecond limits the global processing rate across all workers.
+	// A value of 0 means no limit.
+	JobsPerSecond float64
 }
 
 // Pool manages a fixed number of worker processors and their lifecycle.
@@ -23,6 +28,7 @@ type Pool struct {
 	cfg      Config
 	queue    queue.Queue
 	executor *executor.JobExecutor
+	limiter  *rate.Limiter
 	logger   *slog.Logger
 
 	cancel context.CancelFunc
@@ -34,10 +40,17 @@ func New(cfg Config, q queue.Queue, je *executor.JobExecutor, logger *slog.Logge
 	if cfg.NumWorkers < 1 {
 		return nil, fmt.Errorf("pool: NumWorkers must be at least 1, got %d", cfg.NumWorkers)
 	}
+
+	var limiter *rate.Limiter
+	if cfg.JobsPerSecond > 0 {
+		limiter = rate.NewLimiter(rate.Limit(cfg.JobsPerSecond), 1)
+	}
+
 	return &Pool{
 		cfg:      cfg,
 		queue:    q,
 		executor: je,
+		limiter:  limiter,
 		logger:   logger,
 	}, nil
 }
@@ -53,7 +66,7 @@ func (p *Pool) Start(ctx context.Context) {
 	p.logger.Info("starting worker pool", "num_workers", p.cfg.NumWorkers)
 
 	for i := range p.cfg.NumWorkers {
-		w := executor.NewWorkerProcessor(i+1, p.queue, p.executor, p.logger)
+		w := executor.NewWorkerProcessor(i+1, p.queue, p.executor, p.limiter, p.logger)
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()

@@ -11,6 +11,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/worker/executor"
 	"task-queue-system/internal/worker/pool"
@@ -18,13 +19,11 @@ import (
 
 func main() {
 	// ── 1. Setup structured logging ───────────────────────────────────────────
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	log := logger.Setup()
 
 	// ── 2. Load configuration ─────────────────────────────────────────────────
 	cfg := config.Load()
-	logger.Info("starting worker service", "workers", 5) // Hardcoded 5 for now, could be in config.
+	log.Info("starting worker service", "workers", 5) // Hardcoded 5 for now, could be in config.
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{
@@ -37,25 +36,29 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Error("failed to connect to redis", "error", err)
+		log.Error("failed to connect to redis", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("connected to redis", "host", cfg.RedisHost)
+	log.Info("connected to redis", "host", cfg.RedisHost)
 
 	// ── 4. Initialise Queue and Executors ─────────────────────────────────────
 	// Using "jobs" as the default queue name to match the API.
 	q := redisqueue.New(redisClient, "jobs")
 
 	// JobExecutor pre-registers the "email" and "image" handlers.
-	jobExec := executor.NewJobExecutor(logger)
+	jobExec := executor.NewJobExecutor(log)
 
 	// ── 5. Setup Worker Pool ──────────────────────────────────────────────────
 	// Number of concurrent workers. We use 5 as a default.
-	poolCfg := pool.Config{NumWorkers: 5}
+	// Rate limit execution to 10 jobs per second max globally across this pool.
+	poolCfg := pool.Config{
+		NumWorkers:    5,
+		JobsPerSecond: 10.0,
+	}
 
-	workerPool, err := pool.New(poolCfg, q, jobExec, logger)
+	workerPool, err := pool.New(poolCfg, q, jobExec, log)
 	if err != nil {
-		logger.Error("failed to initialise worker pool", "error", err)
+		log.Error("failed to initialise worker pool", "error", err)
 		os.Exit(1)
 	}
 
@@ -68,7 +71,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("shutdown signal received, stopping workers...")
+	log.Info("shutdown signal received, stopping workers...")
 
 	// Stop triggers the pool context cancellation, making workers exit cleanly
 	// after finishing their current in-flight job, and blocks until they finish.
@@ -77,5 +80,5 @@ func main() {
 	// Clean up connections
 	_ = redisClient.Close()
 
-	logger.Info("worker service stopped")
+	log.Info("worker service stopped")
 }

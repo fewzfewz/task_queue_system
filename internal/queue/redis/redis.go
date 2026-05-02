@@ -26,27 +26,39 @@ const (
 // It uses a Redis list for the pending queue and a Redis hash to track
 // jobs that are currently being processed, enabling safe Ack and Fail semantics.
 type RedisQueue struct {
-	client   *redis.Client
-	queueKey string // allows multiple logical queues on one Redis instance
-	dlqKey   string // dead letter queue key
+	client  *redis.Client
+	qHigh   string // high priority list
+	qMedium string // medium priority list
+	qLow    string // low priority list
+	dlqKey  string // dead letter queue key
+
+	metricsTotal     string
+	metricsCompleted string
+	metricsFailed    string
 }
 
 // New creates a new RedisQueue. The provided client must already be connected.
 // Pass an empty queueName to use the default key.
 func New(client *redis.Client, queueName string) *RedisQueue {
-	key := defaultQueueKey
+	baseKey := defaultQueueKey
 	if queueName != "" {
-		key = "task_queue:" + queueName
+		baseKey = "task_queue:" + queueName
 	}
 	return &RedisQueue{
-		client:   client,
-		queueKey: key,
-		dlqKey:   key + ":dead_letter",
+		client:           client,
+		qHigh:            baseKey + ":high",
+		qMedium:          baseKey + ":medium",
+		qLow:             baseKey + ":low",
+		dlqKey:           baseKey + ":dead_letter",
+		metricsTotal:     baseKey + ":metrics:total",
+		metricsCompleted: baseKey + ":metrics:completed",
+		metricsFailed:    baseKey + ":metrics:failed",
 	}
 }
 
 // Enqueue serialises the job as JSON and pushes it to the left of the Redis list.
 // BRPOP pops from the right (FIFO ordering).
+// Uses the job's Priority to determine the target queue.
 func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 	if job == nil {
 		return fmt.Errorf("queue: cannot enqueue a nil job")
@@ -57,17 +69,32 @@ func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 		return fmt.Errorf("queue: failed to serialise job %s: %w", job.ID, err)
 	}
 
-	if err := q.client.LPush(ctx, q.queueKey, payload).Err(); err != nil {
+	var targetKey string
+	switch job.Priority {
+	case jobs.PriorityHigh:
+		targetKey = q.qHigh
+	case jobs.PriorityLow:
+		targetKey = q.qLow
+	case jobs.PriorityMedium:
+		fallthrough
+	default:
+		targetKey = q.qMedium
+	}
+
+	if err := q.client.LPush(ctx, targetKey, payload).Err(); err != nil {
 		return fmt.Errorf("queue: LPUSH failed for job %s: %w", job.ID, err)
+	}
+
+	// Increment total jobs counter only on initial enqueue (not retries).
+	if job.Retries == 0 {
+		q.client.Incr(ctx, q.metricsTotal)
 	}
 
 	return nil
 }
 
 // Dequeue blocks until a job becomes available or the context is cancelled.
-// It pops from the right (BRPOP), deserialises the payload, marks the job as
-// StatusProcessing, and stores it in the processing hash so Ack/Fail can look
-// it up later.
+// It pops from the right (BRPOP), checking queues in priority order.
 func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	// Use the context deadline if set, otherwise fall back to dequeueTimeout.
 	timeout := dequeueTimeout
@@ -75,7 +102,8 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 		timeout = time.Until(deadline)
 	}
 
-	result, err := q.client.BRPop(ctx, timeout, q.queueKey).Result()
+	// BRPop checks keys left-to-right, ensuring strict priority handling
+	result, err := q.client.BRPop(ctx, timeout, q.qHigh, q.qMedium, q.qLow).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
@@ -124,6 +152,9 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 	if deleted == 0 {
 		return fmt.Errorf("queue: job %s not found in processing set", jobID)
 	}
+
+	// Atomic increment for metrics (fire and forget)
+	q.client.Incr(ctx, q.metricsCompleted)
 
 	return nil
 }
@@ -174,6 +205,9 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 		return fmt.Errorf("queue: failed to push job %s to dead-letter queue: %w", job.ID, err)
 	}
 
+	// Atomic increment for metrics (fire and forget)
+	q.client.Incr(ctx, q.metricsFailed)
+
 	return nil
 }
 
@@ -197,4 +231,39 @@ func (q *RedisQueue) GetFailedJobs(ctx context.Context) ([]*jobs.Job, error) {
 	}
 
 	return failedJobs, nil
+}
+
+// GetMetrics retrieves current execution statistics.
+func (q *RedisQueue) GetMetrics(ctx context.Context) (queue.QueueMetrics, error) {
+	// Retrieve counters natively
+	res, err := q.client.MGet(ctx, q.metricsTotal, q.metricsCompleted, q.metricsFailed).Result()
+	if err != nil {
+		return queue.QueueMetrics{}, fmt.Errorf("queue: failed to fetch metrics: %w", err)
+	}
+
+	// Active is defined as the number of jobs currently sitting in the processing hash
+	active, err := q.client.HLen(ctx, processingSetKey).Result()
+	if err != nil {
+		return queue.QueueMetrics{}, fmt.Errorf("queue: failed to fetch active count: %w", err)
+	}
+
+	parseStr2Int := func(val interface{}) int64 {
+		if val == nil {
+			return 0
+		}
+		// Redis INCR uses strings underneath when parsed via MGET
+		if s, ok := val.(string); ok {
+			var i int64
+			fmt.Sscanf(s, "%d", &i)
+			return i
+		}
+		return 0
+	}
+
+	return queue.QueueMetrics{
+		TotalJobs:     parseStr2Int(res[0]),
+		CompletedJobs: parseStr2Int(res[1]),
+		FailedJobs:    parseStr2Int(res[2]),
+		ActiveJobs:    active,
+	}, nil
 }

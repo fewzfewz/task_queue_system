@@ -15,19 +15,18 @@ import (
 
 	"task-queue-system/internal/api/routes"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/storage/models"
 )
 
 func main() {
 	// ── 1. Setup structured logging ───────────────────────────────────────────
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	log := logger.Setup()
 
 	// ── 2. Load configuration ─────────────────────────────────────────────────
 	cfg := config.Load()
-	logger.Info("starting api service", "port", cfg.ServerPort)
+	log.Info("starting api service", "port", cfg.ServerPort)
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{
@@ -40,10 +39,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Error("failed to connect to redis", "error", err)
+		log.Error("failed to connect to redis", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("connected to redis", "host", cfg.RedisHost)
+	log.Info("connected to redis", "host", cfg.RedisHost)
 
 	// ── 4. Initialise Queue and Store ─────────────────────────────────────────
 	// Using "jobs" as the default queue name.
@@ -54,7 +53,7 @@ func main() {
 	store := models.NewInMemoryStore()
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, logger)
+	router := routes.NewRouter(q, store, log)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
@@ -68,7 +67,7 @@ func main() {
 	// ── 6. Start Server with Graceful Shutdown ────────────────────────────────
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("http server failed", "error", err)
+			log.Error("http server failed", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -78,7 +77,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("shutting down HTTP server...")
+	log.Info("shutting down HTTP server...")
 
 	// The context is used to inform the server it has 10 seconds to finish
 	// the request it is currently handling
@@ -86,11 +85,11 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Error("HTTP server forced to shutdown", "error", err)
+		log.Error("HTTP server forced to shutdown", "error", err)
 	}
 
 	// Also cleanly close the redis connection
 	_ = redisClient.Close()
 
-	logger.Info("API service stopped")
+	log.Info("API service stopped")
 }

@@ -17,7 +17,7 @@ import (
 //
 // Pass models.NewInMemoryStore() for local dev or a PostgresStore for production.
 func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger) http.Handler {
-	svc := service.New(q, store)
+	svc := service.New(q, store, logger)
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()
@@ -27,6 +27,9 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger) http.Hand
 
 	// GET  /jobs/{id}   → return the current status of a job
 	mux.HandleFunc("GET /jobs/{id}", h.GetJobStatus)
+
+	// GET  /metrics     → system performance numbers
+	mux.HandleFunc("GET /metrics", h.GetMetrics)
 
 	return mux
 }

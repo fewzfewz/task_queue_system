@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
 )
@@ -22,16 +24,18 @@ type WorkerProcessor struct {
 	id       int
 	queue    queue.Queue
 	executor *JobExecutor
+	limiter  *rate.Limiter
 	logger   *slog.Logger
 }
 
 // NewWorkerProcessor creates a WorkerProcessor.
-// id is used only for log attribution.
-func NewWorkerProcessor(id int, q queue.Queue, je *JobExecutor, logger *slog.Logger) *WorkerProcessor {
+// id is used only for log attribution. limiter can be nil if no rate limiting applies.
+func NewWorkerProcessor(id int, q queue.Queue, je *JobExecutor, limiter *rate.Limiter, logger *slog.Logger) *WorkerProcessor {
 	return &WorkerProcessor{
 		id:       id,
 		queue:    q,
 		executor: je,
+		limiter:  limiter,
 		logger:   logger.With("worker_id", id),
 	}
 }
@@ -79,9 +83,25 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
 	log.Info("job dequeued", "attempt", job.Retries+1, "max_retries", job.MaxRetries)
 
+	// Detach context cancellation for the rest of the job lifecycle.
+	// This guarantees that if a SIGINT/SIGTERM arrives while a job is running,
+	// the worker will FINISH the job before exiting, rather than aborting
+	// the active task mid-flight.
+	execCtx := context.WithoutCancel(ctx)
+
+	// ── Rate Limit Check ──────────────────────────────────────────────────────
+	// Wait logic consumes a token globally. If blocked, the job sits in the processing hash.
+	if wp.limiter != nil {
+		if err := wp.limiter.Wait(execCtx); err != nil {
+			// If context cancels while waiting for a token, we safely abandon.
+			// The in-flight job will be rescued by dead-letter reconciler natively.
+			return err
+		}
+	}
+
 	// ── Step 2: Execute ───────────────────────────────────────────────────────
 	start := time.Now()
-	execErr := wp.executor.Execute(ctx, job)
+	execErr := wp.executor.Execute(execCtx, job)
 	elapsed := time.Since(start)
 
 	if execErr == nil {
@@ -89,7 +109,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		log.Info("job succeeded",
 			"elapsed_ms", elapsed.Milliseconds(),
 		)
-		wp.ack(ctx, job, log)
+		wp.ack(execCtx, job, log)
 		return nil
 	}
 
@@ -102,9 +122,9 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	)
 
 	if job.Retries < job.MaxRetries {
-		wp.retry(ctx, job, log)
+		wp.retry(ctx, execCtx, job, log)
 	} else {
-		wp.permanentlyFail(ctx, job, execErr, log)
+		wp.permanentlyFail(execCtx, job, execErr, log)
 	}
 
 	return nil
@@ -124,7 +144,7 @@ func (wp *WorkerProcessor) ack(ctx context.Context, job *jobs.Job, log *slog.Log
 // retry increments the retry counter, waits for an exponential backoff delay,
 // re-enqueues the job for another attempt, and then acks the current in-flight
 // entry so the processing set stays clean.
-func (wp *WorkerProcessor) retry(ctx context.Context, job *jobs.Job, log *slog.Logger) {
+func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs.Job, log *slog.Logger) {
 	job.Retries++
 	job.Status = jobs.StatusPending
 	job.UpdatedAt = time.Now().UTC()
@@ -140,23 +160,23 @@ func (wp *WorkerProcessor) retry(ctx context.Context, job *jobs.Job, log *slog.L
 	)
 
 	// Block the worker for the delay period to enforce backoff.
-	// We listen to ctx.Done() so graceful shutdowns aren't stalled for seconds.
+	// We listen to shutdownCtx.Done() so graceful shutdowns aren't stalled for seconds.
 	// If shutdown occurs, the job remains safely in the processing hash and
 	// will be rescued by a queue deadbox/reconciler later.
 	select {
-	case <-ctx.Done():
+	case <-shutdownCtx.Done():
 		log.Warn("worker shutdown interrupted retry delay; job kept in in-flight set")
 		return
 	case <-time.After(delay):
 	}
 
-	if err := wp.queue.Enqueue(ctx, job); err != nil {
+	if err := wp.queue.Enqueue(execCtx, job); err != nil {
 		log.Error("failed to re-enqueue job for retry", "error", err)
 		return
 	}
 
 	// Ack removes the old in-flight record; the freshly enqueued copy takes over.
-	if err := wp.queue.Ack(ctx, job.ID); err != nil {
+	if err := wp.queue.Ack(execCtx, job.ID); err != nil {
 		log.Error("failed to ack original entry after re-enqueue", "error", err)
 	}
 }

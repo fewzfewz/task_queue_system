@@ -11,6 +11,8 @@ type CreateJobRequest struct {
 	Type string `json:"type"`
 	// Payload is an arbitrary map of key/value pairs specific to the job type.
 	Payload map[string]interface{} `json:"payload"`
+	// Priority is optional, defaults to "medium"
+	Priority string `json:"priority"`
 	// MaxRetries defaults to 3 if omitted (zero value).
 	MaxRetries int `json:"max_retries"`
 }
@@ -20,6 +22,7 @@ type JobResponse struct {
 	ID         string                 `json:"id"`
 	Type       string                 `json:"type"`
 	Payload    map[string]interface{} `json:"payload"`
+	Priority   string                 `json:"priority"`
 	Status     string                 `json:"status"`
 	Retries    int                    `json:"retries"`
 	MaxRetries int                    `json:"max_retries"`
@@ -38,6 +41,7 @@ func FromJob(j *jobs.Job) JobResponse {
 		ID:         j.ID,
 		Type:       j.Type,
 		Payload:    j.Payload,
+		Priority:   string(j.Priority),
 		Status:     string(j.Status),
 		Retries:    j.Retries,
 		MaxRetries: j.MaxRetries,

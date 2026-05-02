@@ -39,7 +39,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// ── Delegate to service ───────────────────────────────────────────────────
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.MaxRetries)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries)
 	if err != nil {
 		h.logger.Warn("create job failed", "error", err)
 		// Validation errors are client mistakes; everything else is server-side.
@@ -89,6 +89,20 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, dto.FromJob(job))
+}
+
+// GetMetrics handles GET /metrics.
+//
+//	Response body: queue.QueueMetrics (JSON, 200 OK)
+func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := h.service.GetMetrics(r.Context())
+	if err != nil {
+		h.logger.Warn("get metrics failed", "error", err)
+		h.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, metrics)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

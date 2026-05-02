@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	"log/slog"
+
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/storage/models"
@@ -27,15 +29,17 @@ const defaultMaxRetries = 3
 // It is the single place where queue and storage are written to together,
 // keeping both in sync on every mutation.
 type JobService struct {
-	queue queue.Queue
-	store models.Store
+	queue  queue.Queue
+	store  models.Store
+	logger *slog.Logger
 }
 
 // New creates a JobService. Both queue and store are required.
-func New(q queue.Queue, store models.Store) *JobService {
+func New(q queue.Queue, store models.Store, logger *slog.Logger) *JobService {
 	return &JobService{
-		queue: q,
-		store: store,
+		queue:  q,
+		store:  store,
+		logger: logger,
 	}
 }
 
@@ -49,6 +53,7 @@ func (s *JobService) CreateJob(
 	ctx context.Context,
 	jobType string,
 	payload map[string]interface{},
+	priority string,
 	maxRetries int,
 ) (*jobs.Job, error) {
 
@@ -61,18 +66,24 @@ func (s *JobService) CreateJob(
 	}
 
 	// ── 2. Build ──────────────────────────────────────────────────────────────
-	job := jobs.NewJob(jobType, payload, maxRetries)
+	job := jobs.NewJob(jobType, payload, jobs.JobPriority(priority), maxRetries)
 
 	// ── 3. Persist ────────────────────────────────────────────────────────────
 	if err := s.store.Save(ctx, job); err != nil {
+		s.logger.Error("failed to persist job initially", "job_id", job.ID, "error", err)
 		return nil, fmt.Errorf("service: failed to persist job: %w", err)
 	}
+
+	s.logger.Info("job persisted to datastore", "job_id", job.ID, "job_type", job.Type)
 
 	// ── 4. Enqueue ────────────────────────────────────────────────────────────
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		// Job is saved but not queued — safe to retry enqueue later.
+		s.logger.Error("failed to enqueue job to broken queue", "job_id", job.ID, "error", err)
 		return nil, fmt.Errorf("service: job saved but failed to enqueue: %w", err)
 	}
+
+	s.logger.Info("job logically enqueued", "job_id", job.ID, "priority", job.Priority)
 
 	return job, nil
 }
@@ -109,12 +120,22 @@ func (s *JobService) UpdateJobStatus(ctx context.Context, jobID string, status j
 
 	if err := s.store.UpdateStatus(ctx, jobID, status); err != nil {
 		if errors.Is(err, models.ErrJobNotFound) {
+			s.logger.Warn("cannot update status, job not found", "job_id", jobID)
 			return fmt.Errorf("service: %w", models.ErrJobNotFound)
 		}
+		s.logger.Error("failed to update job status", "job_id", jobID, "error", err)
 		return fmt.Errorf("service: failed to update job status: %w", err)
 	}
 
+	s.logger.Info("job status transitioned natively", "job_id", jobID, "status", status)
 	return nil
+}
+
+// ─── GetMetrics ───────────────────────────────────────────────────────────────
+
+// GetMetrics surfaces the current operational statistics from the queue backend.
+func (s *JobService) GetMetrics(ctx context.Context) (queue.QueueMetrics, error) {
+	return s.queue.GetMetrics(ctx)
 }
 
 // ─── private helpers ──────────────────────────────────────────────────────────
