@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: task_queue_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - task_queue_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: task_queue_api
+    command: ["./api"]
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - REDIS_HOST=redis:6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - task_queue_net
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # container_name omitted intentionally to allow scaling (e.g. docker-compose up --scale worker=3)
+    command: ["./worker"]
+    environment:
+      - REDIS_HOST=redis:6379
+      - REDIS_PASSWORD=
+      - REDIS_DB=0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - task_queue_net
+    # A single worker instance boots N goroutines based on internal config,
+    # but docker scaling spins up entirely separate OS processes.
+
+volumes:
+  redis_data:
+
+networks:
+  task_queue_net:
+    driver: bridge

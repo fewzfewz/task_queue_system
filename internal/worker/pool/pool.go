@@ -1,0 +1,74 @@
+// Package pool manages a configurable pool of worker executors.
+package pool
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+
+	"task-queue-system/internal/queue"
+	"task-queue-system/internal/worker/executor"
+)
+
+// Config holds the configuration for the worker pool.
+type Config struct {
+	// NumWorkers is the number of concurrent worker goroutines.
+	// Must be at least 1.
+	NumWorkers int
+}
+
+// Pool manages a fixed number of worker processors and their lifecycle.
+type Pool struct {
+	cfg      Config
+	queue    queue.Queue
+	executor *executor.JobExecutor
+	logger   *slog.Logger
+
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+// New creates a new Pool. Call Start to begin processing.
+func New(cfg Config, q queue.Queue, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
+	if cfg.NumWorkers < 1 {
+		return nil, fmt.Errorf("pool: NumWorkers must be at least 1, got %d", cfg.NumWorkers)
+	}
+	return &Pool{
+		cfg:      cfg,
+		queue:    q,
+		executor: je,
+		logger:   logger,
+	}, nil
+}
+
+// Start launches NumWorkers goroutines. It is non-blocking; workers run in
+// the background. Call Stop to initiate graceful shutdown.
+func (p *Pool) Start(ctx context.Context) {
+	// Derive a cancellable child context so Stop can signal all workers
+	// without cancelling the caller's context.
+	workerCtx, cancel := context.WithCancel(ctx)
+	p.cancel = cancel
+
+	p.logger.Info("starting worker pool", "num_workers", p.cfg.NumWorkers)
+
+	for i := range p.cfg.NumWorkers {
+		w := executor.NewWorkerProcessor(i+1, p.queue, p.executor, p.logger)
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			w.Run(workerCtx)
+		}()
+	}
+}
+
+// Stop signals all workers to stop and blocks until they have all exited.
+// It is safe to call Stop more than once.
+func (p *Pool) Stop() {
+	if p.cancel != nil {
+		p.logger.Info("shutting down worker pool")
+		p.cancel()
+	}
+	p.wg.Wait()
+	p.logger.Info("worker pool shut down")
+}
