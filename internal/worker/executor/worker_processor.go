@@ -121,18 +121,34 @@ func (wp *WorkerProcessor) ack(ctx context.Context, job *jobs.Job, log *slog.Log
 	log.Info("job marked as completed")
 }
 
-// retry increments the retry counter, re-enqueues the job for another
-// attempt, then acks the current in-flight entry so the processing set
-// stays clean.
+// retry increments the retry counter, waits for an exponential backoff delay,
+// re-enqueues the job for another attempt, and then acks the current in-flight
+// entry so the processing set stays clean.
 func (wp *WorkerProcessor) retry(ctx context.Context, job *jobs.Job, log *slog.Logger) {
 	job.Retries++
 	job.Status = jobs.StatusPending
 	job.UpdatedAt = time.Now().UTC()
 
-	log.Warn("scheduling job for retry",
+	// Exponential backoff: 2^retry seconds (e.g. 2s, 4s, 8s...)
+	// Note: We use the *new* Retries value for the delay exponent.
+	delay := time.Duration(1<<job.Retries) * time.Second
+
+	log.Warn("scheduling job for retry with backoff",
 		"next_attempt", job.Retries+1,
 		"max_retries", job.MaxRetries,
+		"delay", delay.String(),
 	)
+
+	// Block the worker for the delay period to enforce backoff.
+	// We listen to ctx.Done() so graceful shutdowns aren't stalled for seconds.
+	// If shutdown occurs, the job remains safely in the processing hash and
+	// will be rescued by a queue deadbox/reconciler later.
+	select {
+	case <-ctx.Done():
+		log.Warn("worker shutdown interrupted retry delay; job kept in in-flight set")
+		return
+	case <-time.After(delay):
+	}
 
 	if err := wp.queue.Enqueue(ctx, job); err != nil {
 		log.Error("failed to re-enqueue job for retry", "error", err)
