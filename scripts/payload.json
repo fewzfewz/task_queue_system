@@ -1,0 +1,9 @@
+{
+  "type": "email",
+  "payload": {
+    "to": "benchmark@example.com",
+    "subject": "Load Test",
+    "body": "This is a performance test."
+  },
+  "priority": "high"
+}
