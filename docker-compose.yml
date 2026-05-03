@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Centralized Redis serves as both the Queue Broker and the Shared Job Store (Stateless DB)
   redis:
     image: redis:7-alpine
     container_name: task_queue_redis
@@ -16,6 +17,7 @@ services:
       timeout: 3s
       retries: 5
 
+  # API Service - Ingests jobs and provides monitoring
   api:
     build:
       context: .
@@ -34,12 +36,15 @@ services:
         condition: service_healthy
     networks:
       - task_queue_net
+    restart: on-failure
 
+  # Worker Service - Scalable consumer group
+  # These are fully stateless; scaling them up increases throughput linearily.
   worker:
     build:
       context: .
       dockerfile: Dockerfile
-    # container_name omitted intentionally to allow scaling (e.g. docker-compose up --scale worker=3)
+    # container_name omitted to allow multiple instances (replicas)
     command: ["./worker"]
     environment:
       - REDIS_HOST=redis:6379
@@ -50,8 +55,14 @@ services:
         condition: service_healthy
     networks:
       - task_queue_net
-    # A single worker instance boots N goroutines based on internal config,
-    # but docker scaling spins up entirely separate OS processes.
+    deploy:
+      mode: replicated
+      replicas: 3
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+    restart: always
 
 volumes:
   redis_data:
