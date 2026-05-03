@@ -38,8 +38,9 @@ type Job struct {
 	Priority   JobPriority            `json:"priority"`
 	Retries    int                    `json:"retries"`
 	MaxRetries int                    `json:"max_retries"`
-	CreatedAt  time.Time              `json:"created_at"`
-	UpdatedAt  time.Time              `json:"updated_at"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	ProcessedBy string                 `json:"processed_by,omitempty"`
 }
 
 // NewJob creates a new Job instance with initial values.

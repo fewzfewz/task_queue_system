@@ -27,9 +27,9 @@ type Store interface {
 	// Returns ErrJobNotFound if no record exists.
 	GetByID(ctx context.Context, id string) (*jobs.Job, error)
 
-	// UpdateStatus changes the status (and UpdatedAt) of an existing job.
+	// UpdateStatus changes the status (and UpdatedAt/ProcessedBy) of an existing job.
 	// Returns ErrJobNotFound if no record exists.
-	UpdateStatus(ctx context.Context, id string, status jobs.JobStatus) error
+	UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error
 }
 
 // ErrJobNotFound is returned when a job ID does not exist in the store.
@@ -75,8 +75,8 @@ func (s *InMemoryStore) GetByID(_ context.Context, id string) (*jobs.Job, error)
 	return &copy, nil
 }
 
-// UpdateStatus mutates only the Status field of an existing job record.
-func (s *InMemoryStore) UpdateStatus(_ context.Context, id string, status jobs.JobStatus) error {
+// UpdateStatus mutates only the Status and ProcessedBy field of an existing job record.
+func (s *InMemoryStore) UpdateStatus(_ context.Context, id string, status jobs.JobStatus, workerID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -85,6 +85,7 @@ func (s *InMemoryStore) UpdateStatus(_ context.Context, id string, status jobs.J
 		return fmt.Errorf("%w: %s", ErrJobNotFound, id)
 	}
 	job.Status = status
+	job.ProcessedBy = workerID
 	return nil
 }
 
@@ -129,7 +130,7 @@ func (s *RedisStore) GetByID(ctx context.Context, id string) (*jobs.Job, error) 
 	return &job, nil
 }
 
-func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.JobStatus) error {
+func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error {
 	// We need to fetch, mutate, and save because we store the whole object as JSON.
 	// For high scale, we'd store fields individually or use a Lua script.
 	val, err := s.client.HGet(ctx, jobStoreKey, id).Result()
@@ -146,6 +147,7 @@ func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.Jo
 	}
 
 	job.Status = status
+	job.ProcessedBy = workerID
 	job.UpdatedAt = time.Now().UTC()
 
 	updated, err := json.Marshal(&job)

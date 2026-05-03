@@ -24,7 +24,15 @@ func main() {
 
 	// ── 2. Load configuration ─────────────────────────────────────────────────
 	cfg := config.Load()
-	log.Info("starting worker service", "workers", 5) // Hardcoded 5 for now, could be in config.
+
+	// Get a unique ID for this worker instance (container hostname or random UUID)
+	instanceID, err := os.Hostname()
+	if err != nil || instanceID == "" {
+		instanceID = "worker-" + time.Now().Format("05.000") // simple fallback
+	}
+
+	log = log.With("instance_id", instanceID)
+	log.Info("starting worker service", "workers", 50)
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{
@@ -59,7 +67,7 @@ func main() {
 		JobsPerSecond: 0.0,
 	}
 
-	workerPool, err := pool.New(poolCfg, svc, jobExec, log)
+	workerPool, err := pool.New(poolCfg, instanceID, svc, jobExec, log)
 	if err != nil {
 		log.Error("failed to initialise worker pool", "error", err)
 		os.Exit(1)

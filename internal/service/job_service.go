@@ -87,12 +87,12 @@ func (s *JobService) GetJobStatus(ctx context.Context, jobID string) (*jobs.Job,
 }
 
 // UpdateJobStatus updates the job state in the persistent store.
-func (s *JobService) UpdateJobStatus(ctx context.Context, jobID string, status jobs.JobStatus) error {
-	if err := s.store.UpdateStatus(ctx, jobID, status); err != nil {
-		s.logger.Error("failed to update job status", "job_id", jobID, "status", status, "error", err)
+func (s *JobService) UpdateJobStatus(ctx context.Context, jobID string, status jobs.JobStatus, workerID string) error {
+	if err := s.store.UpdateStatus(ctx, jobID, status, workerID); err != nil {
+		s.logger.Error("failed to update job status", "job_id", jobID, "status", status, "worker", workerID, "error", err)
 		return err
 	}
-	s.logger.Info("job status updated", "job_id", jobID, "status", status)
+	s.logger.Info("job status updated", "job_id", jobID, "status", status, "worker", workerID)
 	return nil
 }
 

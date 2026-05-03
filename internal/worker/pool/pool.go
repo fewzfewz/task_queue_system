@@ -25,18 +25,19 @@ type Config struct {
 
 // Pool manages a fixed number of worker processors and their lifecycle.
 type Pool struct {
-	cfg      Config
-	service  *service.JobService
-	executor *executor.JobExecutor
-	limiter  *rate.Limiter
-	logger   *slog.Logger
+	cfg        Config
+	instanceID string
+	service    *service.JobService
+	executor   *executor.JobExecutor
+	limiter    *rate.Limiter
+	logger     *slog.Logger
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
 // New creates a new Pool. Call Start to begin processing.
-func New(cfg Config, svc *service.JobService, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
+func New(cfg Config, instanceID string, svc *service.JobService, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
 	if cfg.NumWorkers < 1 {
 		return nil, fmt.Errorf("pool: NumWorkers must be at least 1, got %d", cfg.NumWorkers)
 	}
@@ -47,11 +48,12 @@ func New(cfg Config, svc *service.JobService, je *executor.JobExecutor, logger *
 	}
 
 	return &Pool{
-		cfg:      cfg,
-		service:  svc,
-		executor: je,
-		limiter:  limiter,
-		logger:   logger,
+		cfg:        cfg,
+		instanceID: instanceID,
+		service:    svc,
+		executor:   je,
+		limiter:    limiter,
+		logger:     logger,
 	}, nil
 }
 
@@ -66,7 +68,8 @@ func (p *Pool) Start(ctx context.Context) {
 	p.logger.Info("starting worker pool", "num_workers", p.cfg.NumWorkers)
 
 	for i := range p.cfg.NumWorkers {
-		w := executor.NewWorkerProcessor(i+1, p.service, p.executor, p.limiter, p.logger)
+		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
+		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger)
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()

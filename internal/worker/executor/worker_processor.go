@@ -21,7 +21,7 @@ import (
 // It is meant to be embedded inside a goroutine (e.g. pool.Pool) and driven
 // by Run, but ProcessOnce can be called directly in tests or one-shot scripts.
 type WorkerProcessor struct {
-	id      int
+	name    string
 	service *service.JobService
 	exec    *JobExecutor
 	limiter *rate.Limiter
@@ -29,14 +29,14 @@ type WorkerProcessor struct {
 }
 
 // NewWorkerProcessor creates a WorkerProcessor.
-// id is used only for log attribution. limiter can be nil if no rate limiting applies.
-func NewWorkerProcessor(id int, svc *service.JobService, je *JobExecutor, limiter *rate.Limiter, logger *slog.Logger) *WorkerProcessor {
+// name is used for log attribution and job metadata. limiter can be nil if no rate limiting applies.
+func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, limiter *rate.Limiter, logger *slog.Logger) *WorkerProcessor {
 	return &WorkerProcessor{
-		id:      id,
+		name:    name,
 		service: svc,
 		exec:    je,
 		limiter: limiter,
-		logger:  logger.With("worker_id", id),
+		logger:  logger.With("worker", name),
 	}
 }
 
@@ -83,11 +83,14 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		return err // transient; caller (Run) will back off
 	}
 
-	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
-	log.Info("job dequeued", "attempt", job.Retries+1, "max_retries", job.MaxRetries)
+	// Identify this worker on the job object.
+	job.ProcessedBy = wp.name
 
-	// Transition DB state to Processing immediately.
-	_ = wp.service.UpdateJobStatus(ctx, job.ID, jobs.StatusProcessing)
+	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
+	log.Info("processing job dequeued")
+
+	// Transition DB state to Processing immediately and attach worker ID.
+	_ = wp.service.UpdateJobStatus(ctx, job.ID, jobs.StatusProcessing, wp.name)
 
 	// Detach context cancellation for the rest of the job lifecycle.
 	// This guarantees that if a SIGINT/SIGTERM arrives while a job is running,
@@ -113,7 +116,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	if execErr == nil {
 		// ── Step 3a: Success ────────────────────────────────────────────────
 		log.Info("job succeeded", "elapsed_ms", elapsed.Milliseconds())
-		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusCompleted)
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusCompleted, wp.name)
 		_ = wp.service.Ack(execCtx, job.ID)
 		return nil
 	}
@@ -127,10 +130,10 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	)
 
 	if job.Retries < job.MaxRetries {
-		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending)
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending, wp.name)
 		wp.retry(ctx, execCtx, job, log)
 	} else {
-		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusFailed)
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusFailed, wp.name)
 		wp.permanentlyFail(execCtx, job, execErr, log)
 	}
 

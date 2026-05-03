@@ -50,8 +50,8 @@ func (s *PostgresStore) GetByID(_ context.Context, id string) (*jobs.Job, error)
 }
 
 // UpdateStatus sets a job's status column and bumps updated_at.
-func (s *PostgresStore) UpdateStatus(_ context.Context, id string, status jobs.JobStatus) error {
-	// TODO: UPDATE jobs SET status=$2, updated_at=NOW() WHERE id=$1
-	_, _ = id, status
+func (s *PostgresStore) UpdateStatus(_ context.Context, id string, status jobs.JobStatus, workerID string) error {
+	// TODO: UPDATE jobs SET status=$2, processed_by=$3, updated_at=NOW() WHERE id=$1
+	_, _, _ = id, status, workerID
 	return fmt.Errorf("postgres: UpdateStatus not implemented")
 }
