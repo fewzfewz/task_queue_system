@@ -12,6 +12,8 @@ import (
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
+	"task-queue-system/internal/service"
+	"task-queue-system/internal/storage/models"
 	"task-queue-system/internal/worker/executor"
 	"task-queue-system/internal/worker/pool"
 )
@@ -40,9 +42,11 @@ func main() {
 	}
 	log.Info("connected to redis", "host", cfg.RedisHost)
 
-	// ── 4. Initialise Queue and Executors ─────────────────────────────────────
-	// Using "jobs" as the default queue name to match the API.
+	// ── 4. Initialise Queue, Store and Service ────────────────────────────────
+	// Both API and Worker use the same queue name and store backend.
 	q := redisqueue.New(redisClient, "jobs")
+	store := models.NewRedisStore(redisClient)
+	svc := service.New(q, store, log)
 
 	// JobExecutor pre-registers the "email" and "image" handlers.
 	jobExec := executor.NewJobExecutor(log)
@@ -55,7 +59,7 @@ func main() {
 		JobsPerSecond: 0.0,
 	}
 
-	workerPool, err := pool.New(poolCfg, q, jobExec, log)
+	workerPool, err := pool.New(poolCfg, svc, jobExec, log)
 	if err != nil {
 		log.Error("failed to initialise worker pool", "error", err)
 		os.Exit(1)

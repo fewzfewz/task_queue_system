@@ -52,9 +52,8 @@ func main() {
 	// Using "jobs" as the default queue name.
 	q := redisqueue.New(redisClient, "jobs")
 
-	// Using the in-memory store for now.
-	// In production, you would drop in postgres.New(dbPool) here.
-	store := models.NewInMemoryStore()
+	// Using the Redis store for persistent, shared job status across distributed instances.
+	store := models.NewRedisStore(redisClient)
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
 	router := routes.NewRouter(q, store, log)

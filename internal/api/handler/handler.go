@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"task-queue-system/internal/api/dto"
-	"task-queue-system/internal/api/service"
+	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 )
 

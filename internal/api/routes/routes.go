@@ -10,8 +10,8 @@ import (
 
 	_ "task-queue-system/docs" // Import generated swagger files natively
 	"task-queue-system/internal/api/handler"
-	"task-queue-system/internal/api/service"
 	"task-queue-system/internal/queue"
+	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 )
 

@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"task-queue-system/internal/queue"
+	"task-queue-system/internal/service"
 	"task-queue-system/internal/worker/executor"
 )
 
@@ -26,7 +26,7 @@ type Config struct {
 // Pool manages a fixed number of worker processors and their lifecycle.
 type Pool struct {
 	cfg      Config
-	queue    queue.Queue
+	service  *service.JobService
 	executor *executor.JobExecutor
 	limiter  *rate.Limiter
 	logger   *slog.Logger
@@ -36,7 +36,7 @@ type Pool struct {
 }
 
 // New creates a new Pool. Call Start to begin processing.
-func New(cfg Config, q queue.Queue, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
+func New(cfg Config, svc *service.JobService, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
 	if cfg.NumWorkers < 1 {
 		return nil, fmt.Errorf("pool: NumWorkers must be at least 1, got %d", cfg.NumWorkers)
 	}
@@ -48,7 +48,7 @@ func New(cfg Config, q queue.Queue, je *executor.JobExecutor, logger *slog.Logge
 
 	return &Pool{
 		cfg:      cfg,
-		queue:    q,
+		service:  svc,
 		executor: je,
 		limiter:  limiter,
 		logger:   logger,
@@ -66,7 +66,7 @@ func (p *Pool) Start(ctx context.Context) {
 	p.logger.Info("starting worker pool", "num_workers", p.cfg.NumWorkers)
 
 	for i := range p.cfg.NumWorkers {
-		w := executor.NewWorkerProcessor(i+1, p.queue, p.executor, p.limiter, p.logger)
+		w := executor.NewWorkerProcessor(i+1, p.service, p.executor, p.limiter, p.logger)
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()

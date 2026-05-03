@@ -4,8 +4,13 @@ package models
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/jobs"
 )
@@ -81,4 +86,72 @@ func (s *InMemoryStore) UpdateStatus(_ context.Context, id string, status jobs.J
 	}
 	job.Status = status
 	return nil
+}
+
+// ─── Redis Store ──────────────────────────────────────────────────────────────
+
+const jobStoreKey = "task_queue:store:jobs"
+
+// RedisStore persists job records as JSON in a Redis Hash.
+// This allows multiple distributed instances to share a consistent view of job states.
+type RedisStore struct {
+	client *redis.Client
+}
+
+// NewRedisStore creates a RedisStore.
+func NewRedisStore(client *redis.Client) *RedisStore {
+	return &RedisStore{client: client}
+}
+
+func (s *RedisStore) Save(ctx context.Context, job *jobs.Job) error {
+	payload, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("redis_store: failed to marshal job: %w", err)
+	}
+
+	return s.client.HSet(ctx, jobStoreKey, job.ID, payload).Err()
+}
+
+func (s *RedisStore) GetByID(ctx context.Context, id string) (*jobs.Job, error) {
+	val, err := s.client.HGet(ctx, jobStoreKey, id).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("%w: %s", ErrJobNotFound, id)
+		}
+		return nil, fmt.Errorf("redis_store: HGET failed: %w", err)
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(val), &job); err != nil {
+		return nil, fmt.Errorf("redis_store: failed to unmarshal job: %w", err)
+	}
+
+	return &job, nil
+}
+
+func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.JobStatus) error {
+	// We need to fetch, mutate, and save because we store the whole object as JSON.
+	// For high scale, we'd store fields individually or use a Lua script.
+	val, err := s.client.HGet(ctx, jobStoreKey, id).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%w: %s", ErrJobNotFound, id)
+		}
+		return fmt.Errorf("redis_store: HGET failed: %w", err)
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(val), &job); err != nil {
+		return fmt.Errorf("redis_store: failed to unmarshal job: %w", err)
+	}
+
+	job.Status = status
+	job.UpdatedAt = time.Now().UTC()
+
+	updated, err := json.Marshal(&job)
+	if err != nil {
+		return fmt.Errorf("redis_store: failed to marshal updated job: %w", err)
+	}
+
+	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
 }

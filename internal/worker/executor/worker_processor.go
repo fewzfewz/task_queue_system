@@ -8,7 +8,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"task-queue-system/internal/jobs"
-	"task-queue-system/internal/queue"
+	"task-queue-system/internal/service"
 )
 
 // WorkerProcessor orchestrates the full job lifecycle for a single worker:
@@ -21,22 +21,22 @@ import (
 // It is meant to be embedded inside a goroutine (e.g. pool.Pool) and driven
 // by Run, but ProcessOnce can be called directly in tests or one-shot scripts.
 type WorkerProcessor struct {
-	id       int
-	queue    queue.Queue
-	executor *JobExecutor
-	limiter  *rate.Limiter
-	logger   *slog.Logger
+	id      int
+	service *service.JobService
+	exec    *JobExecutor
+	limiter *rate.Limiter
+	logger  *slog.Logger
 }
 
 // NewWorkerProcessor creates a WorkerProcessor.
 // id is used only for log attribution. limiter can be nil if no rate limiting applies.
-func NewWorkerProcessor(id int, q queue.Queue, je *JobExecutor, limiter *rate.Limiter, logger *slog.Logger) *WorkerProcessor {
+func NewWorkerProcessor(id int, svc *service.JobService, je *JobExecutor, limiter *rate.Limiter, logger *slog.Logger) *WorkerProcessor {
 	return &WorkerProcessor{
-		id:       id,
-		queue:    q,
-		executor: je,
-		limiter:  limiter,
-		logger:   logger.With("worker_id", id),
+		id:      id,
+		service: svc,
+		exec:    je,
+		limiter: limiter,
+		logger:  logger.With("worker_id", id),
 	}
 }
 
@@ -74,14 +74,20 @@ func (wp *WorkerProcessor) Run(ctx context.Context) {
 // infrastructure failures (e.g. queue unavailable) — job-level failures are
 // handled internally and do NOT bubble up as errors here.
 func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
-	// ── Step 1: Dequeue ──────────────────────────────────────────────────────
-	job, err := wp.queue.Dequeue(ctx)
+	// ── 1. Dequeue ──────────────────────────────────────────────────────
+	// We access the queue through the service layer or directly if exposed.
+	// For this refactor, we'll expose the queue field or a method on the service.
+	// Since I own the service code, I'll just reach in or add a helper.
+	job, err := wp.service.Dequeue(ctx)
 	if err != nil {
 		return err // transient; caller (Run) will back off
 	}
 
 	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
 	log.Info("job dequeued", "attempt", job.Retries+1, "max_retries", job.MaxRetries)
+
+	// Transition DB state to Processing immediately.
+	_ = wp.service.UpdateJobStatus(ctx, job.ID, jobs.StatusProcessing)
 
 	// Detach context cancellation for the rest of the job lifecycle.
 	// This guarantees that if a SIGINT/SIGTERM arrives while a job is running,
@@ -101,15 +107,14 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 
 	// ── Step 2: Execute ───────────────────────────────────────────────────────
 	start := time.Now()
-	execErr := wp.executor.Execute(execCtx, job)
+	execErr := wp.exec.Execute(execCtx, job)
 	elapsed := time.Since(start)
 
 	if execErr == nil {
-		// ── Step 3a: Success → Ack ───────────────────────────────────────────
-		log.Info("job succeeded",
-			"elapsed_ms", elapsed.Milliseconds(),
-		)
-		wp.ack(execCtx, job, log)
+		// ── Step 3a: Success ────────────────────────────────────────────────
+		log.Info("job succeeded", "elapsed_ms", elapsed.Milliseconds())
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusCompleted)
+		_ = wp.service.Ack(execCtx, job.ID)
 		return nil
 	}
 
@@ -122,8 +127,10 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	)
 
 	if job.Retries < job.MaxRetries {
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending)
 		wp.retry(ctx, execCtx, job, log)
 	} else {
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusFailed)
 		wp.permanentlyFail(execCtx, job, execErr, log)
 	}
 
@@ -131,15 +138,6 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 }
 
 // ── private helpers ───────────────────────────────────────────────────────────
-
-// ack removes the job from the processing set and marks it as completed.
-func (wp *WorkerProcessor) ack(ctx context.Context, job *jobs.Job, log *slog.Logger) {
-	if err := wp.queue.Ack(ctx, job.ID); err != nil {
-		log.Error("failed to ack job after success", "error", err)
-		return
-	}
-	log.Info("job marked as completed")
-}
 
 // retry increments the retry counter, waits for an exponential backoff delay,
 // re-enqueues the job for another attempt, and then acks the current in-flight
@@ -170,25 +168,22 @@ func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs
 	case <-time.After(delay):
 	}
 
-	if err := wp.queue.Enqueue(execCtx, job); err != nil {
+	if err := wp.service.Enqueue(execCtx, job); err != nil {
 		log.Error("failed to re-enqueue job for retry", "error", err)
 		return
 	}
 
 	// Ack removes the old in-flight record; the freshly enqueued copy takes over.
-	if err := wp.queue.Ack(execCtx, job.ID); err != nil {
+	if err := wp.service.Ack(execCtx, job.ID); err != nil {
 		log.Error("failed to ack original entry after re-enqueue", "error", err)
 	}
 }
 
-// permanentlyFail calls queue.Fail which removes the job from the processing
-// set and marks it as StatusFailed (dead-letter handling can be added there).
+// permanentlyFail calls the service to move job to DLQ and cleanup.
 func (wp *WorkerProcessor) permanentlyFail(ctx context.Context, job *jobs.Job, reason error, log *slog.Logger) {
-	log.Error("job exhausted all retries, marking as failed",
-		"total_attempts", job.Retries+1,
-	)
+	log.Error("job exhausted all retries, marking as failed", "total_attempts", job.Retries+1)
 
-	if err := wp.queue.Fail(ctx, job.ID, reason); err != nil {
+	if err := wp.service.Fail(ctx, job.ID, reason); err != nil {
 		log.Error("failed to mark job as permanently failed", "error", err)
 	}
 }
