@@ -98,11 +98,12 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	execCtx := context.WithoutCancel(ctx)
 
 	// ── Rate Limit Check ──────────────────────────────────────────────────────
-	// Wait logic consumes a token globally. If blocked, the job sits in the processing hash.
+	// Wait logic consumes a token globally. We use the original 'ctx' here so 
+	// that a shutdown signal can immediately interrupt the wait.
 	if wp.limiter != nil {
-		if err := wp.limiter.Wait(execCtx); err != nil {
+		if err := wp.limiter.Wait(ctx); err != nil {
 			// If context cancels while waiting for a token, we safely abandon.
-			// The in-flight job will be rescued by dead-letter reconciler natively.
+			// The in-flight job will be rescued by the reaper/DLQ reconciler natively.
 			return err
 		}
 	}

@@ -9,29 +9,37 @@ A production-ready, horizontally scalable, and pluggable distributed task queue 
 ```mermaid
 graph LR
     Client([Client])
-    subgraph "API Layer"
+    
+    subgraph API_Layer ["API Layer"]
         API[HTTP API Server]
     end
-    subgraph "Broker & Store"
+    
+    subgraph Broker ["Broker & Store"]
         Redis[(Redis)]
     end
-    subgraph "Worker Pool (Scalable)"
+    
+    subgraph Worker_Pool ["Worker Pool (Scalable)"]
         W1[Worker 1]
         W2[Worker 2]
         W3[Worker N]
     end
-    subgraph "Database"
+    
+    subgraph DB_Layer ["Database Layer"]
         DB[(Persistence)]
     end
 
     Client -->|POST /jobs| API
     API -->|Enqueue| Redis
-    Redis <-->|Visibility Timeout| W1
-    Redis <-->|Visibility Timeout| W2
-    Redis <-->|Visibility Timeout| W3
-    W1 -.->|Update Status| DB
-    W2 -.->|Update Status| DB
-    W3 -.->|Update Status| DB
+    Redis --- W1
+    Redis --- W2
+    Redis --- W3
+    W1 --> DB
+    W2 --> DB
+    W3 --> DB
+    
+    %% Style notes
+    linkStyle 2,3,4 stroke:#f96,stroke-width:2px;
+    linkStyle 5,6,7 stroke-dasharray: 5 5;
 ```
 
 ---
