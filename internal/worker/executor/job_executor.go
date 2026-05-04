@@ -7,52 +7,37 @@ import (
 
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/worker/plugin"
-	"task-queue-system/internal/worker/processor"
 )
 
-// JobExecutor is a high-level executor that wraps a Dispatcher pre-loaded
-// with all built-in handlers. Call Execute to process a single job
-// synchronously — useful for testing, one-off runs, or embedding in the
-// worker loop's Executor.Run.
-//
-// To add a new job type, call RegisterHandler before any jobs arrive.
+// JobExecutor manages the registration and execution of job plugins.
 type JobExecutor struct {
-	dispatcher *processor.Dispatcher
-	logger     *slog.Logger
+	registry *plugin.Registry
+	logger   *slog.Logger
 }
 
-// NewJobExecutor creates a JobExecutor and registers the default handlers:
-//
-//	"email"  → jobs.EmailHandler
-//	"image"  → jobs.ImageHandler
+// NewJobExecutor creates a JobExecutor with built-in plugins registered by default.
 func NewJobExecutor(logger *slog.Logger) *JobExecutor {
-	d := processor.NewDispatcher()
+	reg := plugin.NewRegistry()
 
-	d.Register(jobs.NewEmailHandler(logger))
-	d.Register(jobs.NewImageHandler(logger))
+	// Register default plugins.
+	_ = reg.Register(jobs.NewEmailHandler(logger))
+	_ = reg.Register(jobs.NewImageHandler(logger))
 
 	return &JobExecutor{
-		dispatcher: d,
-		logger:     logger,
+		registry: reg,
+		logger:   logger,
 	}
 }
 
-// RegisterPlugin adds a new plugin to the executor.
+// RegisterPlugin adds a new job type capability to the executor.
 func (je *JobExecutor) RegisterPlugin(p plugin.JobPlugin) {
-	jobType := p.Type()
-	// Wrap in a recover so we can give a useful warning instead of panicking
-	// when re-registering during testing or hot-reload scenarios.
-	defer func() {
-		if r := recover(); r != nil {
-			je.logger.Warn("plugin already registered, skipping", "job_type", jobType)
-		}
-	}()
-	je.dispatcher.Register(p)
+	if err := je.registry.Register(p); err != nil {
+		je.logger.Warn("plugin registration failed", "job_type", p.Type(), "error", err)
+	}
 }
 
-// Execute processes a single job synchronously.
-// It delegates to the dispatcher which routes by job.Type.
-// Returns an error if no handler is registered or the handler fails.
+// Execute performs the work for a given job by fetching the appropriate plugin.
+// It fulfills the "registry instead of switch-case" requirement by dynamic lookup.
 func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) error {
 	if job == nil {
 		return fmt.Errorf("job_executor: cannot execute a nil job")
@@ -60,9 +45,19 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) error {
 
 	je.logger.Debug("executing job", "job_id", job.ID, "job_type", job.Type)
 
-	if err := je.dispatcher.Dispatch(ctx, job); err != nil {
-		return fmt.Errorf("job_executor: job %s (%s) failed: %w", job.ID, job.Type, err)
+	// Fetch plugin from registry using job.Type
+	p, err := je.registry.Get(job.Type)
+	if err != nil {
+		return fmt.Errorf("job_executor: no plugin for %q: %w", job.Type, err)
 	}
 
-	return nil
+	// Call plugin.Execute(payload)
+	// Note: We use a deferred recover here to ensure worker threads don't panic on plugin mistakes.
+	defer func() {
+		if r := recover(); r != nil {
+			je.logger.Error("plugin panicked during execution", "job_type", job.Type, "panic", r)
+		}
+	}()
+
+	return p.Execute(job.Payload)
 }
