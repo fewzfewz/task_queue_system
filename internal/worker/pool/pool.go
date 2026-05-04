@@ -8,10 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/worker/executor"
+	"task-queue-system/internal/worker/limiter"
 )
 
 // Config holds the configuration for the worker pool.
@@ -30,7 +29,7 @@ type Pool struct {
 	instanceID string
 	service    *service.JobService
 	executor   *executor.JobExecutor
-	limiter    *rate.Limiter
+	limiter    limiter.RateLimiter
 	logger     *slog.Logger
 
 	cancel context.CancelFunc
@@ -43,9 +42,9 @@ func New(cfg Config, instanceID string, svc *service.JobService, je *executor.Jo
 		return nil, fmt.Errorf("pool: NumWorkers must be at least 1, got %d", cfg.NumWorkers)
 	}
 
-	var limiter *rate.Limiter
+	var l limiter.RateLimiter
 	if cfg.JobsPerSecond > 0 {
-		limiter = rate.NewLimiter(rate.Limit(cfg.JobsPerSecond), 1)
+		l = limiter.NewTokenBucketLimiter(cfg.JobsPerSecond)
 	}
 
 	return &Pool{
@@ -53,7 +52,7 @@ func New(cfg Config, instanceID string, svc *service.JobService, je *executor.Jo
 		instanceID: instanceID,
 		service:    svc,
 		executor:   je,
-		limiter:    limiter,
+		limiter:    l,
 		logger:     logger,
 	}, nil
 }

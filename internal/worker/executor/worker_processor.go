@@ -5,10 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"golang.org/x/time/rate"
-
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/service"
+	"task-queue-system/internal/worker/limiter"
 )
 
 // WorkerProcessor orchestrates the full job lifecycle for a single worker:
@@ -24,18 +23,18 @@ type WorkerProcessor struct {
 	name    string
 	service *service.JobService
 	exec    *JobExecutor
-	limiter *rate.Limiter
+	limiter limiter.RateLimiter
 	logger  *slog.Logger
 }
 
 // NewWorkerProcessor creates a WorkerProcessor.
 // name is used for log attribution and job metadata. limiter can be nil if no rate limiting applies.
-func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, limiter *rate.Limiter, logger *slog.Logger) *WorkerProcessor {
+func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l limiter.RateLimiter, logger *slog.Logger) *WorkerProcessor {
 	return &WorkerProcessor{
 		name:    name,
 		service: svc,
 		exec:    je,
-		limiter: limiter,
+		limiter: l,
 		logger:  logger.With("worker_id", name),
 	}
 }
