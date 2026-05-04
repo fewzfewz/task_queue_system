@@ -88,13 +88,19 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
 	log.Info("processing job dequeued", "status", jobs.StatusProcessing)
 
-	// ── Idempotency Check ─────────────────────────────────────────────────────
-	// In a distributed system, a job might have been handled by another worker 
-	// if the visibility timeout expired or a double-queue occurred.
+	// 1. Fast Redis Check
+	isDone, _ := wp.service.IsProcessed(ctx, job.ID)
+	if isDone {
+		log.Info("skipping duplicate execution; job already marked as processed in Redis")
+		_ = wp.service.Ack(ctx, job.ID)
+		return nil
+	}
+
+	// 2. Persistent Store Check (Fallback)
 	storedJob, err := wp.service.GetJobStatus(ctx, job.ID)
 	if err == nil && storedJob != nil {
 		if storedJob.Status == jobs.StatusCompleted || storedJob.Status == jobs.StatusFailed {
-			log.Info("skipping duplicate execution; job already finished", "final_status", storedJob.Status)
+			log.Info("skipping duplicate execution; job already finished in database", "final_status", storedJob.Status)
 			_ = wp.service.Ack(ctx, job.ID) // clear from broker
 			return nil
 		}
@@ -126,11 +132,13 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	elapsed := time.Since(start)
 
 	if execErr == nil {
-		// ── Step 3a: Success ────────────────────────────────────────────────
-		log.Info("job succeeded", 
-			"status", jobs.StatusCompleted,
-			"execution_time_ms", elapsed.Milliseconds(),
-		)
+		// ── Handle Success ────────────────────────────────────────────────────────
+		log.Info("job succeeded", "status", jobs.StatusCompleted, "execution_time_ms", time.Since(start).Milliseconds())
+
+		// Mark as processed in Redis for idempotency
+		_ = wp.service.MarkProcessed(execCtx, job.ID)
+
+		// Persist result and status
 		_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusCompleted, wp.name, result)
 		_ = wp.service.Ack(execCtx, job.ID)
 		return nil

@@ -145,3 +145,24 @@ func (s *JobService) GetActiveWorkers(ctx context.Context) ([]queue.WorkerInfo, 
 func (s *JobService) GetMetrics(ctx context.Context) (queue.QueueMetrics, error) {
 	return s.queue.GetMetrics(ctx)
 }
+
+// IsProcessed checks if the job already succeeded (idempotency guard).
+func (s *JobService) IsProcessed(ctx context.Context, jobID string) (bool, error) {
+	return s.queue.IsProcessed(ctx, jobID)
+}
+
+// MarkProcessed flags the job as having successfully completed.
+func (s *JobService) MarkProcessed(ctx context.Context, jobID string) error {
+	return s.queue.MarkProcessed(ctx, jobID)
+}
+
+// PromoteScheduledJobs pushes matured delayed tasks to active queues.
+func (s *JobService) PromoteScheduledJobs(ctx context.Context) (int, error) {
+	return s.queue.PromoteScheduledJobs(ctx)
+}
+
+// ReclaimTimedOutJobs finds and re-queues jobs from crashed workers.
+func (s *JobService) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
+	return s.queue.ReclaimTimedOutJobs(ctx)
+}
+

@@ -25,6 +25,8 @@ const (
 	visibilityTimeout = 30 * time.Second
 	// dequeueTimeout is how long BRPOP will block before returning a timeout error.
 	dequeueTimeout = 5 * time.Second
+	// processedSetKey is a Redis Set that stores IDs of successfully completed jobs.
+	processedSetKey = "task_queue:processed"
 )
 
 // promoteScheduledJobsScript moves due jobs from ZSET to priority lists atomically.
@@ -91,6 +93,7 @@ type RedisQueue struct {
 	metricsCompleted string
 	metricsFailed    string
 	heartbeatPrefix  string
+	processedKey     string
 }
 
 // New creates a new RedisQueue. The provided client must already be connected.
@@ -111,6 +114,7 @@ func New(client *redis.Client, queueName string) *RedisQueue {
 		metricsCompleted: baseKey + ":metrics:completed",
 		metricsFailed:    baseKey + ":metrics:failed",
 		heartbeatPrefix:  baseKey + ":workers:heartbeat:",
+		processedKey:     baseKey + ":processed",
 	}
 }
 
@@ -445,3 +449,14 @@ func (q *RedisQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
 	
 	return res, nil
 }
+
+// IsProcessed checks if a job has already been marked as completed in Redis.
+func (q *RedisQueue) IsProcessed(ctx context.Context, jobID string) (bool, error) {
+	return q.client.SIsMember(ctx, q.processedKey, jobID).Result()
+}
+
+// MarkProcessed adds a job ID to the set of completed jobs.
+func (q *RedisQueue) MarkProcessed(ctx context.Context, jobID string) error {
+	return q.client.SAdd(ctx, q.processedKey, jobID).Err()
+}
+

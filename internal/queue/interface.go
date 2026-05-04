@@ -38,6 +38,14 @@ type Queue interface {
 
 	// GetActiveWorkers retrieves details about all currently active worker instances.
 	GetActiveWorkers(ctx context.Context) ([]WorkerInfo, error)
+
+	// Idempotency Guards
+	IsProcessed(ctx context.Context, jobID string) (bool, error)
+	MarkProcessed(ctx context.Context, jobID string) error
+
+	// Maintenance Ops
+	PromoteScheduledJobs(ctx context.Context) (int, error)
+	ReclaimTimedOutJobs(ctx context.Context) (int, error)
 }
 
 // WorkerInfo represents the status of an individual worker process.
