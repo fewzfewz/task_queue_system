@@ -27,6 +27,28 @@ const (
 	dequeueTimeout = 5 * time.Second
 )
 
+// promoteScheduledJobsScript moves due jobs from ZSET to priority lists atomically.
+var promoteScheduledJobsScript = redis.NewScript(`
+	local delayedKey = KEYS[1]
+	local now = ARGV[1]
+	local jobs = redis.call('ZRANGEBYSCORE', delayedKey, 0, now)
+	
+	for _, job in ipairs(jobs) do
+		local decoded = cjson.decode(job)
+		local targetKey = KEYS[2] -- medium by default
+		if decoded.priority == 'high' then
+			targetKey = KEYS[3]
+		elseif decoded.priority == 'low' then
+			targetKey = KEYS[4]
+		end
+		
+		redis.call('LPUSH', targetKey, job)
+		redis.call('ZREM', delayedKey, job)
+	end
+	return #jobs
+`)
+
+
 // RedisQueue is a Redis-backed implementation of the queue.Queue interface.
 // It uses a Redis list for the pending queue and a Redis hash to track
 // jobs that are currently being processed, enabling safe Ack and Fail semantics.
@@ -361,4 +383,21 @@ func (q *RedisQueue) GetActiveWorkers(ctx context.Context) ([]queue.WorkerInfo, 
 	}
 
 	return workers, nil
+}
+
+// PromoteScheduledJobs checks for jobs in the delayed set that are due and moves them
+// to the active processing queues. Returns the number of promoted jobs.
+func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
+	now := time.Now().Unix()
+	
+	// KEYS: [delayed_jobs, qMedium, qHigh, qLow]
+	res, err := promoteScheduledJobsScript.Run(ctx, q.client, []string{
+		q.qDelayed, q.qMedium, q.qHigh, q.qLow,
+	}, now).Int()
+	
+	if err != nil && err != redis.Nil {
+		return 0, fmt.Errorf("queue: failed to execute promotion script: %w", err)
+	}
+	
+	return res, nil
 }

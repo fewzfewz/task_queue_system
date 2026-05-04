@@ -12,6 +12,7 @@ COPY . .
 # Build both binaries statically
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /scheduler ./cmd/scheduler
 
 # Final lightweight stage
 FROM alpine:latest
@@ -24,6 +25,7 @@ RUN apk add --no-cache tzdata ca-certificates
 # Copy from builder
 COPY --from=builder /api /app/api
 COPY --from=builder /worker /app/worker
+COPY --from=builder /scheduler /app/scheduler
 
 # Running as a non-root user for security
 RUN adduser -D appuser
