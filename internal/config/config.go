@@ -19,6 +19,9 @@ type Config struct {
 
 	// RedisDB is the database number to use. Default: 0
 	RedisDB int
+
+	// ApiKey is the required secret for protected endpoints.
+	ApiKey string
 }
 
 // Load reads environment variables and returns a populated Config with defaults.
@@ -28,6 +31,7 @@ func Load() *Config {
 		RedisHost:     getEnvOrDefault("REDIS_HOST", "localhost:6379"),
 		RedisPassword: getEnvOrDefault("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
+		ApiKey:        getEnvOrDefault("API_KEY", "secret-api-key"),
 	}
 }
 

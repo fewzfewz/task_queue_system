@@ -20,14 +20,14 @@ import (
 // It is the single source of truth for all route → handler mappings.
 //
 // Pass models.NewInMemoryStore() for local dev or a PostgresStore for production.
-func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger) http.Handler {
+func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, apiKey string) http.Handler {
 	svc := service.New(q, store, logger)
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()
 
-	// POST /jobs        → create a new job and enqueue it
-	mux.HandleFunc("POST /jobs", h.CreateJob)
+	// POST /jobs        → create a new job and enqueue it (PROTECTED)
+	mux.Handle("POST /jobs", middleware.AuthRequired(apiKey)(http.HandlerFunc(h.CreateJob)))
 
 	// GET  /jobs/{id}   → return the current status of a job
 	mux.HandleFunc("GET /jobs/{id}", h.GetJobStatus)

@@ -56,7 +56,7 @@ func main() {
 	store := models.NewRedisStore(redisClient)
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, log)
+	router := routes.NewRouter(q, store, log, cfg.ApiKey)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
