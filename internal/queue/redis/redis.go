@@ -20,7 +20,7 @@ const (
 	processingSetKey = "task_queue:in_flight"
 	// delayedQueueKey is a Redis Sorted Set (ZSET) for scheduled jobs.
 	// Score is the Unix timestamp (seconds) when the job should be enqueued.
-	delayedQueueKey = "task_queue:delayed"
+	delayedQueueKey = "delayed_jobs"
 	// visibilityTimeout is how long a worker has to process a job before it can be reclaimed.
 	visibilityTimeout = 30 * time.Second
 	// dequeueTimeout is how long BRPOP will block before returning a timeout error.
@@ -56,7 +56,7 @@ func New(client *redis.Client, queueName string) *RedisQueue {
 		qHigh:            baseKey + ":high",
 		qMedium:          baseKey + ":medium",
 		qLow:             baseKey + ":low",
-		qDelayed:         baseKey + ":delayed",
+		qDelayed:         "delayed_jobs",
 		dlqKey:           baseKey + ":dead_letter",
 		metricsTotal:     baseKey + ":metrics:total",
 		metricsCompleted: baseKey + ":metrics:completed",
