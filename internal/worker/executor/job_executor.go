@@ -20,8 +20,8 @@ func NewJobExecutor(logger *slog.Logger) *JobExecutor {
 	reg := plugin.NewRegistry()
 
 	// Register default plugins.
-	_ = reg.Register(jobs.NewEmailHandler(logger))
-	_ = reg.Register(jobs.NewImageHandler(logger))
+	_ = reg.Register(jobs.NewEmailPlugin(logger))
+	_ = reg.Register(jobs.NewImagePlugin(logger))
 
 	return &JobExecutor{
 		registry: reg,
