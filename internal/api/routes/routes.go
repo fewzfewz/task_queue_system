@@ -10,6 +10,7 @@ import (
 
 	_ "task-queue-system/docs" // Import generated swagger files natively
 	"task-queue-system/internal/api/handler"
+	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
@@ -43,5 +44,8 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger) http.Hand
 		httpSwagger.URL("/swagger/doc.json"), // Provides the canonical JSON schema natively
 	))
 
-	return mux
+	// Apply middleware: log all requests
+	handlerWithMiddleware := middleware.RequestLogger(logger)(mux)
+
+	return handlerWithMiddleware
 }

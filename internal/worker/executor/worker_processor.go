@@ -36,7 +36,7 @@ func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l
 		service: svc,
 		exec:    je,
 		limiter: limiter,
-		logger:  logger.With("worker", name),
+		logger:  logger.With("worker_id", name),
 	}
 }
 
@@ -87,7 +87,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	job.ProcessedBy = wp.name
 
 	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
-	log.Info("processing job dequeued")
+	log.Info("processing job dequeued", "status", jobs.StatusProcessing)
 
 	// Transition DB state to Processing immediately and attach worker ID.
 	_ = wp.service.UpdateJobStatus(ctx, job.ID, jobs.StatusProcessing, wp.name)
@@ -115,7 +115,10 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 
 	if execErr == nil {
 		// ── Step 3a: Success ────────────────────────────────────────────────
-		log.Info("job succeeded", "elapsed_ms", elapsed.Milliseconds())
+		log.Info("job succeeded", 
+			"status", jobs.StatusCompleted,
+			"execution_time_ms", elapsed.Milliseconds(),
+		)
 		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusCompleted, wp.name)
 		_ = wp.service.Ack(execCtx, job.ID)
 		return nil
@@ -123,8 +126,9 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 
 	// ── Step 3b: Failure → decide retry or permanent fail ────────────────────
 	log.Error("job execution failed",
+		"status", "error",
 		"error", execErr,
-		"elapsed_ms", elapsed.Milliseconds(),
+		"execution_time_ms", elapsed.Milliseconds(),
 		"retries_used", job.Retries,
 		"max_retries", job.MaxRetries,
 	)
