@@ -48,6 +48,33 @@ var promoteScheduledJobsScript = redis.NewScript(`
 	return #jobs
 `)
 
+// reclaimTimedOutJobsScript moves expired in-flight jobs back to priority lists.
+var reclaimTimedOutJobsScript = redis.NewScript(`
+	local inFlightKey = KEYS[1]
+	local payloadKey = KEYS[2]
+	local now = ARGV[1]
+	local jobs = redis.call('ZRANGEBYSCORE', inFlightKey, 0, now)
+	
+	for _, id in ipairs(jobs) do
+		local payload = redis.call('HGET', payloadKey, id)
+		if payload then
+			local decoded = cjson.decode(payload)
+			local targetKey = KEYS[3] -- medium by default
+			if decoded.priority == 'high' then
+				targetKey = KEYS[4]
+			elseif decoded.priority == 'low' then
+				targetKey = KEYS[5]
+			end
+			
+			redis.call('LPUSH', targetKey, payload)
+		end
+		redis.call('ZREM', inFlightKey, id)
+		redis.call('HDEL', payloadKey, id)
+	end
+	return #jobs
+`)
+
+
 
 // RedisQueue is a Redis-backed implementation of the queue.Queue interface.
 // It uses a Redis list for the pending queue and a Redis hash to track
@@ -397,6 +424,23 @@ func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 	
 	if err != nil && err != redis.Nil {
 		return 0, fmt.Errorf("queue: failed to execute promotion script: %w", err)
+	}
+	
+	return res, nil
+}
+
+// ReclaimTimedOutJobs identifies jobs that have exceeded their visibility timeout
+// and moves them back to the active queues for another attempt.
+func (q *RedisQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
+	now := time.Now().Unix()
+	
+	// KEYS: [inFlightKey, payloadsKey, qMedium, qHigh, qLow]
+	res, err := reclaimTimedOutJobsScript.Run(ctx, q.client, []string{
+		processingSetKey, "task_queue:payloads", q.qMedium, q.qHigh, q.qLow,
+	}, now).Int()
+	
+	if err != nil && err != redis.Nil {
+		return 0, fmt.Errorf("queue: failed to execute reclaim script: %w", err)
 	}
 	
 	return res, nil

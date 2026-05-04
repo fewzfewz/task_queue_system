@@ -53,7 +53,7 @@ func main() {
 	ticker := time.NewTicker(1500 * time.Millisecond) // 1.5s interval
 	defer ticker.Stop()
 
-	log.Info("scheduler promotion loop active", "interval_ms", 1500)
+	log.Info("scheduler maintenance loop active", "interval_ms", 1500)
 
 	for {
 		select {
@@ -61,14 +61,20 @@ func main() {
 			log.Info("scheduler shutting down gracefully")
 			return
 		case <-ticker.C:
+			// 1. Promote scheduled jobs
 			count, err := q.PromoteScheduledJobs(ctx)
 			if err != nil {
 				log.Error("promotion failed", "error", err)
-				continue
+			} else if count > 0 {
+				log.Info("scheduled jobs promoted", "count", count)
 			}
 
-			if count > 0 {
-				log.Info("scheduled jobs promoted", "count", count)
+			// 2. Reclaim timed-out jobs
+			reclaimed, err := q.ReclaimTimedOutJobs(ctx)
+			if err != nil {
+				log.Error("reclamation failed", "error", err)
+			} else if reclaimed > 0 {
+				log.Info("stalled jobs reclaimed", "count", reclaimed)
 			}
 		}
 	}
