@@ -52,6 +52,9 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		if err != nil {
 			return nil, fmt.Errorf("service: invalid run_at timestamp: %w", err)
 		}
+		if runAt.Before(time.Now()) {
+			return nil, fmt.Errorf("service: run_at timestamp must be in the future")
+		}
 	}
 
 	job := jobs.NewJob(jobType, payload, jobs.JobPriority(priority), maxRetries, runAt)
