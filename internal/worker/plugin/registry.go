@@ -47,3 +47,20 @@ func (r *Registry) Get(jobType string) (JobPlugin, error) {
 
 	return p, nil
 }
+
+var (
+	globalRegistry = NewRegistry()
+)
+
+// RegisterGlobal binds a plugin to the system-wide global registry.
+// This is intended to be called from a plugin's init() function.
+func RegisterGlobal(p JobPlugin) {
+	if err := globalRegistry.Register(p); err != nil {
+		fmt.Printf("plugin: global registration failed for %q: %v\n", p.Type(), err)
+	}
+}
+
+// GetGlobalRegistry returns the shared plugin registry.
+func GetGlobalRegistry() *Registry {
+	return globalRegistry
+}

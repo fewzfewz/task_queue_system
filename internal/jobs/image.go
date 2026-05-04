@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"task-queue-system/internal/worker/plugin"
 )
 
 // ImagePlugin implements plugin.JobPlugin for jobs of type "image".
@@ -14,6 +16,11 @@ type ImagePlugin struct {
 // NewImagePlugin creates an ImagePlugin with the provided logger.
 func NewImagePlugin(logger *slog.Logger) *ImagePlugin {
 	return &ImagePlugin{logger: logger}
+}
+
+func init() {
+	p := NewImagePlugin(slog.Default())
+	plugin.RegisterGlobal(p)
 }
 
 func (p *ImagePlugin) Type() string {

@@ -10,7 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/config"
-	"task-queue-system/internal/jobs"
+	_ "task-queue-system/internal/jobs" // Dynamic plugin auto-loading
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
@@ -57,11 +57,10 @@ func main() {
 	store := models.NewRedisStore(redisClient)
 	svc := service.New(q, store, log)
 
-	// ── 5. Initialise Job Executor and Register Plugins ──────────────────────
-	// We explicitly register all available job plugins here before starting the pool.
+	// ── 5. Initialise Job Executor ──────────────────────────────────────────
+	// The executor automatically picks up plugins registered via init() calls
+	// in the imported packages.
 	jobExec := executor.NewJobExecutor(log)
-	jobExec.RegisterPlugin(jobs.NewEmailPlugin(log))
-	jobExec.RegisterPlugin(jobs.NewImagePlugin(log))
 
 	// ── 6. Setup Worker Pool ──────────────────────────────────────────────────
 	// Number of concurrent workers. We use 5 as a default.

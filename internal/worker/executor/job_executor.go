@@ -15,12 +15,10 @@ type JobExecutor struct {
 	logger   *slog.Logger
 }
 
-// NewJobExecutor creates an empty JobExecutor.
+// NewJobExecutor creates a JobExecutor using the system-wide global plugin registry.
 func NewJobExecutor(logger *slog.Logger) *JobExecutor {
-	reg := plugin.NewRegistry()
-
 	return &JobExecutor{
-		registry: reg,
+		registry: plugin.GetGlobalRegistry(),
 		logger:   logger,
 	}
 }

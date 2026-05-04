@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"task-queue-system/internal/worker/plugin"
 )
 
 // EmailJob holds the typed fields expected inside an "email" job's Payload.
@@ -21,6 +23,13 @@ type EmailPlugin struct {
 // NewEmailPlugin creates an EmailPlugin with the provided logger.
 func NewEmailPlugin(logger *slog.Logger) *EmailPlugin {
 	return &EmailPlugin{logger: logger}
+}
+
+func init() {
+	// Note: In a real production system, you might want to pass a global logger
+	// or use a factory. For this demo, we use a default slog logger for auto-registration.
+	p := NewEmailPlugin(slog.Default())
+	plugin.RegisterGlobal(p)
 }
 
 func (p *EmailPlugin) Type() string {
