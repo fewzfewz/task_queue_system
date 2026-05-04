@@ -88,6 +88,18 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
 	log.Info("processing job dequeued", "status", jobs.StatusProcessing)
 
+	// ── Idempotency Check ─────────────────────────────────────────────────────
+	// In a distributed system, a job might have been handled by another worker 
+	// if the visibility timeout expired or a double-queue occurred.
+	storedJob, err := wp.service.GetJobStatus(ctx, job.ID)
+	if err == nil && storedJob != nil {
+		if storedJob.Status == jobs.StatusCompleted || storedJob.Status == jobs.StatusFailed {
+			log.Info("skipping duplicate execution; job already finished", "final_status", storedJob.Status)
+			_ = wp.service.Ack(ctx, job.ID) // clear from broker
+			return nil
+		}
+	}
+
 	// Transition DB state to Processing immediately and attach worker ID.
 	_ = wp.service.UpdateJobStatus(ctx, job.ID, jobs.StatusProcessing, wp.name)
 
