@@ -22,6 +22,10 @@ type Config struct {
 
 	// ApiKey is the required secret for protected endpoints.
 	ApiKey string
+
+	// JobRateLimit is the global throughput limit for worker tasks (JPS).
+	// Default: 0 (unlimited)
+	JobRateLimit float64
 }
 
 // Load reads environment variables and returns a populated Config with defaults.
@@ -32,6 +36,7 @@ func Load() *Config {
 		RedisPassword: getEnvOrDefault("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 		ApiKey:        getEnvOrDefault("API_KEY", "secret-api-key"),
+		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
 	}
 }
 
@@ -50,6 +55,16 @@ func getEnvAsInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	if v, err := strconv.Atoi(str); err == nil {
+		return v
+	}
+	return defaultVal
+}
+func getEnvAsFloat(key string, defaultVal float64) float64 {
+	str := os.Getenv(key)
+	if str == "" {
+		return defaultVal
+	}
+	if v, err := strconv.ParseFloat(str, 64); err == nil {
 		return v
 	}
 	return defaultVal

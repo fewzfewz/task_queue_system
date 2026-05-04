@@ -63,11 +63,10 @@ func main() {
 	jobExec := executor.NewJobExecutor(log)
 
 	// ── 6. Setup Worker Pool ──────────────────────────────────────────────────
-	// Number of concurrent workers. We use 5 as a default.
-	// Rate limit execution to 0 (unlimited) to allow raw throughput benchmark testing.
+	// Number of concurrent workers. We use 50 as a default for massive load testing.
 	poolCfg := pool.Config{
-		NumWorkers:    50, // Massive concurrency for load testing demo
-		JobsPerSecond: 0.0,
+		NumWorkers:    50,
+		JobsPerSecond: cfg.JobRateLimit,
 	}
 
 	workerPool, err := pool.New(poolCfg, instanceID, svc, jobExec, log)
