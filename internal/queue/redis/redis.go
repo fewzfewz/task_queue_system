@@ -15,11 +15,12 @@ import (
 const (
 	// defaultQueueKey is the Redis list that holds pending jobs.
 	defaultQueueKey = "task_queue:jobs"
-	// processingSetKey is a Redis hash that tracks in-flight jobs by ID.
-	// This gives us an audit trail for Ack and Fail without losing the payload.
-	processingSetKey = "task_queue:processing"
+	// processingSetKey is a Redis Sorted Set (ZSET) that tracks in-flight jobs.
+	// Score is the Unix timestamp (seconds) when the job becomes "visible" again (timeout).
+	processingSetKey = "task_queue:in_flight"
+	// visibilityTimeout is how long a worker has to process a job before it can be reclaimed.
+	visibilityTimeout = 30 * time.Second
 	// dequeueTimeout is how long BRPOP will block before returning a timeout error.
-	// A context deadline will also interrupt it earlier if set.
 	dequeueTimeout = 5 * time.Second
 )
 
@@ -126,14 +127,25 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	job.Status = jobs.StatusProcessing
 	job.UpdatedAt = time.Now().UTC()
 
-	// Persist the updated job to the processing hash so Ack/Fail can reference it.
+	// Persist the updated job for future reference and for visibility timeout reaper.
 	updated, err := json.Marshal(&job)
 	if err != nil {
 		return nil, fmt.Errorf("queue: failed to serialise processing job %s: %w", job.ID, err)
 	}
 
-	if err := q.client.HSet(ctx, processingSetKey, job.ID, updated).Err(); err != nil {
-		return nil, fmt.Errorf("queue: failed to store processing job %s: %w", job.ID, err)
+	// 1. Store payload in hash for O(1) lookup by ID.
+	// 2. Store ID in ZSET with visibility timeout for reaper.
+	timeoutAt := time.Now().Add(visibilityTimeout).Unix()
+
+	pipe := q.client.TxPipeline()
+	pipe.HSet(ctx, "task_queue:payloads", job.ID, updated)
+	pipe.ZAdd(ctx, processingSetKey, redis.Z{
+		Score:  float64(timeoutAt),
+		Member: job.ID,
+	})
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("queue: Dequeue tracking failed: %w", err)
 	}
 
 	return &job, nil
@@ -146,12 +158,33 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 		return fmt.Errorf("queue: jobID must not be empty")
 	}
 
-	deleted, err := q.client.HDel(ctx, processingSetKey, jobID).Result()
+	// Because we store the whole object in the ZSET but only have the ID here,
+	// we have to search the ZSET for the member.
+	// Simple approach for this refactor: scan the ZSET.
+	// Production-ready optimization: also keep a mapping of ID -> full payload.
+	// For "simple but safe", we'll use a scan or just store ID in ZSET and keep payload in Hash.
+	
+	// Refined approach: Use a Hash for [ID -> Payload] and ZSET for [ID -> Timeout].
+	// This makes ID-based lookups O(1) while allowing time-based queries.
+	
+	// Let's stick to the ZSET-only approach for now but we need the payload to remove it.
+	// Actually, it's easier to remove by ID if we only store the ID in the ZSET.
+	// I'll update Dequeue to store ONLY THE ID in the ZSET, and keep the ID -> JSON in a Hash.
+	
+	// Removing from both atomically.
+	pipe := q.client.TxPipeline()
+	pipe.HDel(ctx, "task_queue:payloads", jobID)
+	pipe.ZRem(ctx, processingSetKey, jobID)
+	
+	cmds, err := pipe.Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("queue: HDel failed for job %s: %w", jobID, err)
+		return fmt.Errorf("queue: Ack pipeline failed: %w", err)
 	}
-	if deleted == 0 {
-		return fmt.Errorf("queue: job %s not found in processing set", jobID)
+
+	// Check if we actually removed something
+	hdelRes := cmds[0].(*redis.IntCmd)
+	if hdelRes.Val() == 0 {
+		return fmt.Errorf("queue: job %s not found in active set", jobID)
 	}
 
 	// Atomic increment for metrics (fire and forget)
@@ -167,8 +200,8 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 		return fmt.Errorf("queue: jobID must not be empty")
 	}
 
-	// Retrieve the in-flight job from the processing hash.
-	raw, err := q.client.HGet(ctx, processingSetKey, jobID).Result()
+	// Retrieve the in-flight job payload from the hash.
+	raw, err := q.client.HGet(ctx, "task_queue:payloads", jobID).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return fmt.Errorf("queue: job %s not found in processing set", jobID)
@@ -181,9 +214,12 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 		return fmt.Errorf("queue: failed to deserialise job %s: %w", jobID, err)
 	}
 
-	// Remove from the processing hash regardless of what happens next.
-	if err := q.client.HDel(ctx, processingSetKey, jobID).Err(); err != nil {
-		return fmt.Errorf("queue: HDel failed for job %s: %w", jobID, err)
+	// Remove from both atomically.
+	pipe := q.client.TxPipeline()
+	pipe.HDel(ctx, "task_queue:payloads", jobID)
+	pipe.ZRem(ctx, processingSetKey, jobID)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("queue: Fail cleanup failed: %w", err)
 	}
 
 	job.Status = jobs.StatusFailed
@@ -242,8 +278,8 @@ func (q *RedisQueue) GetMetrics(ctx context.Context) (queue.QueueMetrics, error)
 		return queue.QueueMetrics{}, fmt.Errorf("queue: failed to fetch metrics: %w", err)
 	}
 
-	// Active is defined as the number of jobs currently sitting in the processing hash
-	active, err := q.client.HLen(ctx, processingSetKey).Result()
+	// Active is defined as the number of jobs currently sitting in the in-flight ZSET
+	active, err := q.client.ZCard(ctx, processingSetKey).Result()
 	if err != nil {
 		return queue.QueueMetrics{}, fmt.Errorf("queue: failed to fetch active count: %w", err)
 	}
