@@ -37,6 +37,7 @@ type RedisQueue struct {
 	metricsTotal     string
 	metricsCompleted string
 	metricsFailed    string
+	heartbeatPrefix  string
 }
 
 // New creates a new RedisQueue. The provided client must already be connected.
@@ -55,6 +56,7 @@ func New(client *redis.Client, queueName string) *RedisQueue {
 		metricsTotal:     baseKey + ":metrics:total",
 		metricsCompleted: baseKey + ":metrics:completed",
 		metricsFailed:    baseKey + ":metrics:failed",
+		heartbeatPrefix:  baseKey + ":workers:heartbeat:",
 	}
 }
 
@@ -284,6 +286,9 @@ func (q *RedisQueue) GetMetrics(ctx context.Context) (queue.QueueMetrics, error)
 		return queue.QueueMetrics{}, fmt.Errorf("queue: failed to fetch active count: %w", err)
 	}
 
+	// Fetch active workers count
+	workers, _ := q.GetActiveWorkers(ctx)
+
 	parseStr2Int := func(val interface{}) int64 {
 		if val == nil {
 			return 0
@@ -302,5 +307,42 @@ func (q *RedisQueue) GetMetrics(ctx context.Context) (queue.QueueMetrics, error)
 		CompletedJobs: parseStr2Int(res[1]),
 		FailedJobs:    parseStr2Int(res[2]),
 		ActiveJobs:    active,
+		WorkerCount:   len(workers),
 	}, nil
+}
+
+// RegisterHeartbeat sets a Redis key with a short expiration for the worker.
+func (q *RedisQueue) RegisterHeartbeat(ctx context.Context, workerID string) error {
+	key := q.heartbeatPrefix + workerID
+	val := time.Now().Format(time.RFC3339)
+	// 30 seconds TTL; if the worker crashes, the key expires automatically.
+	return q.client.Set(ctx, key, val, 30*time.Second).Err()
+}
+
+// GetActiveWorkers scans for all heartbeat keys and returns their values.
+func (q *RedisQueue) GetActiveWorkers(ctx context.Context) ([]queue.WorkerInfo, error) {
+	var workers []queue.WorkerInfo
+
+	// SCAN for keys matching the heartbeat prefix
+	iter := q.client.Scan(ctx, 0, q.heartbeatPrefix+"*", 100).Iterator()
+	for iter.Next(ctx) {
+		key := iter.Val()
+		val, err := q.client.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+
+		// Strip prefix from key to get worker ID
+		workerID := key[len(q.heartbeatPrefix):]
+		workers = append(workers, queue.WorkerInfo{
+			ID:            workerID,
+			LastHeartbeat: val,
+		})
+	}
+
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("queue: heartbeat scan failed: %w", err)
+	}
+
+	return workers, nil
 }

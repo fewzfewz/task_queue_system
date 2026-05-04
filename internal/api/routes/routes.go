@@ -34,6 +34,9 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger) http.Hand
 	// GET  /metrics     → system performance numbers
 	mux.HandleFunc("GET /metrics", h.GetMetrics)
 
+	// GET  /workers     → worker health and count details
+	mux.HandleFunc("GET /workers", h.GetWorkers)
+
 	// Swagger UI integration
 	// The http-swagger driver handles the static asset serving natively.
 	mux.HandleFunc("GET /swagger/", httpSwagger.Handler(

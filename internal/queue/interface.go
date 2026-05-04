@@ -32,6 +32,18 @@ type Queue interface {
 
 	// GetMetrics retrieves current queue execution metrics.
 	GetMetrics(ctx context.Context) (QueueMetrics, error)
+
+	// RegisterHeartbeat updates the last-seen status of a worker instance.
+	RegisterHeartbeat(ctx context.Context, workerID string) error
+
+	// GetActiveWorkers retrieves details about all currently active worker instances.
+	GetActiveWorkers(ctx context.Context) ([]WorkerInfo, error)
+}
+
+// WorkerInfo represents the status of an individual worker process.
+type WorkerInfo struct {
+	ID            string `json:"id"`
+	LastHeartbeat string `json:"last_heartbeat"`
 }
 
 // QueueMetrics holds point-in-time statistics about the queue.
@@ -40,4 +52,5 @@ type QueueMetrics struct {
 	CompletedJobs int64 `json:"completed_jobs"`
 	FailedJobs    int64 `json:"failed_jobs"`
 	ActiveJobs    int64 `json:"active_jobs"`
+	WorkerCount   int   `json:"worker_count"`
 }

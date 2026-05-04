@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"golang.org/x/time/rate"
 
@@ -67,6 +68,10 @@ func (p *Pool) Start(ctx context.Context) {
 
 	p.logger.Info("starting worker pool", "num_workers", p.cfg.NumWorkers)
 
+	// Start heartbeat goroutine for this instance
+	p.wg.Add(1)
+	go p.heartbeatLoop(workerCtx)
+
 	for i := range p.cfg.NumWorkers {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
 		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger)
@@ -75,6 +80,28 @@ func (p *Pool) Start(ctx context.Context) {
 			defer p.wg.Done()
 			w.Run(workerCtx)
 		}()
+	}
+}
+
+func (p *Pool) heartbeatLoop(ctx context.Context) {
+	defer p.wg.Done()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	// Register initial heartbeat
+	if err := p.service.RegisterHeartbeat(ctx, p.instanceID); err != nil {
+		p.logger.Error("failed to register heartbeat", "error", err)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := p.service.RegisterHeartbeat(ctx, p.instanceID); err != nil {
+				p.logger.Error("failed to update heartbeat", "error", err)
+			}
+		}
 	}
 }
 

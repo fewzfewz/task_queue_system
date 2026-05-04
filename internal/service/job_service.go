@@ -96,6 +96,16 @@ func (s *JobService) UpdateJobStatus(ctx context.Context, jobID string, status j
 	return nil
 }
 
+// RegisterHeartbeat logs the worker's presence in the queue system.
+func (s *JobService) RegisterHeartbeat(ctx context.Context, workerID string) error {
+	return s.queue.RegisterHeartbeat(ctx, workerID)
+}
+
+// GetActiveWorkers returns information about all connected worker instances.
+func (s *JobService) GetActiveWorkers(ctx context.Context) ([]queue.WorkerInfo, error) {
+	return s.queue.GetActiveWorkers(ctx)
+}
+
 // GetMetrics returns system execution metrics.
 func (s *JobService) GetMetrics(ctx context.Context) (queue.QueueMetrics, error) {
 	return s.queue.GetMetrics(ctx)

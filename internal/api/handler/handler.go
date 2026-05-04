@@ -126,6 +126,26 @@ func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, metrics)
 }
 
+// GetWorkers handles GET /workers.
+//
+// @Summary      Get active workers
+// @Description  Retrieves a list of all currently active worker instances and their last heartbeat timestamp.
+// @Tags         metrics
+// @Produce      json
+// @Success      200      {array}   queue.WorkerInfo
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /workers [get]
+func (h *JobHandler) GetWorkers(w http.ResponseWriter, r *http.Request) {
+	workers, err := h.service.GetActiveWorkers(r.Context())
+	if err != nil {
+		h.logger.Warn("get active workers failed", "error", err)
+		h.writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, workers)
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // writeJSON serialises v and writes it with the given status code.
