@@ -1,104 +1,125 @@
-# Distributed Task Queue System
+# 🚀 Go Distributed Task Queue
 
-A production-ready, distributed task queue system built in Go. This project implements a robust architecture for handling asynchronous background jobs with strict priority, automatic retries, and comprehensive monitoring.
-
-## 🏗 Architecture
-
-The system is decoupled into independent microservices (API and Workers) communicating through a Redis backbone.
-
-```mermaid
-flowchart LR
-    Client["Client/Mobile"] -->|POST /jobs| API["API Gateway"]
-    subgraph "Messaging Backbone (Redis)"
-        API -->|LPUSH| HighQ["High Priority Queue"]
-        API -->|LPUSH| MedQ["Medium Priority Queue"]
-        API -->|LPUSH| LowQ["Low Priority Queue"]
-        HighQ --- MedQ
-        MedQ --- LowQ
-    end
-    HighQ -->|BRPop| Workers["Worker Pool"]
-    MedQ -->|BRPop| Workers
-    LowQ -->|BRPop| Workers
-    
-    Workers -->|Execute| Logic["Job Handlers"]
-    Logic -->|Success| Storage["State Storage"]
-    Logic -->|Exhausted Retries| DLQ["Dead Letter Queue"]
-```
-
-## 🚀 Key Features
-
-- **Distributed By Design**: Decoupled API and Worker services allow independent scaling.
-- **Strict Priority Queuing**: Workers prioritize `high` urgency jobs before processing `medium` or `low` via Redis-native priority polling.
-- **Resilience & Fault Tolerance**:
-  - **Exponential Backoff**: Failed jobs are automatically retried with increasing delays (`2^retry` seconds).
-  - **Dead Letter Queue (DLQ)**: Jobs failing after maximum retries are moved to a separate queue for manual inspection.
-  - **Safe Ack**: Jobs are tracked in a "processing" set until fully completed, preventing data loss during crashes.
-- **Concurrency & Rate Limiting**: Internal worker pools with configurable global throughput limits (Tokens/sec).
-- **Observability**:
-  - **Swagger Documentation**: Interactive API documentation at `/swagger/index.html`.
-  - **Metrics Engine**: Real-time stats for `active_jobs`, `completed_jobs`, and `failed_jobs`.
-- **Graceful Shutdown**: On `SIGINT/SIGTERM`, workers stop accepting new tasks and finish in-flight jobs un-cancelled.
-
-## 🛠 Tech Stack
-
-- **Languge**: Go (Golang)
-- **Infrastructure**: Redis (Queue/Broker), Docker (Containerization)
-- **Frameworks**: `swaggo` (OpenAPI), `redis/go-redis`
-
-## 🏁 Getting Started
-
-### 📦 Running with Docker (Recommended)
-
-The easiest way to spin up the entire cluster (API, Workers, Redis) is using Docker Compose.
-
-```bash
-# 1. Build and start all services
-docker-compose up -d --build
-
-# 2. Check service logs
-docker-compose logs -f
-```
-
-### 🚦 API Usage
-
-Once running, the API is available at `http://localhost:8080`.
-
-**Create a Job:**
-
-```bash
-curl -X POST http://localhost:8080/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "email",
-    "priority": "high",
-    "payload": {"to": "recruiter@example.com", "subject": "Hire me!"}
-  }'
-```
-
-**Check System Health:**
-
-```bash
-curl http://localhost:8080/metrics
-```
-
-**Interactive Docs:**
-Navigate to `http://localhost:8080/swagger/index.html`
+A production-ready, horizontally scalable, and pluggable distributed task queue system built in Go. Designed for high availability, transactional consistency, and architectural flexibility.
 
 ---
 
-## 🔥 Scaling Workers
+## 🏗️ Architecture
 
-Scale the processing layer horizontally with a single command:
+```mermaid
+graph LR
+    Client([Client])
+    subgraph "API Layer"
+        API[HTTP API Server]
+    end
+    subgraph "Broker & Store"
+        Redis[(Redis)]
+    end
+    subgraph "Worker Pool (Scalable)"
+        W1[Worker 1]
+        W2[Worker 2]
+        W3[Worker N]
+    end
+    subgraph "Database"
+        DB[(Persistence)]
+    end
 
-```bash
-# Scale to 5 worker containers instantly
-docker-compose up -d --scale worker=5
+    Client -->|POST /jobs| API
+    API -->|Enqueue| Redis
+    Redis <-->|Visibility Timeout| W1
+    Redis <-->|Visibility Timeout| W2
+    Redis <-->|Visibility Timeout| W3
+    W1 -.->|Update Status| DB
+    W2 -.->|Update Status| DB
+    W3 -.->|Update Status| DB
 ```
 
-## 🧪 Load Testing
+---
 
-A benchmark script is included to test throughput using `ab` (Apache Benchmark):
+## ✨ Key Features
 
+- **🛡️ Atomic Visibility Timeouts**: Uses Redis Sorted Sets (`ZSET`) to ensure no job is ever processed by two workers simultaneously, with automatic reclamation for stalled workers.
+- **🔌 Pluggable Architecture**: Add new job types (Email, Image Processing, etc.) without touching the core engine via a dynamic `init()` based plugin registration system.
+- **📈 Horizontal Scaling**: Workers are fully stateless. Spin up 1 or 100 instances flawlessly using standard orchestration.
+- **🔄 Smart Retries**: Built-in exponential backoff (2ⁿ seconds) to handle transient failures gracefully.
+- **📬 Dead Letter Queue (DLQ)**: Failed tasks are preserved with full stack traces/error messages for manual inspection.
+- **📊 Real-time Observability**: JSON structured logging, `/metrics` endpoint for Prometheus, and a `/workers` health registry.
+- **🛡️ API Security**: Simple but effective X-API-Key middleware protection.
+
+---
+
+## 🛠️ Tech Stack
+
+- **Core**: Go (Golang) 1.22+
+- **Broker/Storage**: Redis (Optimised for atomic ops)
+- **Database**: PostgreSQL (Persisted Audit Log)
+- **Containerisation**: Docker & Docker Compose
+- **Observability**: Structured `slog` (JSON), Swagger/OpenAPI
+
+---
+
+## 🚀 Getting Started
+
+### 1. Run with Docker Compose
+One command to start the API, Redis, and a pool of 3 workers:
 ```bash
-./scripts/benchmark.sh
+docker-compose up --build --scale worker=3
+```
+
+### 2. Submit a Job (CLI)
+Use our pre-built CLI tool for easy testing:
+```bash
+./tq submit --type email --payload '{"to":"recruiter@top-tier.com"}'
+```
+
+### 3. Submit a Job (cURL)
+```bash
+curl -X POST http://localhost:8080/jobs \
+     -H "X-API-Key: secret-api-key" \
+     -H "Content-Type: application/json" \
+     -d '{"type":"email","payload":{"to":"user@example.com"},"priority":"high"}'
+```
+
+---
+
+## ⚖️ Scaling & Performance
+
+### Horizontal Scalability
+This system is architected to be **Shared-Nothing**. Workers do not communicate with each other. They interact solely with the centralized Redis broker using atomic operations (`ZADD`, `LPOP`, `TXPipeline`). 
+
+**To scale processing power:**
+1. Simply increase the `replicas` in Kubernetes or the `--scale` flag in Docker Compose.
+2. New workers will automatically register their heartbeats and begin competing for available tasks in the queue.
+3. No configuration changes are required on the API or existing workers.
+
+### Performance Benchmarking
+A high-concurrency stress test script is included:
+```bash
+# Fire 1000 jobs with 50 concurrent connections
+./scripts/load_test.sh 1000 50
+```
+
+---
+
+## 📁 Project Structure
+
+- `/cmd`: Entry points for API, Worker, and CLI.
+- `/internal/queue`: Core Redis broker implementation with atomic visibility logic.
+- `/internal/worker`: Lifecycle management, plugin registry, and processing loops.
+- `/internal/jobs`: Extensible job plugin implementations.
+- `/internal/api`: HTTP routes, handlers, and middlewares.
+- `/docs`: Swagger 2.0 API documentation.
+
+---
+
+## 🛠️ Development
+
+### Generate Swagger Docs
+```bash
+swag init -g cmd/api/main.go
+```
+
+### Run Tests
+```bash
+go test ./...
 ```
