@@ -46,7 +46,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// ── Delegate to service ───────────────────────────────────────────────────
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt)
 	if err != nil {
 		h.logger.Warn("create job failed", "error", err)
 		// Validation errors are client mistakes; everything else is server-side.

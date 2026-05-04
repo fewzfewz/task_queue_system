@@ -15,6 +15,8 @@ type CreateJobRequest struct {
 	Priority string `json:"priority"`
 	// MaxRetries defaults to 3 if omitted (zero value).
 	MaxRetries int `json:"max_retries"`
+	// RunAt is optional. If provided and in the future, the job will be scheduled.
+	RunAt string `json:"run_at"`
 }
 
 // JobResponse is the JSON body returned for both POST /jobs and GET /jobs/{id}.
@@ -28,6 +30,7 @@ type JobResponse struct {
 	MaxRetries int                    `json:"max_retries"`
 	CreatedAt  string                 `json:"created_at"`
 	UpdatedAt  string                 `json:"updated_at"`
+	RunAt      string                 `json:"run_at"`
 }
 
 // ErrorResponse is the JSON body returned on any error.
@@ -47,5 +50,6 @@ func FromJob(j *jobs.Job) JobResponse {
 		MaxRetries: j.MaxRetries,
 		CreatedAt:  j.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:  j.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		RunAt:      j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }

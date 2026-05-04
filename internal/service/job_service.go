@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
@@ -36,7 +37,7 @@ func New(q queue.Queue, store models.Store, logger *slog.Logger) *JobService {
 }
 
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
-func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, priority string, maxRetries int) (*jobs.Job, error) {
+func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, priority string, maxRetries int, runAtStr string) (*jobs.Job, error) {
 	if _, ok := allowedJobTypes[jobType]; !ok {
 		return nil, fmt.Errorf("service: unsupported job type %q", jobType)
 	}
@@ -44,7 +45,16 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		maxRetries = defaultMaxRetries
 	}
 
-	job := jobs.NewJob(jobType, payload, jobs.JobPriority(priority), maxRetries)
+	var runAt time.Time
+	if runAtStr != "" {
+		var err error
+		runAt, err = time.Parse(time.RFC3339, runAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("service: invalid run_at timestamp: %w", err)
+		}
+	}
+
+	job := jobs.NewJob(jobType, payload, jobs.JobPriority(priority), maxRetries, runAt)
 
 	if err := s.store.Save(ctx, job); err != nil {
 		s.logger.Error("failed to persist job", "job_id", job.ID, "error", err)

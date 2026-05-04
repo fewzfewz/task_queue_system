@@ -18,6 +18,9 @@ const (
 	// processingSetKey is a Redis Sorted Set (ZSET) that tracks in-flight jobs.
 	// Score is the Unix timestamp (seconds) when the job becomes "visible" again (timeout).
 	processingSetKey = "task_queue:in_flight"
+	// delayedQueueKey is a Redis Sorted Set (ZSET) for scheduled jobs.
+	// Score is the Unix timestamp (seconds) when the job should be enqueued.
+	delayedQueueKey = "task_queue:delayed"
 	// visibilityTimeout is how long a worker has to process a job before it can be reclaimed.
 	visibilityTimeout = 30 * time.Second
 	// dequeueTimeout is how long BRPOP will block before returning a timeout error.
@@ -32,6 +35,7 @@ type RedisQueue struct {
 	qHigh   string // high priority list
 	qMedium string // medium priority list
 	qLow    string // low priority list
+	qDelayed string // scheduled jobs ZSET
 	dlqKey  string // dead letter queue key
 
 	metricsTotal     string
@@ -52,6 +56,7 @@ func New(client *redis.Client, queueName string) *RedisQueue {
 		qHigh:            baseKey + ":high",
 		qMedium:          baseKey + ":medium",
 		qLow:             baseKey + ":low",
+		qDelayed:         baseKey + ":delayed",
 		dlqKey:           baseKey + ":dead_letter",
 		metricsTotal:     baseKey + ":metrics:total",
 		metricsCompleted: baseKey + ":metrics:completed",
@@ -73,20 +78,31 @@ func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 		return fmt.Errorf("queue: failed to serialise job %s: %w", job.ID, err)
 	}
 
-	var targetKey string
-	switch job.Priority {
-	case jobs.PriorityHigh:
-		targetKey = q.qHigh
-	case jobs.PriorityLow:
-		targetKey = q.qLow
-	case jobs.PriorityMedium:
-		fallthrough
-	default:
-		targetKey = q.qMedium
-	}
+	if job.RunAt.After(time.Now()) {
+		// Scheduled job: put in ZSET with score = RunAt
+		if err := q.client.ZAdd(ctx, q.qDelayed, redis.Z{
+			Score:  float64(job.RunAt.Unix()),
+			Member: payload,
+		}).Err(); err != nil {
+			return fmt.Errorf("queue: ZADD failed for scheduled job %s: %w", job.ID, err)
+		}
+	} else {
+		// Immediate job: push to priority list
+		var targetKey string
+		switch job.Priority {
+		case jobs.PriorityHigh:
+			targetKey = q.qHigh
+		case jobs.PriorityLow:
+			targetKey = q.qLow
+		case jobs.PriorityMedium:
+			fallthrough
+		default:
+			targetKey = q.qMedium
+		}
 
-	if err := q.client.LPush(ctx, targetKey, payload).Err(); err != nil {
-		return fmt.Errorf("queue: LPUSH failed for job %s: %w", job.ID, err)
+		if err := q.client.LPush(ctx, targetKey, payload).Err(); err != nil {
+			return fmt.Errorf("queue: LPUSH failed for job %s: %w", job.ID, err)
+		}
 	}
 
 	// Increment total jobs counter only on initial enqueue (not retries).

@@ -40,18 +40,23 @@ type Job struct {
 	MaxRetries int                    `json:"max_retries"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
+	RunAt       time.Time              `json:"run_at"`
 	ProcessedBy string                 `json:"processed_by,omitempty"`
 	Result      interface{}            `json:"result,omitempty"`
 }
 
 // NewJob creates a new Job instance with initial values.
 // The job will be initialized with a new UUID, pending status, and zero retries.
-func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int) *Job {
+func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int, runAt time.Time) *Job {
 	if priority == "" {
 		priority = PriorityMedium
 	}
 	
 	now := time.Now().UTC()
+	if runAt.IsZero() {
+		runAt = now
+	}
+
 	return &Job{
 		ID:         uuid.New().String(),
 		Type:       jobType,
@@ -62,5 +67,6 @@ func NewJob(jobType string, payload map[string]interface{}, priority JobPriority
 		MaxRetries: maxRetries,
 		CreatedAt:  now,
 		UpdatedAt:  now,
+		RunAt:      runAt,
 	}
 }
