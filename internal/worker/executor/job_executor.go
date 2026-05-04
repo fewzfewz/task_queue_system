@@ -15,13 +15,9 @@ type JobExecutor struct {
 	logger   *slog.Logger
 }
 
-// NewJobExecutor creates a JobExecutor with built-in plugins registered by default.
+// NewJobExecutor creates an empty JobExecutor.
 func NewJobExecutor(logger *slog.Logger) *JobExecutor {
 	reg := plugin.NewRegistry()
-
-	// Register default plugins.
-	_ = reg.Register(jobs.NewEmailPlugin(logger))
-	_ = reg.Register(jobs.NewImagePlugin(logger))
 
 	return &JobExecutor{
 		registry: reg,
