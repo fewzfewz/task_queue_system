@@ -11,32 +11,28 @@ import (
 )
 
 // Dispatcher routes jobs to the registered plugin for their Type.
-// It is safe for concurrent use after initial plugin registration.
+// It uses a Registry to manage plugin lookup and registration.
 type Dispatcher struct {
-	plugins map[string]plugin.JobPlugin
+	registry *plugin.Registry
 }
 
-// NewDispatcher creates an empty Dispatcher.
+// NewDispatcher creates a Dispatcher with an empty registry.
 func NewDispatcher() *Dispatcher {
-	return &Dispatcher{plugins: make(map[string]plugin.JobPlugin)}
+	return &Dispatcher{registry: plugin.NewRegistry()}
 }
 
-// Register binds a JobPlugin to the system.
-// Panics if the same type is registered twice to catch misconfiguration early.
+// Register adds a plugin to the dispatcher's registry.
 func (d *Dispatcher) Register(p plugin.JobPlugin) {
-	jobType := p.Type()
-	if _, exists := d.plugins[jobType]; exists {
-		panic(fmt.Sprintf("processor: plugin already registered for job type %q", jobType))
+	if err := d.registry.Register(p); err != nil {
+		panic(fmt.Sprintf("processor: %v", err))
 	}
-	d.plugins[jobType] = p
 }
 
 // Dispatch looks up and calls the plugin registered for job.Type.
-// Returns an error if no plugin is found or if the plugin itself fails.
 func (d *Dispatcher) Dispatch(ctx context.Context, job *jobs.Job) error {
-	p, ok := d.plugins[job.Type]
-	if !ok {
-		return fmt.Errorf("processor: no plugin registered for job type %q", job.Type)
+	p, err := d.registry.Get(job.Type)
+	if err != nil {
+		return fmt.Errorf("processor: %w", err)
 	}
 	return p.Execute(job.Payload)
 }
