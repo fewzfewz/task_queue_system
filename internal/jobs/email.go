@@ -1,7 +1,6 @@
 package jobs
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -14,7 +13,7 @@ type EmailJob struct {
 	Body    string
 }
 
-// EmailHandler handles jobs of type "email".
+// EmailHandler implements plugin.JobPlugin for jobs of type "email".
 type EmailHandler struct {
 	logger *slog.Logger
 }
@@ -24,29 +23,25 @@ func NewEmailHandler(logger *slog.Logger) *EmailHandler {
 	return &EmailHandler{logger: logger}
 }
 
-// Handle extracts email fields from the job payload and simulates sending.
-func (h *EmailHandler) Handle(ctx context.Context, job *Job) error {
-	to, _ := job.Payload["to"].(string)
-	subject, _ := job.Payload["subject"].(string)
+func (h *EmailHandler) Type() string {
+	return "email"
+}
+
+// Execute extracts email fields from the payload and simulates sending.
+func (h *EmailHandler) Execute(payload map[string]interface{}) error {
+	to, _ := payload["to"].(string)
+	subject, _ := payload["subject"].(string)
 
 	if to == "" {
-		return fmt.Errorf("email handler: missing required field 'to' in job %s", job.ID)
+		return fmt.Errorf("email handler: missing required field 'to'")
 	}
 
-	h.logger.Info("sending email",
-		"job_id", job.ID,
-		"to", to,
-		"subject", subject,
-	)
+	h.logger.Info("sending email", "to", to, "subject", subject)
 
 	// --- Simulated work ---
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(50 * time.Millisecond): // simulate SMTP round-trip
-	}
+	time.Sleep(50 * time.Millisecond) // simulate SMTP round-trip
 	// ----------------------
 
-	h.logger.Info("email sent successfully", "job_id", job.ID, "to", to)
+	h.logger.Info("email sent successfully", "to", to)
 	return nil
 }

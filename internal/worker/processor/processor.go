@@ -7,48 +7,36 @@ import (
 	"fmt"
 
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/worker/plugin"
 )
 
-// Handler is the contract that every job-type handler must satisfy.
-// Implementations receive a fully-populated Job and return an error if
-// processing fails (which will trigger retry / fail logic in the executor).
-type Handler interface {
-	Handle(ctx context.Context, job *jobs.Job) error
-}
-
-// HandlerFunc is a convenience adapter that lets a plain function act as a Handler.
-type HandlerFunc func(ctx context.Context, job *jobs.Job) error
-
-func (f HandlerFunc) Handle(ctx context.Context, job *jobs.Job) error {
-	return f(ctx, job)
-}
-
-// Dispatcher routes jobs to the registered handler for their Type.
-// It is safe for concurrent use after initial handler registration.
+// Dispatcher routes jobs to the registered plugin for their Type.
+// It is safe for concurrent use after initial plugin registration.
 type Dispatcher struct {
-	handlers map[string]Handler
+	plugins map[string]plugin.JobPlugin
 }
 
 // NewDispatcher creates an empty Dispatcher.
 func NewDispatcher() *Dispatcher {
-	return &Dispatcher{handlers: make(map[string]Handler)}
+	return &Dispatcher{plugins: make(map[string]plugin.JobPlugin)}
 }
 
-// Register binds a Handler to the given job type (e.g. "email", "image").
+// Register binds a JobPlugin to the system.
 // Panics if the same type is registered twice to catch misconfiguration early.
-func (d *Dispatcher) Register(jobType string, h Handler) {
-	if _, exists := d.handlers[jobType]; exists {
-		panic(fmt.Sprintf("processor: handler already registered for job type %q", jobType))
+func (d *Dispatcher) Register(p plugin.JobPlugin) {
+	jobType := p.Type()
+	if _, exists := d.plugins[jobType]; exists {
+		panic(fmt.Sprintf("processor: plugin already registered for job type %q", jobType))
 	}
-	d.handlers[jobType] = h
+	d.plugins[jobType] = p
 }
 
-// Dispatch looks up and calls the handler registered for job.Type.
-// Returns an error if no handler is found or if the handler itself fails.
+// Dispatch looks up and calls the plugin registered for job.Type.
+// Returns an error if no plugin is found or if the plugin itself fails.
 func (d *Dispatcher) Dispatch(ctx context.Context, job *jobs.Job) error {
-	h, ok := d.handlers[job.Type]
+	p, ok := d.plugins[job.Type]
 	if !ok {
-		return fmt.Errorf("processor: no handler registered for job type %q", job.Type)
+		return fmt.Errorf("processor: no plugin registered for job type %q", job.Type)
 	}
-	return h.Handle(ctx, job)
+	return p.Execute(job.Payload)
 }

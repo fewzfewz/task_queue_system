@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/worker/plugin"
 	"task-queue-system/internal/worker/processor"
 )
 
@@ -27,8 +28,8 @@ type JobExecutor struct {
 func NewJobExecutor(logger *slog.Logger) *JobExecutor {
 	d := processor.NewDispatcher()
 
-	d.Register("email", jobs.NewEmailHandler(logger))
-	d.Register("image", jobs.NewImageHandler(logger))
+	d.Register(jobs.NewEmailHandler(logger))
+	d.Register(jobs.NewImageHandler(logger))
 
 	return &JobExecutor{
 		dispatcher: d,
@@ -36,17 +37,17 @@ func NewJobExecutor(logger *slog.Logger) *JobExecutor {
 	}
 }
 
-// RegisterHandler adds (or replaces, with a warning) a handler for jobType.
-// Use this to extend the executor with new job types at startup.
-func (je *JobExecutor) RegisterHandler(jobType string, h processor.Handler) {
+// RegisterPlugin adds a new plugin to the executor.
+func (je *JobExecutor) RegisterPlugin(p plugin.JobPlugin) {
+	jobType := p.Type()
 	// Wrap in a recover so we can give a useful warning instead of panicking
 	// when re-registering during testing or hot-reload scenarios.
 	defer func() {
 		if r := recover(); r != nil {
-			je.logger.Warn("handler already registered, skipping", "job_type", jobType)
+			je.logger.Warn("plugin already registered, skipping", "job_type", jobType)
 		}
 	}()
-	je.dispatcher.Register(jobType, h)
+	je.dispatcher.Register(p)
 }
 
 // Execute processes a single job synchronously.
