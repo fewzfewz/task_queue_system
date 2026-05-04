@@ -16,6 +16,10 @@ import (
 var allowedJobTypes = map[string]struct{}{
 	"email": {},
 	"image": {},
+	"test":           {},
+	"test-success":   {},
+	"test-fail":      {},
+	"test-scheduled": {},
 }
 
 const defaultMaxRetries = 3
