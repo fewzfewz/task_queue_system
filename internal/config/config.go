@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -26,6 +27,10 @@ type Config struct {
 	// JobRateLimit is the global throughput limit for worker tasks (JPS).
 	// Default: 0 (unlimited)
 	JobRateLimit float64
+
+	// LogLevel is the minimum level to log (info, error, debug).
+	// Default: info
+	LogLevel string
 }
 
 // Load reads environment variables and returns a populated Config with defaults.
@@ -37,7 +42,22 @@ func Load() *Config {
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
 		ApiKey:        getEnvOrDefault("API_KEY", "secret-api-key"),
 		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
+		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
 	}
+}
+
+// Validate checks for critical configuration errors.
+func (c *Config) Validate() error {
+	if c.RedisHost == "" {
+		return fmt.Errorf("REDIS_HOST is required")
+	}
+	if c.ServerPort == "" {
+		return fmt.Errorf("PORT is required")
+	}
+	if c.ApiKey == "" {
+		return fmt.Errorf("API_KEY is required")
+	}
+	return nil
 }
 
 // ── private helpers ───────────────────────────────────────────────────────────

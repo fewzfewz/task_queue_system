@@ -9,6 +9,7 @@ import (
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/storage/models"
+	apperr "task-queue-system/internal/errors"
 )
 
 // allowedJobTypes is the set of job types the system accepts.
@@ -39,7 +40,7 @@ func New(q queue.Queue, store models.Store, logger *slog.Logger) *JobService {
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
 func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, priority string, maxRetries int, runAtStr string) (*jobs.Job, error) {
 	if _, ok := allowedJobTypes[jobType]; !ok {
-		return nil, fmt.Errorf("service: unsupported job type %q", jobType)
+		return nil, apperr.NewInvalidArgument(fmt.Sprintf("unsupported job type %q", jobType))
 	}
 	if maxRetries <= 0 {
 		maxRetries = defaultMaxRetries
@@ -50,10 +51,10 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		var err error
 		runAt, err = time.Parse(time.RFC3339, runAtStr)
 		if err != nil {
-			return nil, fmt.Errorf("service: invalid run_at timestamp: %w", err)
+			return nil, apperr.NewInvalidArgument("invalid run_at timestamp: " + err.Error())
 		}
 		if runAt.Before(time.Now()) {
-			return nil, fmt.Errorf("service: run_at timestamp must be in the future")
+			return nil, apperr.NewInvalidArgument("run_at timestamp must be in the future")
 		}
 	}
 
@@ -61,12 +62,12 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 
 	if err := s.store.Save(ctx, job); err != nil {
 		s.logger.Error("failed to persist job", "job_id", job.ID, "error", err)
-		return nil, err
+		return nil, apperr.NewInternal("failed to persist job", err)
 	}
 
 	if err := s.queue.Enqueue(ctx, job); err != nil {
 		s.logger.Error("failed to enqueue job", "job_id", job.ID, "error", err)
-		return nil, err
+		return nil, apperr.NewInternal("failed to enqueue job", err)
 	}
 
 	return job, nil
@@ -96,7 +97,14 @@ func (s *JobService) Fail(ctx context.Context, jobID string, err error) error {
 
 // ─── GetJobStatus ───────────────────────────────────────────
 func (s *JobService) GetJobStatus(ctx context.Context, jobID string) (*jobs.Job, error) {
-	return s.store.GetByID(ctx, jobID)
+	j, err := s.store.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, apperr.NewInternal("database query failed", err)
+	}
+	if j == nil {
+		return nil, apperr.NewNotFound("job", jobID)
+	}
+	return j, nil
 }
 
 // UpdateJobStatus updates the job state in the persistent store.

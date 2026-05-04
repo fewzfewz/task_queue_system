@@ -15,7 +15,9 @@ func AuthRequired(apiKey string) func(http.Handler) http.Handler {
 			// Simple timing-safe comparison is better for production, 
 			// but a direct comparison is sufficient for this minimal implementation.
 			if clientKey == "" || clientKey != apiKey {
-				http.Error(w, "Unauthorized: invalid or missing API key", http.StatusUnauthorized)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"code": "UNAUTHORIZED", "error": "invalid or missing API key"}`))
 				return
 			}
 

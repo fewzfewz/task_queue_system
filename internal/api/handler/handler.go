@@ -10,7 +10,7 @@ import (
 
 	"task-queue-system/internal/api/dto"
 	"task-queue-system/internal/service"
-	"task-queue-system/internal/storage/models"
+	apperr "task-queue-system/internal/errors"
 )
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
@@ -40,7 +40,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	// ── Parse ─────────────────────────────────────────────────────────────────
 	var req dto.CreateJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body: "+err.Error())
 		return
 	}
 	defer r.Body.Close()
@@ -48,13 +48,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	// ── Delegate to service ───────────────────────────────────────────────────
 	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt)
 	if err != nil {
-		h.logger.Warn("create job failed", "error", err)
-		// Validation errors are client mistakes; everything else is server-side.
-		status := http.StatusBadRequest
-		if strings.Contains(err.Error(), "failed to enqueue") {
-			status = http.StatusInternalServerError
-		}
-		h.writeError(w, status, err.Error())
+		h.writeAppError(w, err)
 		return
 	}
 
@@ -85,21 +79,14 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if jobID == "" {
-		h.writeError(w, http.StatusBadRequest, "missing job ID in path")
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
 		return
 	}
 
 	// ── Delegate to service ───────────────────────────────────────────────────
 	job, err := h.service.GetJobStatus(r.Context(), jobID)
 	if err != nil {
-		h.logger.Warn("get job status failed", "job_id", jobID, "error", err)
-
-		switch {
-		case errors.Is(err, models.ErrJobNotFound):
-			h.writeError(w, http.StatusNotFound, "job not found: "+jobID)
-		default:
-			h.writeError(w, http.StatusInternalServerError, err.Error())
-		}
+		h.writeAppError(w, err)
 		return
 	}
 
@@ -118,8 +105,7 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	metrics, err := h.service.GetMetrics(r.Context())
 	if err != nil {
-		h.logger.Warn("get metrics failed", "error", err)
-		h.writeError(w, http.StatusInternalServerError, err.Error())
+		h.writeAppError(w, err)
 		return
 	}
 
@@ -138,8 +124,7 @@ func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 func (h *JobHandler) GetWorkers(w http.ResponseWriter, r *http.Request) {
 	workers, err := h.service.GetActiveWorkers(r.Context())
 	if err != nil {
-		h.logger.Warn("get active workers failed", "error", err)
-		h.writeError(w, http.StatusInternalServerError, err.Error())
+		h.writeAppError(w, err)
 		return
 	}
 
@@ -158,8 +143,34 @@ func (h *JobHandler) writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // writeError writes a standardised error response.
-func (h *JobHandler) writeError(w http.ResponseWriter, status int, message string) {
-	h.writeJSON(w, status, dto.ErrorResponse{Error: message})
+func (h *JobHandler) writeError(w http.ResponseWriter, status int, code, message string) {
+	h.writeJSON(w, status, dto.ErrorResponse{Code: code, Error: message})
+}
+
+// writeAppError translates a domain AppError into an HTTP response.
+func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
+	var appErr *apperr.AppError
+	if !errors.As(err, &appErr) {
+		h.logger.Error("unexpected error type", "error", err)
+		h.writeError(w, http.StatusInternalServerError, apperr.CodeInternal, "an unexpected error occurred")
+		return
+	}
+
+	h.logger.Warn("request failed", "code", appErr.Code, "error", appErr.Message)
+
+	status := http.StatusInternalServerError
+	switch appErr.Code {
+	case apperr.CodeNotFound:
+		status = http.StatusNotFound
+	case apperr.CodeInvalidArgument:
+		status = http.StatusBadRequest
+	case apperr.CodeUnauthorized:
+		status = http.StatusUnauthorized
+	case apperr.CodeInternal:
+		status = http.StatusInternalServerError
+	}
+
+	h.writeError(w, status, appErr.Code, appErr.Message)
 }
 
 // sentinel used by tests / future middleware.

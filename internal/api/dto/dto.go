@@ -35,6 +35,7 @@ type JobResponse struct {
 
 // ErrorResponse is the JSON body returned on any error.
 type ErrorResponse struct {
+	Code  string `json:"code"`
 	Error string `json:"error"`
 }
 
