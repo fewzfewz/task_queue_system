@@ -17,7 +17,11 @@ graph LR
     subgraph Broker ["Broker & Store"]
         Redis[(Redis)]
     end
-    
+
+    subgraph Scheduler_Service ["Maintenance Engine"]
+        SCH[Scheduler]
+    end
+
     subgraph Worker_Pool ["Worker Pool (Scalable)"]
         W1[Worker 1]
         W2[Worker 2]
@@ -30,6 +34,7 @@ graph LR
 
     Client -->|POST /jobs| API
     API -->|Enqueue| Redis
+    SCH -->|Promote/Reclaim| Redis
     Redis --- W1
     Redis --- W2
     Redis --- W3
@@ -67,6 +72,13 @@ graph LR
 ---
 
 ## 🚀 Getting Started
+
+### 0. Quick Start (Interactive Demo)
+The fastest way to see the system in action:
+```bash
+./demo.sh
+```
+This script boots the entire stack, submits immediate and scheduled jobs, and monitors the processing in real-time.
 
 ### 1. Run with Docker Compose
 One command to start the API, Redis, and a pool of 3 workers:
