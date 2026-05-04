@@ -37,12 +37,12 @@ func (p *EmailPlugin) Type() string {
 }
 
 // Execute extracts email fields from the payload and simulates sending.
-func (p *EmailPlugin) Execute(payload map[string]interface{}) error {
+func (p *EmailPlugin) Execute(payload map[string]interface{}) (interface{}, error) {
 	to, _ := payload["to"].(string)
 	subject, _ := payload["subject"].(string)
 
 	if to == "" {
-		return fmt.Errorf("email plugin: missing required field 'to'")
+		return nil, fmt.Errorf("email plugin: missing required field 'to'")
 	}
 
 	p.logger.Info("sending email", "to", to, "subject", subject)
@@ -52,5 +52,5 @@ func (p *EmailPlugin) Execute(payload map[string]interface{}) error {
 	// ----------------------
 
 	p.logger.Info("email sent successfully", "to", to)
-	return nil
+	return fmt.Sprintf("email sent to %s", to), nil
 }

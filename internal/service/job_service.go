@@ -96,6 +96,16 @@ func (s *JobService) UpdateJobStatus(ctx context.Context, jobID string, status j
 	return nil
 }
 
+// UpdateJobResult propagates execution outcomes (success values or error strings) to the store.
+func (s *JobService) UpdateJobResult(ctx context.Context, jobID string, status jobs.JobStatus, workerID string, result interface{}) error {
+	if err := s.store.UpdateResult(ctx, jobID, status, workerID, result); err != nil {
+		return fmt.Errorf("service: failed to update job result: %w", err)
+	}
+
+	s.logger.Info("job result updated", "job_id", jobID, "status", status, "worker", workerID)
+	return nil
+}
+
 // RegisterHeartbeat logs the worker's presence in the queue system.
 func (s *JobService) RegisterHeartbeat(ctx context.Context, workerID string) error {
 	return s.queue.RegisterHeartbeat(ctx, workerID)

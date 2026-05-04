@@ -30,6 +30,9 @@ type Store interface {
 	// UpdateStatus changes the status (and UpdatedAt/ProcessedBy) of an existing job.
 	// Returns ErrJobNotFound if no record exists.
 	UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error
+
+	// UpdateResult updates status, processor and the final result of the job.
+	UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error
 }
 
 // ErrJobNotFound is returned when a job ID does not exist in the store.
@@ -86,6 +89,22 @@ func (s *InMemoryStore) UpdateStatus(_ context.Context, id string, status jobs.J
 	}
 	job.Status = status
 	job.ProcessedBy = workerID
+	return nil
+}
+
+// UpdateResult mutates Status, ProcessedBy and Result fields.
+func (s *InMemoryStore) UpdateResult(_ context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	job, ok := s.data[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrJobNotFound, id)
+	}
+	job.Status = status
+	job.ProcessedBy = workerID
+	job.Result = result
+	job.UpdatedAt = time.Now().UTC()
 	return nil
 }
 
@@ -148,6 +167,33 @@ func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.Jo
 
 	job.Status = status
 	job.ProcessedBy = workerID
+	job.UpdatedAt = time.Now().UTC()
+
+	updated, err := json.Marshal(&job)
+	if err != nil {
+		return fmt.Errorf("redis_store: failed to marshal updated job: %w", err)
+	}
+
+	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
+}
+
+func (s *RedisStore) UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
+	val, err := s.client.HGet(ctx, jobStoreKey, id).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%w: %s", ErrJobNotFound, id)
+		}
+		return fmt.Errorf("redis_store: HGET failed: %w", err)
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(val), &job); err != nil {
+		return fmt.Errorf("redis_store: failed to unmarshal job: %w", err)
+	}
+
+	job.Status = status
+	job.ProcessedBy = workerID
+	job.Result = result
 	job.UpdatedAt = time.Now().UTC()
 
 	updated, err := json.Marshal(&job)

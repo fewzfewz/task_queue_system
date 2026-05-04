@@ -8,6 +8,6 @@ type JobPlugin interface {
 	Type() string
 
 	// Execute performs the actual work of the job using the provided payload.
-	// It returns an error if processing fails.
-	Execute(payload map[string]interface{}) error
+	// It returns an optional result and an error if processing fails.
+	Execute(payload map[string]interface{}) (interface{}, error)
 }

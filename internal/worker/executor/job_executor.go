@@ -32,9 +32,9 @@ func (je *JobExecutor) RegisterPlugin(p plugin.JobPlugin) {
 
 // Execute performs the work for a given job by fetching the appropriate plugin.
 // It fulfills the "registry instead of switch-case" requirement by dynamic lookup.
-func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) error {
+func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (interface{}, error) {
 	if job == nil {
-		return fmt.Errorf("job_executor: cannot execute a nil job")
+		return nil, fmt.Errorf("job_executor: cannot execute a nil job")
 	}
 
 	je.logger.Debug("executing job", "job_id", job.ID, "job_type", job.Type)
@@ -42,7 +42,7 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) error {
 	// Fetch plugin from registry using job.Type
 	p, err := je.registry.Get(job.Type)
 	if err != nil {
-		return fmt.Errorf("job_executor: no plugin for %q: %w", job.Type, err)
+		return nil, fmt.Errorf("job_executor: no plugin for %q: %w", job.Type, err)
 	}
 
 	// Call plugin.Execute(payload)

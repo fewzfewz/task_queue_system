@@ -110,7 +110,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 
 	// ── Step 2: Execute ───────────────────────────────────────────────────────
 	start := time.Now()
-	execErr := wp.exec.Execute(execCtx, job)
+	result, execErr := wp.exec.Execute(execCtx, job)
 	elapsed := time.Since(start)
 
 	if execErr == nil {
@@ -119,7 +119,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 			"status", jobs.StatusCompleted,
 			"execution_time_ms", elapsed.Milliseconds(),
 		)
-		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusCompleted, wp.name)
+		_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusCompleted, wp.name, result)
 		_ = wp.service.Ack(execCtx, job.ID)
 		return nil
 	}
@@ -137,7 +137,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending, wp.name)
 		wp.retry(ctx, execCtx, job, log)
 	} else {
-		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusFailed, wp.name)
+		_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusFailed, wp.name, execErr.Error())
 		wp.permanentlyFail(execCtx, job, execErr, log)
 	}
 

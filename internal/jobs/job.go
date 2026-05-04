@@ -41,6 +41,7 @@ type Job struct {
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 	ProcessedBy string                 `json:"processed_by,omitempty"`
+	Result      interface{}            `json:"result,omitempty"`
 }
 
 // NewJob creates a new Job instance with initial values.

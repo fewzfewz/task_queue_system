@@ -28,12 +28,12 @@ func (p *ImagePlugin) Type() string {
 }
 
 // Execute extracts image processing fields from the payload and simulates processing.
-func (p *ImagePlugin) Execute(payload map[string]interface{}) error {
+func (p *ImagePlugin) Execute(payload map[string]interface{}) (interface{}, error) {
 	sourceURL, _ := payload["source_url"].(string)
 	operation, _ := payload["operation"].(string) // e.g. "resize", "compress", "watermark"
 
 	if sourceURL == "" {
-		return fmt.Errorf("image plugin: missing required field 'source_url'")
+		return nil, fmt.Errorf("image plugin: missing required field 'source_url'")
 	}
 	if operation == "" {
 		operation = "process"
@@ -46,5 +46,9 @@ func (p *ImagePlugin) Execute(payload map[string]interface{}) error {
 	// ----------------------
 
 	p.logger.Info("image processed successfully", "source_url", sourceURL, "operation", operation)
-	return nil
+	return map[string]string{
+		"status":    "processed",
+		"operation": operation,
+		"url":       sourceURL,
+	}, nil
 }

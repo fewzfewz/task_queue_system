@@ -55,3 +55,10 @@ func (s *PostgresStore) UpdateStatus(_ context.Context, id string, status jobs.J
 	_, _, _ = id, status, workerID
 	return fmt.Errorf("postgres: UpdateStatus not implemented")
 }
+
+// UpdateResult sets status, result and bumps updated_at.
+func (s *PostgresStore) UpdateResult(_ context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
+	// TODO: UPDATE jobs SET status=$2, result=$4, processed_by=$3, updated_at=NOW() WHERE id=$1
+	_, _, _, _ = id, status, workerID, result
+	return fmt.Errorf("postgres: UpdateResult not implemented")
+}
