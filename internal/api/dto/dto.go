@@ -3,7 +3,12 @@
 // contract can evolve independently of the internal representation.
 package dto
 
-import "task-queue-system/internal/jobs"
+import (
+	"fmt"
+	"time"
+
+	"task-queue-system/internal/jobs"
+)
 
 // CreateJobRequest is the JSON body expected on POST /jobs.
 type CreateJobRequest struct {
@@ -26,6 +31,43 @@ type CreateJobRequest struct {
 	// TenantID is for multi-tenancy.
 	TenantID string `json:"tenant_id"`
 }
+
+// Validate performs strict input validation on the request.
+func (r *CreateJobRequest) Validate() error {
+	if r.Type == "" {
+		return fmt.Errorf("job type is required")
+	}
+
+	if r.Payload == nil {
+		return fmt.Errorf("payload is required")
+	}
+
+	// ── Type-Specific Payload Validation ───────────────────────────────────
+	switch r.Type {
+	case "email":
+		if to, _ := r.Payload["to"].(string); to == "" {
+			return fmt.Errorf("email jobs require a 'to' field in the payload")
+		}
+	case "image":
+		if url, _ := r.Payload["source_url"].(string); url == "" {
+			return fmt.Errorf("image jobs require a 'source_url' field in the payload")
+		}
+	}
+
+	// ── Timestamp Validation ───────────────────────────────────────────────
+	if r.RunAt != "" {
+		runAt, err := time.Parse(time.RFC3339, r.RunAt)
+		if err != nil {
+			return fmt.Errorf("invalid run_at format (wait for RFC3339): %w", err)
+		}
+		if runAt.Before(time.Now().Add(-1 * time.Minute)) {
+			return fmt.Errorf("run_at cannot be in the past")
+		}
+	}
+
+	return nil
+}
+
 
 // JobResponse is the JSON body returned for both POST /jobs and GET /jobs/{id}.
 type JobResponse struct {
