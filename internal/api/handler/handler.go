@@ -46,7 +46,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// ── Delegate to service ───────────────────────────────────────────────────
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID, req.Timeout)
 	if err != nil {
 		h.writeAppError(w, err)
 		return
