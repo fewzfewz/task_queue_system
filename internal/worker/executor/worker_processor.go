@@ -26,7 +26,11 @@ type WorkerProcessor struct {
 	exec    *JobExecutor
 	limiter limiter.RateLimiter
 	logger  *slog.Logger
+
+	onBusy    func()
+	onIdle    func()
 }
+
 
 // NewWorkerProcessor creates a WorkerProcessor.
 // name is used for log attribution and job metadata. limiter can be nil if no rate limiting applies.
@@ -39,6 +43,12 @@ func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l
 		logger:  logger.With("worker_id", name),
 	}
 }
+
+func (wp *WorkerProcessor) SetHooks(onBusy, onIdle func()) {
+	wp.onBusy = onBusy
+	wp.onIdle = onIdle
+}
+
 
 // Run loops continuously, processing one job per iteration.
 // It exits cleanly when ctx is cancelled (graceful shutdown).
@@ -117,7 +127,12 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 
 	// ── Metrics: Busy ────────────────────────────────────────────────────────
 	metrics.WorkerUtilization.Inc()
-	defer metrics.WorkerUtilization.Dec()
+	if wp.onBusy != nil { wp.onBusy() }
+	defer func() {
+		metrics.WorkerUtilization.Dec()
+		if wp.onIdle != nil { wp.onIdle() }
+	}()
+
 
 	// Detach context cancellation for the rest of the job lifecycle.
 	// This guarantees that if a SIGINT/SIGTERM arrives while a job is running,

@@ -99,4 +99,9 @@ func (s *DualStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobT
 	return s.Primary.DeleteJobsBefore(ctx, tenantID, status, jobType, before)
 }
 
+func (s *DualStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+	return s.Primary.GetQueueLengths(ctx)
+}
+
+
 

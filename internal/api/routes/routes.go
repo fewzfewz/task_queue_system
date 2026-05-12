@@ -40,6 +40,9 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	// GET  /workers     → worker health and count details
 	mux.HandleFunc("GET /workers", h.GetWorkers)
 
+	// GET  /admin/dlq    → High-fidelity DLQ management UI
+	mux.HandleFunc("GET /admin/dlq", h.ServeAdminDLQ)
+
 	// ── DLQ Endpoints ────────────────────────────────────────────────────────
 	auth := middleware.AuthRequired(cfg, secrets)
 

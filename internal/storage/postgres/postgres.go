@@ -379,6 +379,35 @@ func (s *PostgresStore) DeleteJobsBefore(ctx context.Context, tenantID, status, 
 	return ct.RowsAffected(), nil
 }
 
+func (s *PostgresStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+	query := `
+		SELECT type, tenant_id, COUNT(*) 
+		FROM jobs 
+		WHERE status = 'pending'
+		GROUP BY type, tenant_id
+	`
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := make(map[string]map[string]int64)
+	for rows.Next() {
+		var jobType, tenantID string
+		var count int64
+		if err := rows.Scan(&jobType, &tenantID, &count); err != nil {
+			return nil, err
+		}
+		if results[jobType] == nil {
+			results[jobType] = make(map[string]int64)
+		}
+		results[jobType][tenantID] = count
+	}
+	return results, nil
+}
+
+
 func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 	var results []*jobs.Job
 	for rows.Next() {

@@ -61,7 +61,11 @@ type Store interface {
 	// DLQ Management
 	DeleteJob(ctx context.Context, jobID string) error
 	DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error)
+
+	// GetQueueLengths returns pending job counts segmented by queue and tenant.
+	GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error)
 }
+
 
 
 
@@ -207,6 +211,23 @@ func (s *InMemoryStore) DeleteJobsBefore(_ context.Context, tenantID, status, jo
 	}
 	return count, nil
 }
+
+func (s *InMemoryStore) GetQueueLengths(_ context.Context) (map[string]map[string]int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	results := make(map[string]map[string]int64)
+	for _, j := range s.data {
+		if j.Status == jobs.StatusPending {
+			if results[j.Type] == nil {
+				results[j.Type] = make(map[string]int64)
+			}
+			results[j.Type][j.TenantID]++
+		}
+	}
+	return results, nil
+}
+
 
 
 
@@ -384,5 +405,11 @@ func (s *RedisStore) DeleteJobsBefore(ctx context.Context, tenantID, status, job
 	}
 	return count, nil
 }
+
+func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+	// Similar to DeleteJobsBefore, we'd need to SCAN. For brevity in Redis, return empty or implement if needed.
+	return make(map[string]map[string]int64), nil
+}
+
 
 

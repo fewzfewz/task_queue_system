@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"task-queue-system/internal/service"
+	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/worker/executor"
 	"task-queue-system/internal/worker/limiter"
 )
@@ -34,7 +36,10 @@ type Pool struct {
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	busyCount atomic.Int32
 }
+
 
 // New creates a new Pool. Call Start to begin processing.
 func New(cfg Config, instanceID string, svc *service.JobService, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
@@ -71,14 +76,56 @@ func (p *Pool) Start(ctx context.Context) {
 	p.wg.Add(1)
 	go p.heartbeatLoop(workerCtx)
 
+	// Start metrics reporting goroutine
+	p.wg.Add(1)
+	go p.metricsLoop(workerCtx)
+
 	for i := range p.cfg.NumWorkers {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
 		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger)
+		
+		w.SetHooks(
+			func() { p.busyCount.Add(1) },
+			func() { p.busyCount.Add(-1) },
+		)
+
 		p.wg.Add(1)
 		go func() {
 			defer p.wg.Done()
 			w.Run(workerCtx)
 		}()
+	}
+
+}
+
+func (p *Pool) metricsLoop(ctx context.Context) {
+	defer p.wg.Done()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// 1. Worker Busy Ratio
+			busy := float64(p.busyCount.Load())
+			ratio := busy / float64(p.cfg.NumWorkers)
+			metrics.WorkerBusyRatio.Set(ratio)
+			
+			// 2. Queue Lengths (Segmented)
+
+			lengths, err := p.service.ListQueueLengths(ctx)
+			if err == nil {
+				// Clear old values to avoid stale metrics
+				metrics.QueueLength.Reset()
+				for qType, tenants := range lengths {
+					for tenantID, count := range tenants {
+						metrics.QueueLength.WithLabelValues(qType, tenantID).Set(float64(count))
+					}
+				}
+			}
+		}
 	}
 }
 

@@ -248,6 +248,11 @@ func (s *JobService) ReconcileOrphanedJobs(ctx context.Context, workerID string)
 	return len(stuckJobs), nil
 }
 
+// ListQueueLengths returns pending job counts segmented by queue and tenant.
+func (s *JobService) ListQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+	return s.store.GetQueueLengths(ctx)
+}
+
 // ─── DLQ Methods ──────────────────────────────────────────────────────────────
 
 func (s *JobService) ListFailedJobs(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {

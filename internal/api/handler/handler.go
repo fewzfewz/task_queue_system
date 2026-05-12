@@ -14,7 +14,6 @@ import (
 	"task-queue-system/internal/api/middleware"
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
-	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/service"
 	"strconv"
 	"time"
@@ -141,14 +140,10 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 // @Failure      500      {object}  dto.ErrorResponse
 // @Router       /metrics [get]
 func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
-	// Periodic sync: Update current queue length from Redis into the Gauge.
-	if stats, err := h.service.GetMetrics(r.Context()); err == nil {
-		metrics.QueueLength.Set(float64(stats.TotalJobs))
-	}
-
-	// Serve the standard Prometheus metrics format.
+	// Standard Prometheus metrics format.
 	promhttp.Handler().ServeHTTP(w, r)
 }
+
 
 
 // GetWorkers handles GET /workers.

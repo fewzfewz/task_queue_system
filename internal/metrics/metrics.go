@@ -20,11 +20,17 @@ var (
 	}, []string{"job_type", "tenant_id", "status"})
 
 	// QueueLength tracks the current number of pending jobs.
-	// This usually needs to be updated periodically from the queue backend.
-	QueueLength = promauto.NewGauge(prometheus.GaugeOpts{
+	QueueLength = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "task_queue_length",
 		Help: "Current number of pending jobs in the queue.",
+	}, []string{"queue", "tenant_id"})
+
+	// WorkerBusyRatio tracks the ratio of busy workers to total workers.
+	WorkerBusyRatio = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "task_queue_worker_busy_ratio",
+		Help: "Ratio of busy workers to total workers (0.0 to 1.0).",
 	})
+
 
 	// WorkerUtilization tracks the number of busy workers.
 	WorkerUtilization = promauto.NewGauge(prometheus.GaugeOpts{
