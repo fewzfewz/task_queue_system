@@ -14,7 +14,7 @@ import (
 	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
-	"task-queue-system/internal/storage/models"
+	"task-queue-system/internal/storage"
 	"task-queue-system/internal/worker/executor"
 	"task-queue-system/internal/worker/pool"
 )
@@ -51,10 +51,16 @@ func main() {
 	}
 	log.Info("connected to redis", "host", cfg.RedisHost)
 
-	// ── 4. Initialise Queue, Store and Service ────────────────────────────────
-	// Both API and Worker use the same queue name and store backend.
+	// ── 4. Initialise Queue and Store ─────────────────────────────────────────
 	q := redisqueue.New(redisClient, "jobs")
-	store := models.NewRedisStore(redisClient)
+
+	// Initialise store based on configuration (Redis, Postgres, or Dual)
+	store, err := storage.InitStore(ctx, cfg, redisClient)
+	if err != nil {
+		log.Error("failed to initialise storage", "error", err)
+		os.Exit(1)
+	}
+
 	svc := service.New(q, store, log, 0) // Workers don't enforce ingestion backpressure
 
 	// ── 5. Initialise Job Executor ──────────────────────────────────────────

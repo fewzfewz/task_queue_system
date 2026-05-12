@@ -21,7 +21,7 @@ import (
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
-	"task-queue-system/internal/storage/models"
+	"task-queue-system/internal/storage"
 )
 
 func main() {
@@ -49,11 +49,14 @@ func main() {
 	log.Info("connected to redis", "host", cfg.RedisHost)
 
 	// ── 4. Initialise Queue and Store ─────────────────────────────────────────
-	// Using "jobs" as the default queue name.
 	q := redisqueue.New(redisClient, "jobs")
 
-	// Using the Redis store for persistent, shared job status across distributed instances.
-	store := models.NewRedisStore(redisClient)
+	// Initialise store based on configuration (Redis, Postgres, or Dual)
+	store, err := storage.InitStore(ctx, cfg, redisClient)
+	if err != nil {
+		log.Error("failed to initialise storage", "error", err)
+		os.Exit(1)
+	}
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
 	router := routes.NewRouter(q, store, log, cfg.ApiKey, cfg.MaxQueueSize)

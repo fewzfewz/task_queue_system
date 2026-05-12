@@ -35,7 +35,15 @@ type Config struct {
 	// MaxQueueSize is the maximum number of pending jobs allowed in the queue.
 	// Default: 10000 (0 = unlimited)
 	MaxQueueSize int64
+
+	// StoreBackend determines where job states are persisted (redis, postgres, dual).
+	// Default: redis
+	StoreBackend string
+
+	// PostgresConnStr is the DSN for the Postgres database.
+	PostgresConnStr string
 }
+
 
 // Load reads environment variables and returns a populated Config with defaults.
 func Load() *Config {
@@ -48,6 +56,8 @@ func Load() *Config {
 		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
 		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
 		MaxQueueSize:  getEnvAsInt64("MAX_QUEUE_SIZE", 10000),
+		StoreBackend:  getEnvOrDefault("STORE_BACKEND", "redis"),
+		PostgresConnStr: getEnvOrDefault("POSTGRES_CONN_STR", "postgres://postgres:postgres@localhost:5432/postgres"),
 	}
 }
 

@@ -1,155 +1,103 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"strings"
+	"time"
 
-	"task-queue-system/internal/api/dto"
-)
-
-const (
-	defaultBaseURL = "http://localhost:8080"
-	defaultAPIKey  = "secret-api-key"
+	"github.com/redis/go-redis/v9"
+	"task-queue-system/internal/config"
+	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/logger"
+	"task-queue-system/internal/storage/postgres"
 )
 
 func main() {
+	log := logger.Setup()
+	cfg := config.Load()
+
+	migrateCmd := flag.NewFlagSet("migrate-jobs", flag.ExitOnError)
+	from := migrateCmd.String("from", "redis", "Source backend")
+	to := migrateCmd.String("to", "postgres", "Destination backend")
+	batch := migrateCmd.Int("batch", 500, "Batch size for migration")
+
 	if len(os.Args) < 2 {
-		printUsage()
+		fmt.Println("expected 'migrate-jobs' subcommand")
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
+	switch os.Args[1] {
+	case "migrate-jobs":
+		_ = migrateCmd.Parse(os.Args[2:])
+		if *from != "redis" || *to != "postgres" {
+			log.Error("currently only redis -> postgres migration is supported")
+			os.Exit(1)
+		}
 
-	switch command {
-	case "submit":
-		doSubmit()
-	case "status":
-		doStatus()
-	case "help":
-		printUsage()
+		ctx := context.Background()
+
+		// 1. Connect to Redis
+		rdb := redis.NewClient(&redis.Options{
+			Addr:     cfg.RedisHost,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		})
+
+		// 2. Connect to Postgres
+		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
+		if err != nil {
+			log.Error("failed to connect to postgres", "error", err)
+			os.Exit(1)
+		}
+		defer pgStore.Close()
+
+		log.Info("starting data migration", "from", *from, "to", *to, "batch_size", *batch)
+
+		const jobStoreKey = "task_queue:store:jobs"
+		var cursor uint64
+		totalMigrated := 0
+		start := time.Now()
+
+		for {
+			keys, nextCursor, err := rdb.HScan(ctx, jobStoreKey, cursor, "", int64(*batch)).Result()
+			if err != nil {
+				log.Error("failed to scan redis", "error", err)
+				os.Exit(1)
+			}
+
+			// HScan returns [key1, val1, key2, val2, ...]
+			for i := 1; i < len(keys); i += 2 {
+				val := keys[i]
+				var job jobs.Job
+				if err := json.Unmarshal([]byte(val), &job); err != nil {
+					log.Warn("failed to unmarshal job, skipping", "val", val)
+					continue
+				}
+
+				if err := pgStore.Save(ctx, &job); err != nil {
+					log.Error("failed to migrate job", "id", job.ID, "error", err)
+					continue
+				}
+				totalMigrated++
+			}
+
+			log.Info("progress report", "migrated", totalMigrated, "cursor", nextCursor)
+
+			cursor = nextCursor
+			if cursor == 0 {
+				break
+			}
+		}
+
+		log.Info("migration completed successfully", 
+			"total", totalMigrated, 
+			"duration", time.Since(start).String())
+
 	default:
-		fmt.Printf("Unknown command: %s\n", command)
-		printUsage()
+		fmt.Println("unknown command:", os.Args[1])
 		os.Exit(1)
 	}
-}
-
-func printUsage() {
-	fmt.Println("Task Queue CLI")
-	fmt.Println("Usage:")
-	fmt.Println("  tq submit --type <type> [--payload '{\"key\":\"val\"}'] [--priority high]")
-	fmt.Println("  tq status <job-id>")
-	fmt.Println("  tq help")
-}
-
-func doSubmit() {
-	submitCmd := flag.NewFlagSet("submit", flag.ExitOnError)
-	jobType := submitCmd.String("type", "", "Type of job (email, image, etc)")
-	payloadStr := submitCmd.String("payload", "{}", "JSON payload string")
-	priority := submitCmd.String("priority", "medium", "Job priority (low, medium, high)")
-	baseURL := submitCmd.String("url", defaultBaseURL, "Base API URL")
-	apiKey := submitCmd.String("key", defaultAPIKey, "API Key for authentication")
-
-	_ = submitCmd.Parse(os.Args[2:])
-
-	if *jobType == "" {
-		fmt.Println("Error: --type is required")
-		submitCmd.Usage()
-		os.Exit(1)
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal([]byte(*payloadStr), &payload); err != nil {
-		fmt.Printf("Error: invalid JSON payload: %v\n", err)
-		os.Exit(1)
-	}
-
-	reqBody := dto.CreateJobRequest{
-		Type:     *jobType,
-		Payload:  payload,
-		Priority: *priority,
-	}
-
-	jsonData, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", *baseURL+"/jobs", bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", *apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error: API call failed: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Error: server responded with %d: %s\n", resp.StatusCode, string(body))
-		os.Exit(1)
-	}
-
-	var jobResp dto.JobResponse
-	_ = json.NewDecoder(resp.Body).Decode(&jobResp)
-
-	fmt.Printf("✔ Job submitted successfully!\n")
-	fmt.Printf("  ID      : %s\n", jobResp.ID)
-	fmt.Printf("  Status  : %s\n", jobResp.Status)
-}
-
-func doStatus() {
-	if len(os.Args) < 3 {
-		fmt.Println("Error: job ID is required")
-		fmt.Println("Usage: tq status <job-id> [--url http://...] [--key secret]")
-		os.Exit(1)
-	}
-
-	jobID := os.Args[2]
-	
-	// Quick manual parse for remaining flags if any
-	baseURL := defaultBaseURL
-	apiKey := defaultAPIKey
-	
-	for i, arg := range os.Args {
-		if arg == "--url" && i+1 < len(os.Args) {
-			baseURL = os.Args[i+1]
-		}
-		if arg == "--key" && i+1 < len(os.Args) {
-			apiKey = os.Args[i+1]
-		}
-	}
-
-	req, _ := http.NewRequest("GET", fmt.Sprintf("%s/jobs/%s", baseURL, jobID), nil)
-	req.Header.Set("X-API-Key", apiKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Printf("Error: API call failed: %v\n", err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Error: server responded with %d: %s\n", resp.StatusCode, string(body))
-		os.Exit(1)
-	}
-
-	var jobResp dto.JobResponse
-	_ = json.NewDecoder(resp.Body).Decode(&jobResp)
-
-	fmt.Printf("Job Details:\n")
-	fmt.Printf("  ID         : %s\n", jobResp.ID)
-	fmt.Printf("  Type       : %s\n", jobResp.Type)
-	fmt.Printf("  Status     : %s\n", strings.ToUpper(jobResp.Status))
-	fmt.Printf("  Retries    : %d/%d\n", jobResp.Retries, jobResp.MaxRetries)
-	fmt.Printf("  Created    : %s\n", jobResp.CreatedAt)
-	fmt.Printf("  Updated    : %s\n", jobResp.UpdatedAt)
 }
