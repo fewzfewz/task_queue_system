@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"task-queue-system/internal/api/dto"
-	"task-queue-system/internal/service"
 	apperr "task-queue-system/internal/errors"
+	"task-queue-system/internal/metrics"
+	"task-queue-system/internal/service"
 )
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
@@ -122,14 +125,15 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 // @Failure      500      {object}  dto.ErrorResponse
 // @Router       /metrics [get]
 func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics, err := h.service.GetMetrics(r.Context())
-	if err != nil {
-		h.writeAppError(w, err)
-		return
+	// Periodic sync: Update current queue length from Redis into the Gauge.
+	if stats, err := h.service.GetMetrics(r.Context()); err == nil {
+		metrics.QueueLength.Set(float64(stats.TotalJobs))
 	}
 
-	h.writeJSON(w, http.StatusOK, metrics)
+	// Serve the standard Prometheus metrics format.
+	promhttp.Handler().ServeHTTP(w, r)
 }
+
 
 // GetWorkers handles GET /workers.
 //

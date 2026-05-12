@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/worker/limiter"
 )
@@ -114,6 +115,10 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	// Transition DB state to Processing immediately and attach worker ID.
 	_ = wp.service.UpdateJobStatus(ctx, job.ID, jobs.StatusProcessing, wp.name)
 
+	// ── Metrics: Busy ────────────────────────────────────────────────────────
+	metrics.WorkerUtilization.Inc()
+	defer metrics.WorkerUtilization.Dec()
+
 	// Detach context cancellation for the rest of the job lifecycle.
 	// This guarantees that if a SIGINT/SIGTERM arrives while a job is running,
 	// the worker will FINISH the job before exiting, rather than aborting
@@ -155,8 +160,14 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		// Persist result and status
 		_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusCompleted, wp.name, result)
 		_ = wp.service.Ack(execCtx, job.ID)
+
+		// ── Metrics: Success ─────────────────────────────────────────────────────
+		metrics.JobTotal.WithLabelValues(job.Type, job.TenantID, "completed").Inc()
+		metrics.JobLatency.WithLabelValues(job.Type, job.TenantID).Observe(elapsed.Seconds())
+
 		return nil
 	}
+
 
 	// ── Step 3b: Failure → decide retry or permanent fail ────────────────────
 	log.Error("job execution failed",
@@ -170,11 +181,15 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	if job.Retries < job.MaxRetries {
 		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending, wp.name)
 		wp.retry(ctx, execCtx, job, log)
+		// Metrics: Retry counts as a partial failure but not a terminal one for this metric
+		metrics.JobTotal.WithLabelValues(job.Type, job.TenantID, "retry").Inc()
 	} else {
 		_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusFailed, wp.name, execErr.Error())
 		wp.permanentlyFail(execCtx, job, execErr, log)
+		metrics.JobTotal.WithLabelValues(job.Type, job.TenantID, "failed").Inc()
 	}
 
+	metrics.JobLatency.WithLabelValues(job.Type, job.TenantID).Observe(elapsed.Seconds())
 	return nil
 }
 
