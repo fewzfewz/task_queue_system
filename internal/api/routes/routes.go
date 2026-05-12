@@ -40,6 +40,20 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	// GET  /workers     → worker health and count details
 	mux.HandleFunc("GET /workers", h.GetWorkers)
 
+	// ── DLQ Endpoints ────────────────────────────────────────────────────────
+	auth := middleware.AuthRequired(cfg, secrets)
+
+	// GET    /api/v1/dlq        → List failed jobs
+	mux.Handle("GET /api/v1/dlq", auth(http.HandlerFunc(h.ListFailedJobs)))
+	// GET    /api/v1/dlq/{id}   → Get detailed failure reason
+	mux.Handle("GET /api/v1/dlq/{id}", auth(http.HandlerFunc(h.GetFailedJobDetail)))
+	// POST   /api/v1/dlq/{id}/replay → Re-enqueue failed job
+	mux.Handle("POST /api/v1/dlq/{id}/replay", auth(http.HandlerFunc(h.ReplayFailedJob)))
+	// DELETE /api/v1/dlq/{id}   → Purge single job
+	mux.Handle("DELETE /api/v1/dlq/{id}", auth(http.HandlerFunc(h.DeleteFailedJob)))
+	// DELETE /api/v1/dlq        → Bulk purge
+	mux.Handle("DELETE /api/v1/dlq", auth(http.HandlerFunc(h.BulkPurgeDLQ)))
+
 	// Swagger UI integration
 	// The http-swagger driver handles the static asset serving natively.
 	mux.HandleFunc("GET /swagger/", httpSwagger.Handler(

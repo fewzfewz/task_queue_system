@@ -38,6 +38,14 @@ type WebhookConfig struct {
 	Attempts   int      `json:"attempts,omitempty"`
 }
 
+// AttemptError records a single failure instance.
+type AttemptError struct {
+	Error     string    `json:"error"`
+	Timestamp time.Time `json:"timestamp"`
+	Attempt   int       `json:"attempt"`
+}
+
+
 
 // Job represents a task in the distributed task queue system.
 type Job struct {
@@ -58,7 +66,9 @@ type Job struct {
 	TenantID      string                 `json:"tenant_id"`         // for multi-tenancy
 	Result        interface{}            `json:"result,omitempty"`
 	Webhook       *WebhookConfig         `json:"webhook,omitempty"`
+	ErrorHistory  []AttemptError         `json:"error_history,omitempty"`
 }
+
 
 
 // NewJob creates a new Job instance with initial values.

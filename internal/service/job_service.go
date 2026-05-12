@@ -248,4 +248,53 @@ func (s *JobService) ReconcileOrphanedJobs(ctx context.Context, workerID string)
 	return len(stuckJobs), nil
 }
 
+// ─── DLQ Methods ──────────────────────────────────────────────────────────────
+
+func (s *JobService) ListFailedJobs(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
+	return s.store.ListJobs(ctx, tenantID, string(jobs.StatusFailed), jobType, limit, offset)
+}
+
+func (s *JobService) ReplayJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, error) {
+	job, err := s.store.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.TenantID != tenantID {
+		return nil, apperr.NewForbidden("you do not own this job")
+	}
+
+	// Reset job state
+	job.Status = jobs.StatusPending
+	job.Retries = 0
+	job.UpdatedAt = time.Now().UTC()
+	job.ProcessedBy = ""
+	job.Result = nil
+
+	if err := s.store.Save(ctx, job); err != nil {
+		return nil, err
+	}
+
+	if err := s.queue.Enqueue(ctx, job); err != nil {
+		return nil, err
+	}
+
+	return job, nil
+}
+
+func (s *JobService) DeleteJob(ctx context.Context, jobID, tenantID string) error {
+	job, err := s.store.GetByID(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	if job.TenantID != tenantID {
+		return apperr.NewForbidden("you do not own this job")
+	}
+	return s.store.DeleteJob(ctx, jobID)
+}
+
+func (s *JobService) BulkPurgeDLQ(ctx context.Context, tenantID, jobType string, olderThan time.Time) (int64, error) {
+	return s.store.DeleteJobsBefore(ctx, tenantID, string(jobs.StatusFailed), jobType, olderThan)
+}
+
+
 

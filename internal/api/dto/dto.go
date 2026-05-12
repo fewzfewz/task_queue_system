@@ -96,7 +96,9 @@ type JobResponse struct {
 	Timeout       int                 `json:"timeout,omitempty"`
 	Version       int                 `json:"version"`
 	TenantID      string              `json:"tenant_id,omitempty"`
+	ErrorHistory  []jobs.AttemptError `json:"error_history,omitempty"`
 }
+
 
 // ErrorResponse is the JSON body returned on any error.
 type ErrorResponse struct {
@@ -121,5 +123,6 @@ func FromJob(j *jobs.Job) JobResponse {
 		Timeout:       j.Timeout,
 		Version:       j.Version,
 		TenantID:      j.TenantID,
+		ErrorHistory:  j.ErrorHistory,
 	}
 }

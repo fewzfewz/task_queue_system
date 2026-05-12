@@ -88,3 +88,15 @@ func (s *DualStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (
 	// Recovery should happen on primary.
 	return s.Primary.RecoverOrphans(ctx, timeout)
 }
+
+func (s *DualStore) DeleteJob(ctx context.Context, jobID string) error {
+	_ = s.Secondary.DeleteJob(ctx, jobID)
+	return s.Primary.DeleteJob(ctx, jobID)
+}
+
+func (s *DualStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
+	_, _ = s.Secondary.DeleteJobsBefore(ctx, tenantID, status, jobType, before)
+	return s.Primary.DeleteJobsBefore(ctx, tenantID, status, jobType, before)
+}
+
+

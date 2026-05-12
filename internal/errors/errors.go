@@ -71,6 +71,15 @@ func NewTooManyRequests(msg string) *AppError {
 	}
 }
 
+// NewForbidden returns a 403-style error.
+func NewForbidden(msg string) *AppError {
+	return &AppError{
+		Code:    CodePermissionDenied,
+		Message: msg,
+	}
+}
+
+
 
 
 // IsCode checks if an error (or any error in its chain) is an AppError with the given code.

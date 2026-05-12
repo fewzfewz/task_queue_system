@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     webhook_secret TEXT,
     webhook_events TEXT[],
     webhook_last_status INTEGER,
-    webhook_attempts INTEGER DEFAULT 0
+    webhook_attempts INTEGER DEFAULT 0,
+    error_history JSONB
 );
 
 -- Indexes for performance and multi-tenancy isolation

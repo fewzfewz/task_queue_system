@@ -57,7 +57,12 @@ type Store interface {
 
 	// RecoverOrphans resets jobs from crashed workers back to 'pending'.
 	RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error)
+
+	// DLQ Management
+	DeleteJob(ctx context.Context, jobID string) error
+	DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error)
 }
+
 
 
 // ErrJobNotFound is returned when a job ID does not exist in the store.
@@ -179,6 +184,30 @@ func (s *InMemoryStore) ListJobs(ctx context.Context, tenantID string, status st
 func (s *InMemoryStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	return 0, nil
 }
+
+func (s *InMemoryStore) DeleteJob(_ context.Context, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.data, jobID)
+	return nil
+}
+
+func (s *InMemoryStore) DeleteJobsBefore(_ context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var count int64
+	for id, j := range s.data {
+		if (tenantID == "" || j.TenantID == tenantID) &&
+			(status == "" || string(j.Status) == status) &&
+			(jobType == "" || j.Type == jobType) &&
+			j.CreatedAt.Before(before) {
+			delete(s.data, id)
+			count++
+		}
+	}
+	return count, nil
+}
+
 
 
 // ─── Redis Store ──────────────────────────────────────────────────────────────
@@ -328,4 +357,32 @@ func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status strin
 func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	return 0, nil
 }
+
+func (s *RedisStore) DeleteJob(ctx context.Context, jobID string) error {
+	return s.client.HDel(ctx, jobStoreKey, jobID).Err()
+}
+
+func (s *RedisStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
+	// SCAN and delete. Performance will be O(N).
+	iter := s.client.HScan(ctx, jobStoreKey, 0, "*", 100).Iterator()
+	var count int64
+	for iter.Next(ctx) {
+		id := iter.Val() // HScan returns field, then value, so we need to be careful
+		if id == "" { continue }
+		
+		val, _ := s.client.HGet(ctx, jobStoreKey, id).Result()
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(val), &j); err != nil { continue }
+		
+		if (tenantID == "" || j.TenantID == tenantID) &&
+			(status == "" || string(j.Status) == status) &&
+			(jobType == "" || j.Type == jobType) &&
+			j.CreatedAt.Before(before) {
+			s.client.HDel(ctx, jobStoreKey, id)
+			count++
+		}
+	}
+	return count, nil
+}
+
 

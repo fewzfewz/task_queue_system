@@ -11,10 +11,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"task-queue-system/internal/api/dto"
+	"task-queue-system/internal/api/middleware"
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/service"
+	"strconv"
+	"time"
 )
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
@@ -213,5 +216,143 @@ func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
 	h.writeError(w, status, appErr.Code, appErr.Message)
 }
 
-// sentinel used by tests / future middleware.
-var ErrNotImplemented = errors.New("not implemented")
+// ListFailedJobs handles GET /api/v1/dlq.
+//
+// @Summary      List failed jobs
+// @Description  Returns a paginated list of jobs that have permanently failed for the tenant.
+// @Tags         dlq
+// @Produce      json
+// @Param        queue  query     string  false  "Queue type filter"
+// @Param        limit  query     int     false  "Page size"
+// @Param        page   query     int     false  "Page number"
+// @Success      200    {array}   dto.JobResponse
+// @Failure      401    {object}  dto.ErrorResponse
+// @Router       /api/v1/dlq [get]
+func (h *JobHandler) ListFailedJobs(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	jobType := r.URL.Query().Get("queue")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 { limit = 20 }
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page <= 0 { page = 1 }
+	offset := (page - 1) * limit
+
+	jobs, err := h.service.ListFailedJobs(r.Context(), tenantID, jobType, limit, offset)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	res := make([]dto.JobResponse, len(jobs))
+	for i, j := range jobs {
+		res[i] = dto.FromJob(j)
+	}
+
+	h.writeJSON(w, http.StatusOK, res)
+}
+
+// GetFailedJobDetail handles GET /api/v1/dlq/{id}.
+//
+// @Summary      Get failed job details
+// @Description  Returns the full state of a failed job, including its error history.
+// @Tags         dlq
+// @Produce      json
+// @Param        id   path      string  true  "Job ID"
+// @Success      200  {object}  dto.JobResponse
+// @Failure      404  {object}  dto.ErrorResponse
+// @Router       /api/v1/dlq/{id} [get]
+func (h *JobHandler) GetFailedJobDetail(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	id := r.PathValue("id")
+
+	job, err := h.service.GetJobStatus(r.Context(), id)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	if job.TenantID != tenantID {
+		h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "forbidden")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, dto.FromJob(job))
+}
+
+// ReplayFailedJob handles POST /api/v1/dlq/{id}/replay.
+//
+// @Summary      Re-enqueue a failed job
+// @Description  Resets a failed job to 'pending' state and enqueues it for immediate retry.
+// @Tags         dlq
+// @Produce      json
+// @Param        id   path      string  true  "Job ID"
+// @Success      200  {object}  dto.JobResponse
+// @Failure      404  {object}  dto.ErrorResponse
+// @Router       /api/v1/dlq/{id}/replay [post]
+func (h *JobHandler) ReplayFailedJob(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	id := r.PathValue("id")
+
+	job, err := h.service.ReplayJob(r.Context(), id, tenantID)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, dto.FromJob(job))
+}
+
+// DeleteFailedJob handles DELETE /api/v1/dlq/{id}.
+//
+// @Summary      Purge a failed job
+// @Description  Permanently deletes a single failed job record from the store.
+// @Tags         dlq
+// @Param        id   path      string  true  "Job ID"
+// @Success      204  "No Content"
+// @Failure      404  {object}  dto.ErrorResponse
+// @Router       /api/v1/dlq/{id} [delete]
+func (h *JobHandler) DeleteFailedJob(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	id := r.PathValue("id")
+
+	if err := h.service.DeleteJob(r.Context(), id, tenantID); err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// BulkPurgeDLQ handles DELETE /api/v1/dlq.
+//
+// @Summary      Bulk purge failed jobs
+// @Description  Deletes all failed jobs for a tenant/queue that are older than the specified timestamp.
+// @Tags         dlq
+// @Param        queue       query     string  false  "Queue type filter"
+// @Param        older_than  query     string  true   "ISO8601 Timestamp"
+// @Success      200         {object}  map[string]int64
+// @Router       /api/v1/dlq [delete]
+func (h *JobHandler) BulkPurgeDLQ(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	jobType := r.URL.Query().Get("queue")
+	olderThanStr := r.URL.Query().Get("older_than")
+
+	if olderThanStr == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "older_than is required")
+		return
+	}
+
+	olderThan, err := time.Parse(time.RFC3339, olderThanStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid timestamp format")
+		return
+	}
+
+	count, err := h.service.BulkPurgeDLQ(r.Context(), tenantID, jobType, olderThan)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]int64{"deleted": count})
+}

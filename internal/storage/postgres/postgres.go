@@ -98,13 +98,15 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 	var webhookURL, webhookSecret *string
 	var webhookEvents []string
 	var webhookLastStatus, webhookAttempts *int
+	var errHistoryJSON []byte
 
 	query := `
 		SELECT 
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
 			version, scheduled_at, created_at, updated_at, processed_by, result, error,
-			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			error_history
 		FROM jobs WHERE id = $1
 	`
 	err := s.pool.QueryRow(ctx, query, id).Scan(
@@ -112,6 +114,7 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 		&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 		&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy, &res, &errStr,
 		&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
+		&errHistoryJSON,
 	)
 
 	if err != nil {
@@ -146,6 +149,10 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 		}
 	}
 
+	if errHistoryJSON != nil {
+		_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
+	}
+
 	return &j, nil
 }
 
@@ -177,12 +184,33 @@ func (s *PostgresStore) UpdateResult(ctx context.Context, id string, status jobs
 	}
 
 	now := time.Now().UTC()
+	var errHistJSON []byte
+	if status == jobs.StatusFailed || (status == jobs.StatusPending && result != nil) {
+		// Append to error history if it's a failure
+		histErr := jobs.AttemptError{
+			Error:     fmt.Sprintf("%v", result),
+			Timestamp: now,
+		}
+		
+		// We need the current history to append
+		// In a real high-perf system we'd use jsonb_set or similar
+		var existingHist []byte
+		_ = s.pool.QueryRow(ctx, "SELECT error_history FROM jobs WHERE id = $1", id).Scan(&existingHist)
+		var hist []jobs.AttemptError
+		if existingHist != nil {
+			_ = json.Unmarshal(existingHist, &hist)
+		}
+		histErr.Attempt = len(hist) + 1
+		hist = append(hist, histErr)
+		errHistJSON, _ = json.Marshal(hist)
+	}
+
 	query := `
 		UPDATE jobs 
-		SET status = $1, processed_by = $2, result = $3, error = $4, updated_at = $5, completed_at = $6
-		WHERE id = $7
+		SET status = $1, processed_by = $2, result = $3, error = $4, updated_at = $5, completed_at = $6, error_history = $7
+		WHERE id = $8
 	`
-	ct, err := s.pool.Exec(ctx, query, string(status), workerID, resJSON, errorStr, now, now, id)
+	ct, err := s.pool.Exec(ctx, query, string(status), workerID, resJSON, errorStr, now, now, errHistJSON, id)
 	if err != nil {
 		return err
 	}
@@ -330,6 +358,27 @@ func (s *PostgresStore) RecoverOrphans(ctx context.Context, timeout time.Duratio
 	return ct.RowsAffected(), nil
 }
 
+func (s *PostgresStore) DeleteJob(ctx context.Context, jobID string) error {
+	query := `DELETE FROM jobs WHERE id = $1`
+	_, err := s.pool.Exec(ctx, query, jobID)
+	return err
+}
+
+func (s *PostgresStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
+	query := `
+		DELETE FROM jobs 
+		WHERE ($1 = '' OR tenant_id = $1)
+		  AND ($2 = '' OR status = $2)
+		  AND ($3 = '' OR type = $3)
+		  AND created_at < $4
+	`
+	ct, err := s.pool.Exec(ctx, query, tenantID, status, jobType, before)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
 func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 	var results []*jobs.Job
 	for rows.Next() {
@@ -341,12 +390,14 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		var webhookURL, webhookSecret *string
 		var webhookEvents []string
 		var webhookLastStatus, webhookAttempts *int
+		var errHistoryJSON []byte
 
 		err := rows.Scan(
 			&j.ID, &j.TenantID, &j.Type, &payload, &stat, &priority,
 			&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 			&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy,
 			&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
+			&errHistoryJSON,
 		)
 		if err != nil {
 			return nil, err
@@ -368,6 +419,9 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 				LastStatus: *webhookLastStatus,
 				Attempts:   *webhookAttempts,
 			}
+		}
+		if errHistoryJSON != nil {
+			_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
 		}
 		results = append(results, &j)
 	}
