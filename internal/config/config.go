@@ -48,7 +48,17 @@ type Config struct {
 
 	// JwtPublicKeyPath is the path to the RSA public key file.
 	JwtPublicKeyPath string
+
+	// VaultAddress is the URL of the HashiCorp Vault server.
+	VaultAddress string
+
+	// VaultRoleID for AppRole authentication.
+	VaultRoleID string
+
+	// VaultSecretID for AppRole authentication.
+	VaultSecretID string
 }
+
 
 
 
@@ -67,6 +77,9 @@ func Load() *Config {
 		PostgresConnStr: getEnvOrDefault("POSTGRES_CONN_STR", ""),
 		JwtPublicKey:  getEnvOrDefault("JWT_PUBLIC_KEY", ""),
 		JwtPublicKeyPath: getEnvOrDefault("JWT_PUBLIC_KEY_PATH", ""),
+		VaultAddress:  getEnvOrDefault("VAULT_ADDR", ""),
+		VaultRoleID:   getEnvOrDefault("VAULT_ROLE_ID", ""),
+		VaultSecretID: getEnvOrDefault("VAULT_SECRET_ID", ""),
 	}
 }
 

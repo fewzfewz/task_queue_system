@@ -10,6 +10,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/secrets"
 )
 
 type ContextKey string
@@ -20,7 +21,7 @@ const (
 )
 
 // AuthRequired returns a middleware that validates JWTs (RS256) or falls back to X-API-Key.
-func AuthRequired(cfg *config.Config) func(http.Handler) http.Handler {
+func AuthRequired(cfg *config.Config, secrets secrets.SecretsProvider) func(http.Handler) http.Handler {
 	pubKey, err := loadPublicKey(cfg)
 	if err != nil {
 		fmt.Printf("Warning: failed to load JWT public key: %v\n", err)
@@ -74,12 +75,27 @@ func AuthRequired(cfg *config.Config) func(http.Handler) http.Handler {
 
 			// 2. Legacy X-API-Key Fallback
 			clientKey := r.Header.Get("X-API-Key")
+			tenantID := r.Header.Get("X-Tenant-ID")
+
 			if clientKey != "" {
+				// Use Vault/Env secrets if tenantID provided
+				if tenantID != "" && secrets != nil {
+					expectedKey, err := secrets.GetSecret(r.Context(), tenantID)
+					if err == nil && expectedKey != "" {
+						if clientKey == expectedKey {
+							ctx := context.WithValue(r.Context(), ContextKeyTenantID, tenantID)
+							next.ServeHTTP(w, r.WithContext(ctx))
+							return
+						}
+					}
+				}
+
+				// Fallback to global config key
 				if clientKey == cfg.ApiKey {
 					next.ServeHTTP(w, r)
 					return
 				}
-				sendJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid legacy API key")
+				sendJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid legacy API key or tenant")
 				return
 			}
 

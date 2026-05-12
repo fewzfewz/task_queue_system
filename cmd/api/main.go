@@ -21,6 +21,7 @@ import (
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
+	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/storage"
 )
 
@@ -58,8 +59,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, log, cfg)
+	// ── 5. Initialise Secrets Provider ───────────────────────────────────────
+	var secretsProv secrets.SecretsProvider
+	if cfg.VaultAddress != "" {
+		v, err := secrets.NewVaultSecretsProvider(cfg.VaultAddress, cfg.VaultRoleID, cfg.VaultSecretID)
+		if err != nil {
+			log.Error("failed to initialise vault provider", "error", err)
+			os.Exit(1)
+		}
+		secretsProv = v
+		log.Info("using vault for secret management", "address", cfg.VaultAddress)
+	} else {
+		secretsProv = secrets.NewEnvSecretsProvider()
+		log.Info("using environment variables for secret management")
+	}
+
+	// ── 6. Setup HTTP Server & Routes ─────────────────────────────────────────
+	router := routes.NewRouter(q, store, log, cfg, secretsProv)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),

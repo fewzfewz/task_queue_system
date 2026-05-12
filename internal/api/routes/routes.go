@@ -13,6 +13,7 @@ import (
 	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/queue"
+	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 )
@@ -21,14 +22,14 @@ import (
 // It is the single source of truth for all route → handler mappings.
 //
 // Pass models.NewInMemoryStore() for local dev or a PostgresStore for production.
-func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config) http.Handler {
+func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, secrets secrets.SecretsProvider) http.Handler {
 	svc := service.New(q, store, logger, cfg.MaxQueueSize)
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()
 
 	// POST /jobs        → create a new job and enqueue it (PROTECTED)
-	mux.Handle("POST /jobs", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJob)))
+	mux.Handle("POST /jobs", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.CreateJob)))
 
 	// GET  /jobs/{id}   → return the current status of a job
 	mux.HandleFunc("GET /jobs/{id}", h.GetJobStatus)
