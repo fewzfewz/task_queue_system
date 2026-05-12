@@ -1,4 +1,4 @@
-package jobs
+package standard
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/worker/plugin"
 )
 
@@ -29,7 +30,12 @@ func (p *ImagePlugin) Type() string {
 }
 
 // Execute extracts image processing fields from the payload and simulates processing.
-func (p *ImagePlugin) Execute(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
+func (p *ImagePlugin) Execute(ctx context.Context, job *jobs.Job) (interface{}, error) {
+	if job.Version > 1 {
+		p.logger.Warn("unsupported job version, falling back to v1 logic", "version", job.Version, "job_id", job.ID)
+	}
+
+	payload := job.Payload
 	sourceURL, _ := payload["source_url"].(string)
 	operation, _ := payload["operation"].(string) // e.g. "resize", "compress", "watermark"
 

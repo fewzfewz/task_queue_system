@@ -21,6 +21,8 @@ type CreateJobRequest struct {
 	CorrelationID string `json:"correlation_id"`
 	// Timeout is optional (in seconds). Default: 60s
 	Timeout int `json:"timeout"`
+	// Version is optional. Default: 1
+	Version int `json:"version"`
 }
 
 // JobResponse is the JSON body returned for both POST /jobs and GET /jobs/{id}.
@@ -37,6 +39,7 @@ type JobResponse struct {
 	RunAt      string                 `json:"run_at"`
 	CorrelationID string              `json:"correlation_id,omitempty"`
 	Timeout       int                 `json:"timeout,omitempty"`
+	Version       int                 `json:"version"`
 }
 
 // ErrorResponse is the JSON body returned on any error.
@@ -60,5 +63,6 @@ func FromJob(j *jobs.Job) JobResponse {
 		RunAt:         j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
 		CorrelationID: j.CorrelationID,
 		Timeout:       j.Timeout,
+		Version:       j.Version,
 	}
 }

@@ -44,18 +44,23 @@ type Job struct {
 	ProcessedBy   string                 `json:"processed_by,omitempty"`
 	CorrelationID string                 `json:"correlation_id,omitempty"`
 	Timeout       int                    `json:"timeout,omitempty"` // in seconds
+	Version       int                    `json:"version"`           // schema version
 	Result        interface{}            `json:"result,omitempty"`
 }
 
 // NewJob creates a new Job instance with initial values.
 // The job will be initialized with a new UUID, pending status, and zero retries.
-func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int, runAt time.Time, correlationID string, timeout int) *Job {
+func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int, runAt time.Time, correlationID string, timeout int, version int) *Job {
 	if priority == "" {
 		priority = PriorityMedium
 	}
 
 	if correlationID == "" {
 		correlationID = uuid.New().String()
+	}
+
+	if version <= 0 {
+		version = 1 // default schema version
 	}
 	
 	now := time.Now().UTC()
@@ -76,5 +81,6 @@ func NewJob(jobType string, payload map[string]interface{}, priority JobPriority
 		RunAt:         runAt,
 		CorrelationID: correlationID,
 		Timeout:       timeout,
+		Version:       version,
 	}
 }

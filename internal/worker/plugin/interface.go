@@ -1,6 +1,10 @@
 package plugin
 
-import "context"
+import (
+	"context"
+
+	"task-queue-system/internal/jobs"
+)
 
 // JobPlugin defines the contract for job execution units.
 // This interface allows for an extensible system where new job types
@@ -11,5 +15,5 @@ type JobPlugin interface {
 
 	// Execute performs the actual work of the job using the provided payload.
 	// It returns an optional result and an error if processing fails.
-	Execute(ctx context.Context, payload map[string]interface{}) (interface{}, error)
+	Execute(ctx context.Context, job *jobs.Job) (interface{}, error)
 }

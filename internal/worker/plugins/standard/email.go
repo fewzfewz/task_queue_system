@@ -1,4 +1,4 @@
-package jobs
+package standard
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/worker/plugin"
 )
 
@@ -38,7 +39,12 @@ func (p *EmailPlugin) Type() string {
 }
 
 // Execute extracts email fields from the payload and simulates sending.
-func (p *EmailPlugin) Execute(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
+func (p *EmailPlugin) Execute(ctx context.Context, job *jobs.Job) (interface{}, error) {
+	if job.Version > 1 {
+		p.logger.Warn("unsupported job version, falling back to v1 logic", "version", job.Version, "job_id", job.ID)
+	}
+
+	payload := job.Payload
 	to, _ := payload["to"].(string)
 	subject, _ := payload["subject"].(string)
 

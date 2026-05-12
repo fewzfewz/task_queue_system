@@ -44,7 +44,7 @@ func New(q queue.Queue, store models.Store, logger *slog.Logger, maxQueueSize in
 }
 
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
-func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, priority string, maxRetries int, runAtStr string, correlationID string, timeout int) (*jobs.Job, error) {
+func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, priority string, maxRetries int, runAtStr string, correlationID string, timeout int, version int) (*jobs.Job, error) {
 	if _, ok := allowedJobTypes[jobType]; !ok {
 		return nil, apperr.NewInvalidArgument(fmt.Sprintf("unsupported job type %q", jobType))
 	}
@@ -75,7 +75,7 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		timeout = 60 // default 60s
 	}
 
-	job := jobs.NewJob(jobType, payload, jobs.JobPriority(priority), maxRetries, runAt, correlationID, timeout)
+	job := jobs.NewJob(jobType, payload, jobs.JobPriority(priority), maxRetries, runAt, correlationID, timeout, version)
 
 	if err := s.store.Save(ctx, job); err != nil {
 		s.logger.Error("failed to persist job", "job_id", job.ID, "error", err)

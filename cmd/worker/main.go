@@ -10,8 +10,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/config"
-	_ "task-queue-system/internal/jobs" // Dynamic plugin auto-loading
 	"task-queue-system/internal/logger"
+	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"

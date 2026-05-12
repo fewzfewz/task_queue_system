@@ -59,5 +59,5 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interfac
 		}
 	}()
 
-	return p.Execute(ctx, job.Payload)
+	return p.Execute(ctx, job)
 }
