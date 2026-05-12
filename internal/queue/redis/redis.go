@@ -469,3 +469,25 @@ func (q *RedisQueue) MarkProcessed(ctx context.Context, jobID string) error {
 	return q.client.SAdd(ctx, q.processedKey, jobID).Err()
 }
 
+
+// IsAllowed implements per-tenant rate limiting using a Redis-backed token bucket.
+// It allows up to 10 jobs per second per tenant for this demo.
+func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error) {
+	if tenantID == "" {
+		return true, nil // anonymous tenant (global pool)
+	}
+
+	key := "task_queue:tenant:" + tenantID + ":rate"
+	limit := int64(10) // hardcoded limit for demo
+
+	val, err := q.client.Incr(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+
+	if val == 1 {
+		q.client.Expire(ctx, key, time.Second)
+	}
+
+	return val <= limit, nil
+}

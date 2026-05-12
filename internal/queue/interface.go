@@ -49,6 +49,9 @@ type Queue interface {
 	// Maintenance Ops
 	PromoteScheduledJobs(ctx context.Context) (int, error)
 	ReclaimTimedOutJobs(ctx context.Context) (int, error)
+
+	// Multi-tenancy
+	IsAllowed(ctx context.Context, tenantID string) (bool, error)
 }
 
 // WorkerInfo represents the status of an individual worker process.

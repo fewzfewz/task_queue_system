@@ -23,6 +23,8 @@ type CreateJobRequest struct {
 	Timeout int `json:"timeout"`
 	// Version is optional. Default: 1
 	Version int `json:"version"`
+	// TenantID is for multi-tenancy.
+	TenantID string `json:"tenant_id"`
 }
 
 // JobResponse is the JSON body returned for both POST /jobs and GET /jobs/{id}.
@@ -40,6 +42,7 @@ type JobResponse struct {
 	CorrelationID string              `json:"correlation_id,omitempty"`
 	Timeout       int                 `json:"timeout,omitempty"`
 	Version       int                 `json:"version"`
+	TenantID      string              `json:"tenant_id,omitempty"`
 }
 
 // ErrorResponse is the JSON body returned on any error.
@@ -64,5 +67,6 @@ func FromJob(j *jobs.Job) JobResponse {
 		CorrelationID: j.CorrelationID,
 		Timeout:       j.Timeout,
 		Version:       j.Version,
+		TenantID:      j.TenantID,
 	}
 }

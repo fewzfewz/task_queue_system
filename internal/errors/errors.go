@@ -24,8 +24,10 @@ const (
 	CodeNotFound       = "NOT_FOUND"
 	CodeInvalidArgument = "INVALID_ARGUMENT"
 	CodeInternal       = "INTERNAL_ERROR"
-	CodeUnauthorized   = "UNAUTHORIZED"
-	CodeQueueFull      = "QUEUE_FULL"
+	CodeUnauthorized     = "UNAUTHORIZED"
+	CodePermissionDenied = "PERMISSION_DENIED"
+	CodeQueueFull        = "QUEUE_FULL"
+	CodeTooManyRequests  = "TOO_MANY_REQUESTS"
 )
 
 // NewNotFound returns a 404-style error.
@@ -60,6 +62,15 @@ func NewQueueFull() *AppError {
 		Message: "queue overloaded; please try again later",
 	}
 }
+
+// NewTooManyRequests returns a rate-limit error.
+func NewTooManyRequests(msg string) *AppError {
+	return &AppError{
+		Code:    CodeTooManyRequests,
+		Message: msg,
+	}
+}
+
 
 
 // IsCode checks if an error (or any error in its chain) is an AppError with the given code.

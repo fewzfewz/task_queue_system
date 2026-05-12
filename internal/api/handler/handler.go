@@ -46,7 +46,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// ── Delegate to service ───────────────────────────────────────────────────
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID, req.Timeout, req.Version)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID)
 	if err != nil {
 		h.writeAppError(w, err)
 		return
@@ -91,6 +91,15 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	job, err := h.service.GetJobStatus(r.Context(), jobID)
 	if err != nil {
 		h.writeAppError(w, err)
+		return
+	}
+
+	// ── Multi-tenancy Filter ────────────────────────────────────────────────
+	// If a tenant_id is provided in the query, we only return the job if it matches.
+	// In a real system, this would be extracted from an auth token.
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID != "" && job.TenantID != tenantID {
+		h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access to job denied for tenant")
 		return
 	}
 
@@ -170,8 +179,10 @@ func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case apperr.CodeUnauthorized:
 		status = http.StatusUnauthorized
-	case apperr.CodeQueueFull:
+	case apperr.CodeQueueFull, apperr.CodeTooManyRequests:
 		status = http.StatusTooManyRequests
+	case apperr.CodePermissionDenied:
+		status = http.StatusForbidden
 	case apperr.CodeInternal:
 		status = http.StatusInternalServerError
 	}
