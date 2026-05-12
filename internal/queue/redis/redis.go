@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -159,18 +160,31 @@ func (q *RedisQueue) getPartitionedKey(jobID string, priority jobs.JobPriority) 
 	return fmt.Sprintf("%s:%d", base, partition)
 }
 
-// getAllPartitionKeys returns all partition keys for all priority levels.
-func (q *RedisQueue) getAllPartitionKeys() []string {
+// getFairPartitionKeys returns all partition keys in a weighted randomized order
+// to prevent starvation of lower-priority jobs (Weighted Round-Robin style).
+// Default weight distribution: 70% High, 20% Medium, 10% Low.
+func (q *RedisQueue) getFairPartitionKeys() []string {
+	r := rand.Intn(100)
+
+	var p1, p2, p3 string
+	if r < 70 {
+		p1, p2, p3 = q.qHigh, q.qMedium, q.qLow
+	} else if r < 90 {
+		p1, p2, p3 = q.qMedium, q.qHigh, q.qLow
+	} else {
+		p1, p2, p3 = q.qLow, q.qHigh, q.qMedium
+	}
+
 	var keys []string
-	// Order matters for BLPOP priority: High -> Medium -> Low
-	priorities := []string{q.qHigh, q.qMedium, q.qLow}
-	for _, p := range priorities {
+	// Collect each priority's partitions in the chosen order.
+	for _, base := range []string{p1, p2, p3} {
 		for i := 1; i <= q.numPartitions; i++ {
-			keys = append(keys, fmt.Sprintf("%s:%d", p, i))
+			keys = append(keys, fmt.Sprintf("%s:%d", base, i))
 		}
 	}
 	return keys
 }
+
 
 
 // Enqueue serialises the job as JSON and pushes it to the left of the Redis list.
@@ -229,8 +243,8 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	}
 
 	// BRPop checks keys left-to-right, ensuring strict priority handling
-	// We watch all partitions for all priorities.
-	keys := q.getAllPartitionKeys()
+	// We watch all partitions for all priorities in a fair order.
+	keys := q.getFairPartitionKeys()
 	result, err := q.client.BRPop(ctx, timeout, keys...).Result()
 	if err != nil {
 		if err == redis.Nil {

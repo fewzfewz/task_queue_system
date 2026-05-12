@@ -31,4 +31,11 @@ var (
 		Name: "task_queue_worker_busy",
 		Help: "Number of workers currently executing a job.",
 	})
+
+	// JobSLACompliance tracks if jobs meet the execution time target (e.g. < 5s).
+	JobSLACompliance = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_queue_job_sla_compliance_total",
+		Help: "Total number of jobs segmented by SLA compliance status (true/false).",
+	}, []string{"job_type", "tenant_id", "compliant"})
 )
+

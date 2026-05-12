@@ -165,6 +165,13 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		metrics.JobTotal.WithLabelValues(job.Type, job.TenantID, "completed").Inc()
 		metrics.JobLatency.WithLabelValues(job.Type, job.TenantID).Observe(elapsed.Seconds())
 
+		// SLA Tracking: Assume 5s target for all jobs for now
+		compliant := "false"
+		if elapsed < 5*time.Second {
+			compliant = "true"
+		}
+		metrics.JobSLACompliance.WithLabelValues(job.Type, job.TenantID, compliant).Inc()
+
 		return nil
 	}
 
@@ -190,6 +197,14 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	}
 
 	metrics.JobLatency.WithLabelValues(job.Type, job.TenantID).Observe(elapsed.Seconds())
+
+	// SLA Tracking: Even failed jobs contribute to SLA statistics
+	compliant := "false"
+	if elapsed < 5*time.Second {
+		compliant = "true"
+	}
+	metrics.JobSLACompliance.WithLabelValues(job.Type, job.TenantID, compliant).Inc()
+
 	return nil
 }
 
