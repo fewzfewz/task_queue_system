@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"task-queue-system/internal/service"
 	"task-queue-system/internal/metrics"
+	"task-queue-system/internal/service"
 	"task-queue-system/internal/worker/executor"
 	"task-queue-system/internal/worker/limiter"
 )
@@ -38,6 +38,7 @@ type Pool struct {
 	wg     sync.WaitGroup
 
 	busyCount atomic.Int32
+	shuttingDown int32
 }
 
 
@@ -80,7 +81,7 @@ func (p *Pool) Start(ctx context.Context) {
 	p.wg.Add(1)
 	go p.metricsLoop(workerCtx)
 
-	for i := range p.cfg.NumWorkers {
+	for i := 0; i < p.cfg.NumWorkers; i++ {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
 		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger)
 		
@@ -96,6 +97,19 @@ func (p *Pool) Start(ctx context.Context) {
 		}()
 	}
 
+}
+
+// InitiateDrain marks the worker pool as draining and cancels the worker context.
+// It returns true if the drain was started by this call, false if already draining.
+func (p *Pool) InitiateDrain() bool {
+	if !atomic.CompareAndSwapInt32(&p.shuttingDown, 0, 1) {
+		return false
+	}
+	p.logger.Info("worker pool drain initiated")
+	if p.cancel != nil {
+		p.cancel()
+	}
+	return true
 }
 
 func (p *Pool) metricsLoop(ctx context.Context) {
@@ -154,10 +168,7 @@ func (p *Pool) heartbeatLoop(ctx context.Context) {
 // Stop signals all workers to stop and blocks until they have all exited.
 // It is safe to call Stop more than once.
 func (p *Pool) Stop() {
-	if p.cancel != nil {
-		p.logger.Info("shutting down worker pool")
-		p.cancel()
-	}
+	p.InitiateDrain()
 	p.wg.Wait()
 	p.logger.Info("worker pool shut down")
 }

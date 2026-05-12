@@ -31,6 +31,12 @@ var (
 		Help: "Ratio of busy workers to total workers (0.0 to 1.0).",
 	})
 
+	// WorkerGracefulShutdownTotal tracks the number of successful graceful shutdowns.
+	WorkerGracefulShutdownTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "worker_graceful_shutdown_total",
+		Help: "Total number of worker processes that drained cleanly before shutdown.",
+	})
+
 
 	// WorkerUtilization tracks the number of busy workers.
 	WorkerUtilization = promauto.NewGauge(prometheus.GaugeOpts{

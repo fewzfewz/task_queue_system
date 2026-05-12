@@ -183,6 +183,25 @@ This service already exposes Prometheus metrics on `/metrics`, including: - `tas
 kubectl apply -f deploy/k8s/hpa.yaml
 ```
 
+### 4. Graceful Worker Scale-Down
+
+The worker deployment exposes a shutdown endpoint at `/healthz/shutdown` and a metrics endpoint at `/metrics`.
+The Kubernetes worker deployment should include a `preStop` hook so scale-down waits for in-flight jobs to finish:
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command:
+        [
+          "/bin/sh",
+          "-c",
+          "sleep 5 && curl -X POST localhost:8080/healthz/shutdown",
+        ]
+```
+
+This ensures the worker stops accepting new jobs, drains current work, and emits `worker_graceful_shutdown_total` on clean exit.
+
 ### 3. Example Prometheus Adapter install
 
 If you have not installed Prometheus Adapter, use Helm:

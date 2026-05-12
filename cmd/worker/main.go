@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -11,13 +13,15 @@ import (
 
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/logger"
-	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage"
-	"task-queue-system/internal/worker/executor"
-	"task-queue-system/internal/worker/pool"
 	"task-queue-system/internal/webhooks"
+	"task-queue-system/internal/worker/executor"
+	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
+	"task-queue-system/internal/worker/pool"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 
@@ -98,16 +102,41 @@ func main() {
 	// Start is non-blocking. It spins up the goroutines.
 	workerPool.Start(context.Background())
 
+	shutdownCoordinator := newShutdownCoordinator(workerPool, time.Duration(cfg.DrainTimeoutSeconds)*time.Second, log)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz/shutdown", shutdownCoordinator.Handler)
+	mux.Handle("/metrics", promhttp.Handler())
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
+		Handler: mux,
+	}
+
+	go func() {
+		log.Info("starting worker HTTP server", "port", cfg.ServerPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("worker HTTP server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
 	// Wait for interrupt signal to gracefully shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Info("shutdown signal received, stopping workers...")
+	shutdownCoordinator.Initiate()
+	shutdownCoordinator.Wait()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	_ = srv.Shutdown(shutdownCtx)
 
 	// Stop triggers the pool context cancellation, making workers exit cleanly
 	// after finishing their current in-flight job, and blocks until they finish.
-	workerPool.Stop()
+	// The pool has already been drained by shutdownCoordinator.Wait().
 	cancelWebhooks()
 
 	// Clean up connections

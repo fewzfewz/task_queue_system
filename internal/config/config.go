@@ -57,6 +57,11 @@ type Config struct {
 
 	// VaultSecretID for AppRole authentication.
 	VaultSecretID string
+
+	// DrainTimeoutSeconds is the maximum time to wait for a worker to finish
+	// in-flight jobs before force exiting during a graceful shutdown.
+	// Default: 60 seconds.
+	DrainTimeoutSeconds int
 }
 
 
@@ -80,6 +85,7 @@ func Load() *Config {
 		VaultAddress:  getEnvOrDefault("VAULT_ADDR", ""),
 		VaultRoleID:   getEnvOrDefault("VAULT_ROLE_ID", ""),
 		VaultSecretID: getEnvOrDefault("VAULT_SECRET_ID", ""),
+		DrainTimeoutSeconds: getEnvAsInt("DRAIN_TIMEOUT", 60),
 	}
 }
 
