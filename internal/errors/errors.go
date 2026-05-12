@@ -25,6 +25,7 @@ const (
 	CodeInvalidArgument = "INVALID_ARGUMENT"
 	CodeInternal       = "INTERNAL_ERROR"
 	CodeUnauthorized   = "UNAUTHORIZED"
+	CodeQueueFull      = "QUEUE_FULL"
 )
 
 // NewNotFound returns a 404-style error.
@@ -51,6 +52,15 @@ func NewInternal(msg string, err error) *AppError {
 		Err:     err,
 	}
 }
+
+// NewQueueFull returns a backpressure-related error.
+func NewQueueFull() *AppError {
+	return &AppError{
+		Code:    CodeQueueFull,
+		Message: "queue overloaded; please try again later",
+	}
+}
+
 
 // IsCode checks if an error (or any error in its chain) is an AppError with the given code.
 func IsCode(err error, code string) bool {

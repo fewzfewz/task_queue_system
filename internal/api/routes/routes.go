@@ -20,8 +20,8 @@ import (
 // It is the single source of truth for all route → handler mappings.
 //
 // Pass models.NewInMemoryStore() for local dev or a PostgresStore for production.
-func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, apiKey string) http.Handler {
-	svc := service.New(q, store, logger)
+func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, apiKey string, maxQueueSize int64) http.Handler {
+	svc := service.New(q, store, logger, maxQueueSize)
 	h := handler.New(svc, logger)
 
 	mux := http.NewServeMux()

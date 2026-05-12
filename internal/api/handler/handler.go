@@ -166,6 +166,8 @@ func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	case apperr.CodeUnauthorized:
 		status = http.StatusUnauthorized
+	case apperr.CodeQueueFull:
+		status = http.StatusTooManyRequests
 	case apperr.CodeInternal:
 		status = http.StatusInternalServerError
 	}

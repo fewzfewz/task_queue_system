@@ -55,7 +55,7 @@ func main() {
 	// Both API and Worker use the same queue name and store backend.
 	q := redisqueue.New(redisClient, "jobs")
 	store := models.NewRedisStore(redisClient)
-	svc := service.New(q, store, log)
+	svc := service.New(q, store, log, 0) // Workers don't enforce ingestion backpressure
 
 	// ── 5. Initialise Job Executor ──────────────────────────────────────────
 	// The executor automatically picks up plugins registered via init() calls

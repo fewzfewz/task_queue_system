@@ -166,6 +166,15 @@ func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return nil
 }
 
+// Size returns the total number of pending jobs across all priority queues.
+func (q *RedisQueue) Size(ctx context.Context) (int64, error) {
+	// We sum up high, medium, and low priority lists.
+	hLen, _ := q.client.LLen(ctx, q.qHigh).Result()
+	mLen, _ := q.client.LLen(ctx, q.qMedium).Result()
+	lLen, _ := q.client.LLen(ctx, q.qLow).Result()
+	return hLen + mLen + lLen, nil
+}
+
 // Dequeue blocks until a job becomes available or the context is cancelled.
 // It pops from the right (BRPOP), checking queues in priority order.
 func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {

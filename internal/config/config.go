@@ -31,6 +31,10 @@ type Config struct {
 	// LogLevel is the minimum level to log (info, error, debug).
 	// Default: info
 	LogLevel string
+
+	// MaxQueueSize is the maximum number of pending jobs allowed in the queue.
+	// Default: 10000 (0 = unlimited)
+	MaxQueueSize int64
 }
 
 // Load reads environment variables and returns a populated Config with defaults.
@@ -43,6 +47,7 @@ func Load() *Config {
 		ApiKey:        getEnvOrDefault("API_KEY", "secret-api-key"),
 		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
 		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
+		MaxQueueSize:  getEnvAsInt64("MAX_QUEUE_SIZE", 10000),
 	}
 }
 
@@ -85,6 +90,16 @@ func getEnvAsFloat(key string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	if v, err := strconv.ParseFloat(str, 64); err == nil {
+		return v
+	}
+	return defaultVal
+}
+func getEnvAsInt64(key string, defaultVal int64) int64 {
+	str := os.Getenv(key)
+	if str == "" {
+		return defaultVal
+	}
+	if v, err := strconv.ParseInt(str, 10, 64); err == nil {
 		return v
 	}
 	return defaultVal

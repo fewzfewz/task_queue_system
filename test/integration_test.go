@@ -96,7 +96,7 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	// Setup System
 	store := NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log)
+	svc := service.New(q, store, log, 0)
 	
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-success"}
@@ -138,7 +138,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 
 	store := NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log)
+	svc := service.New(q, store, log, 0)
 	
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-fail", ShouldFail: true} // This worker will fail
@@ -191,7 +191,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 
 	store := NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log)
+	svc := service.New(q, store, log, 0)
 	
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-scheduled"}

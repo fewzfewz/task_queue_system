@@ -14,6 +14,9 @@ type Queue interface {
 	// Context is included for timeout/cancellation of the enqueue operation.
 	Enqueue(ctx context.Context, job *jobs.Job) error
 
+	// Size returns the current number of pending jobs in the queue.
+	Size(ctx context.Context) (int64, error)
+
 	// Dequeue blocks and retrieves the next available job from the queue.
 	// The context can be used to cancel a long-polling operation.
 	Dequeue(ctx context.Context) (*jobs.Job, error)

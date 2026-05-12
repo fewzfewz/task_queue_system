@@ -27,17 +27,19 @@ const defaultMaxRetries = 3
 // JobService orchestrates job creation, state transitions, and coordination
 // between the queue backend and the persistent datastore.
 type JobService struct {
-	queue  queue.Queue
-	store  models.Store
-	logger *slog.Logger
+	queue        queue.Queue
+	store        models.Store
+	logger       *slog.Logger
+	maxQueueSize int64
 }
 
 // New creates a JobService.
-func New(q queue.Queue, store models.Store, logger *slog.Logger) *JobService {
+func New(q queue.Queue, store models.Store, logger *slog.Logger, maxQueueSize int64) *JobService {
 	return &JobService{
-		queue:  q,
-		store:  store,
-		logger: logger,
+		queue:        q,
+		store:        store,
+		logger:       logger,
+		maxQueueSize: maxQueueSize,
 	}
 }
 
@@ -59,6 +61,14 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		}
 		if runAt.Before(time.Now()) {
 			return nil, apperr.NewInvalidArgument("run_at timestamp must be in the future")
+		}
+	}
+
+	// ── Backpressure Check ───────────────────────────────────────────────────
+	if s.maxQueueSize > 0 {
+		count, err := s.queue.Size(ctx)
+		if err == nil && count >= s.maxQueueSize {
+			return nil, apperr.NewQueueFull()
 		}
 	}
 
