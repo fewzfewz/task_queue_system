@@ -52,12 +52,24 @@ func (s *PostgresStore) Close() {
 
 func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 	payload, _ := json.Marshal(job.Payload)
+	var url, secret *string
+	var events []string
+	var lastStatus, attempts int
+	if job.Webhook != nil {
+		url = &job.Webhook.URL
+		secret = &job.Webhook.Secret
+		events = job.Webhook.Events
+		lastStatus = job.Webhook.LastStatus
+		attempts = job.Webhook.Attempts
+	}
+
 	query := `
 		INSERT INTO jobs (
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			version, scheduled_at, updated_at,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			attempts = EXCLUDED.attempts,
@@ -70,6 +82,7 @@ func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 		job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout,
 		job.Version, job.RunAt, time.Now().UTC(),
+		url, secret, events, lastStatus, attempts,
 	)
 	return err
 }
@@ -82,18 +95,23 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 	var status string
 	var processedBy *string
 	var errStr *string
+	var webhookURL, webhookSecret *string
+	var webhookEvents []string
+	var webhookLastStatus, webhookAttempts *int
 
 	query := `
 		SELECT 
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, created_at, updated_at, processed_by, result, error
+			version, scheduled_at, created_at, updated_at, processed_by, result, error,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
 		FROM jobs WHERE id = $1
 	`
 	err := s.pool.QueryRow(ctx, query, id).Scan(
 		&j.ID, &j.TenantID, &j.Type, &payload, &status, &priority,
 		&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 		&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy, &res, &errStr,
+		&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
 	)
 
 	if err != nil {
@@ -116,6 +134,16 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 	}
 	if errStr != nil && *errStr != "" {
 		j.Result = *errStr
+	}
+
+	if webhookURL != nil {
+		j.Webhook = &jobs.WebhookConfig{
+			URL:        *webhookURL,
+			Secret:     *webhookSecret,
+			Events:     webhookEvents,
+			LastStatus: *webhookLastStatus,
+			Attempts:   *webhookAttempts,
+		}
 	}
 
 	return &j, nil
@@ -183,18 +211,31 @@ func (s *PostgresStore) GetByWorkerAndStatus(ctx context.Context, workerID strin
 
 func (s *PostgresStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	payload, _ := json.Marshal(job.Payload)
+	var url, secret *string
+	var events []string
+	var lastStatus, attempts int
+	if job.Webhook != nil {
+		url = &job.Webhook.URL
+		secret = &job.Webhook.Secret
+		events = job.Webhook.Events
+		lastStatus = job.Webhook.LastStatus
+		attempts = job.Webhook.Attempts
+	}
+
 	query := `
 		INSERT INTO jobs (
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			version, scheduled_at, updated_at,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		ON CONFLICT (id) DO NOTHING
 	`
 	_, err := s.pool.Exec(ctx, query,
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 		job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout,
 		job.Version, job.RunAt, time.Now().UTC(),
+		url, secret, events, lastStatus, attempts,
 	)
 	return err
 }
@@ -258,7 +299,8 @@ func (s *PostgresStore) ListJobs(ctx context.Context, tenantID string, status st
 		SELECT 
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, created_at, updated_at, processed_by
+			version, scheduled_at, created_at, updated_at, processed_by,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
 		FROM jobs 
 		WHERE ($1 = '' OR tenant_id = $1)
 		  AND ($2 = '' OR status = $2)
@@ -296,11 +338,15 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		var priority string
 		var stat string
 		var processedBy *string
+		var webhookURL, webhookSecret *string
+		var webhookEvents []string
+		var webhookLastStatus, webhookAttempts *int
 
 		err := rows.Scan(
 			&j.ID, &j.TenantID, &j.Type, &payload, &stat, &priority,
 			&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 			&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy,
+			&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
 		)
 		if err != nil {
 			return nil, err
@@ -313,6 +359,15 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		}
 		if processedBy != nil {
 			j.ProcessedBy = *processedBy
+		}
+		if webhookURL != nil {
+			j.Webhook = &jobs.WebhookConfig{
+				URL:        *webhookURL,
+				Secret:     *webhookSecret,
+				Events:     webhookEvents,
+				LastStatus: *webhookLastStatus,
+				Attempts:   *webhookAttempts,
+			}
 		}
 		results = append(results, &j)
 	}

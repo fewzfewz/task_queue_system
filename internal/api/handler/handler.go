@@ -12,6 +12,7 @@ import (
 
 	"task-queue-system/internal/api/dto"
 	apperr "task-queue-system/internal/errors"
+	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/service"
 )
@@ -55,7 +56,19 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── Delegate to service ───────────────────────────────────────────────────
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID)
+	var webhookConfig *jobs.WebhookConfig
+	if req.Webhook != nil {
+		webhookConfig = &jobs.WebhookConfig{
+			URL:    req.Webhook.URL,
+			Secret: req.Webhook.Secret,
+			Events: req.Webhook.Events,
+		}
+		if len(webhookConfig.Events) == 0 {
+			webhookConfig.Events = []string{"completed", "failed"}
+		}
+	}
+
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID, webhookConfig)
 	if err != nil {
 		h.writeAppError(w, err)
 		return

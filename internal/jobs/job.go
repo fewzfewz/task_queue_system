@@ -29,6 +29,16 @@ const (
 	PriorityHigh   JobPriority = "high"
 )
 
+// WebhookConfig holds the configuration for job status callbacks.
+type WebhookConfig struct {
+	URL        string   `json:"url,omitempty"`
+	Secret     string   `json:"secret,omitempty"`
+	Events     []string `json:"events,omitempty"`
+	LastStatus int      `json:"last_status,omitempty"`
+	Attempts   int      `json:"attempts,omitempty"`
+}
+
+
 // Job represents a task in the distributed task queue system.
 type Job struct {
 	ID         string                 `json:"id"`
@@ -47,7 +57,9 @@ type Job struct {
 	Version       int                    `json:"version"`           // schema version
 	TenantID      string                 `json:"tenant_id"`         // for multi-tenancy
 	Result        interface{}            `json:"result,omitempty"`
+	Webhook       *WebhookConfig         `json:"webhook,omitempty"`
 }
+
 
 // NewJob creates a new Job instance with initial values.
 // The job will be initialized with a new UUID, pending status, and zero retries.

@@ -18,7 +18,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     scheduled_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP WITH TIME ZONE,
     processed_by TEXT,
-    last_heartbeat_at TIMESTAMP WITH TIME ZONE
+    last_heartbeat_at TIMESTAMP WITH TIME ZONE,
+    webhook_url TEXT,
+    webhook_secret TEXT,
+    webhook_events TEXT[],
+    webhook_last_status INTEGER,
+    webhook_attempts INTEGER DEFAULT 0
 );
 
 -- Indexes for performance and multi-tenancy isolation

@@ -10,6 +10,14 @@ import (
 	"task-queue-system/internal/jobs"
 )
 
+// WebhookRequest configures the callback settings for a job.
+type WebhookRequest struct {
+	URL    string   `json:"url"`
+	Secret string   `json:"secret"`
+	Events []string `json:"events"`
+}
+
+
 // CreateJobRequest is the JSON body expected on POST /jobs.
 type CreateJobRequest struct {
 	// Type must match one of the registered handler types (e.g. "email", "image").
@@ -30,7 +38,10 @@ type CreateJobRequest struct {
 	Version int `json:"version"`
 	// TenantID is for multi-tenancy.
 	TenantID string `json:"tenant_id"`
+	// Webhook is optional.
+	Webhook *WebhookRequest `json:"webhook"`
 }
+
 
 // Validate performs strict input validation on the request.
 func (r *CreateJobRequest) Validate() error {
