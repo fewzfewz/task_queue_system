@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, log, cfg.ApiKey, cfg.MaxQueueSize)
+	router := routes.NewRouter(q, store, log, cfg)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),

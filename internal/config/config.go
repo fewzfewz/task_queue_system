@@ -42,7 +42,14 @@ type Config struct {
 
 	// PostgresConnStr is the DSN for the Postgres database.
 	PostgresConnStr string
+
+	// JwtPublicKey is the RSA public key in PEM format for token validation.
+	JwtPublicKey string
+
+	// JwtPublicKeyPath is the path to the RSA public key file.
+	JwtPublicKeyPath string
 }
+
 
 
 // Load reads environment variables and returns a populated Config with defaults.
@@ -57,7 +64,9 @@ func Load() *Config {
 		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
 		MaxQueueSize:  getEnvAsInt64("MAX_QUEUE_SIZE", 10000),
 		StoreBackend:  getEnvOrDefault("STORE_BACKEND", "redis"),
-		PostgresConnStr: getEnvOrDefault("POSTGRES_CONN_STR", "postgres://postgres:postgres@localhost:5432/postgres"),
+		PostgresConnStr: getEnvOrDefault("POSTGRES_CONN_STR", ""),
+		JwtPublicKey:  getEnvOrDefault("JWT_PUBLIC_KEY", ""),
+		JwtPublicKeyPath: getEnvOrDefault("JWT_PUBLIC_KEY_PATH", ""),
 	}
 }
 
