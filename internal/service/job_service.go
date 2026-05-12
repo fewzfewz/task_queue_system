@@ -179,3 +179,22 @@ func (s *JobService) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
 	return s.queue.ReclaimTimedOutJobs(ctx)
 }
 
+// ReconcileOrphanedJobs finds jobs stuck in "processing" for this worker
+// and moves them back to the queue. Called on worker startup.
+func (s *JobService) ReconcileOrphanedJobs(ctx context.Context, workerID string) (int, error) {
+	stuckJobs, err := s.store.GetByWorkerAndStatus(ctx, workerID, jobs.StatusProcessing)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, j := range stuckJobs {
+		s.logger.Info("reconciling orphaned job", "job_id", j.ID, "worker_id", workerID)
+		// Reset status to pending so it can be picked up again
+		_ = s.UpdateJobStatus(ctx, j.ID, jobs.StatusPending, "")
+		_ = s.queue.Enqueue(ctx, j)
+	}
+
+	return len(stuckJobs), nil
+}
+
+

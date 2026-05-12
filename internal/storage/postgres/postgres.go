@@ -62,3 +62,11 @@ func (s *PostgresStore) UpdateResult(_ context.Context, id string, status jobs.J
 	_, _, _, _ = id, status, workerID, result
 	return fmt.Errorf("postgres: UpdateResult not implemented")
 }
+
+// GetByWorkerAndStatus retrieves jobs from the DB to support distributed reconciliation.
+func (s *PostgresStore) GetByWorkerAndStatus(ctx context.Context, workerID string, status jobs.JobStatus) ([]*jobs.Job, error) {
+	// TODO: SELECT * FROM jobs WHERE processed_by = $1 AND status = $2
+	_, _ = workerID, status
+	return nil, fmt.Errorf("postgres: GetByWorkerAndStatus not implemented")
+}
+

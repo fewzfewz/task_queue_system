@@ -75,7 +75,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ── 7. Start Processing with Graceful Shutdown ────────────────────────────
+	// ── 7. Reconcile Orphaned Jobs ──────────────────────────────────────────
+	// Find jobs this specific instance was processing before a crash/restart.
+	if count, err := svc.ReconcileOrphanedJobs(context.Background(), instanceID); err == nil && count > 0 {
+		log.Info("orphaned jobs reconciled", "count", count)
+	}
+
+	// ── 8. Start Processing with Graceful Shutdown ────────────────────────────
 	// Start is non-blocking. It spins up the goroutines.
 	workerPool.Start(context.Background())
 

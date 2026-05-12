@@ -33,6 +33,9 @@ type Store interface {
 
 	// UpdateResult updates status, processor and the final result of the job.
 	UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error
+
+	// GetByWorkerAndStatus retrieves all jobs currently marked as being processed by a specific worker.
+	GetByWorkerAndStatus(ctx context.Context, workerID string, status jobs.JobStatus) ([]*jobs.Job, error)
 }
 
 // ErrJobNotFound is returned when a job ID does not exist in the store.
@@ -106,6 +109,20 @@ func (s *InMemoryStore) UpdateResult(_ context.Context, id string, status jobs.J
 	job.Result = result
 	job.UpdatedAt = time.Now().UTC()
 	return nil
+}
+
+func (s *InMemoryStore) GetByWorkerAndStatus(_ context.Context, workerID string, status jobs.JobStatus) ([]*jobs.Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []*jobs.Job
+	for _, j := range s.data {
+		if j.ProcessedBy == workerID && j.Status == status {
+			copy := *j
+			results = append(results, &copy)
+		}
+	}
+	return results, nil
 }
 
 // ─── Redis Store ──────────────────────────────────────────────────────────────
@@ -202,4 +219,23 @@ func (s *RedisStore) UpdateResult(ctx context.Context, id string, status jobs.Jo
 	}
 
 	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
+}
+
+func (s *RedisStore) GetByWorkerAndStatus(ctx context.Context, workerID string, status jobs.JobStatus) ([]*jobs.Job, error) {
+	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis_store: HVALS failed: %w", err)
+	}
+
+	var results []*jobs.Job
+	for _, v := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(v), &j); err != nil {
+			continue
+		}
+		if j.ProcessedBy == workerID && j.Status == status {
+			results = append(results, &j)
+		}
+	}
+	return results, nil
 }
