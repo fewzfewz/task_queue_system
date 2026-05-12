@@ -12,6 +12,7 @@ require (
 
 require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
+	github.com/alicebob/miniredis/v2 v2.38.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -50,6 +51,7 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/swaggo/files/v2 v2.0.2 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect

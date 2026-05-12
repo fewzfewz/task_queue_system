@@ -551,3 +551,18 @@ func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, erro
 
 	return val <= limit, nil
 }
+
+func (q *RedisQueue) PublishWebhookEvent(ctx context.Context, event interface{}) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+
+	return q.client.XAdd(ctx, &redis.XAddArgs{
+		Stream: "task_queue:webhooks:stream",
+		Values: map[string]interface{}{
+			"data": string(data),
+		},
+	}).Err()
+}
+

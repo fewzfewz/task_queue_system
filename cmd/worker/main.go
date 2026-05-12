@@ -17,7 +17,9 @@ import (
 	"task-queue-system/internal/storage"
 	"task-queue-system/internal/worker/executor"
 	"task-queue-system/internal/worker/pool"
+	"task-queue-system/internal/webhooks"
 )
+
 
 func main() {
 	// ── 1. Setup structured logging ───────────────────────────────────────────
@@ -87,7 +89,12 @@ func main() {
 		log.Info("orphaned jobs reconciled", "count", count)
 	}
 
-	// ── 8. Start Processing with Graceful Shutdown ────────────────────────────
+	// ── 8. Start Webhook Dispatcher ───────────────────────────────────────────
+	webhookCtx, cancelWebhooks := context.WithCancel(context.Background())
+	dispatcher := webhooks.NewDispatcher(redisClient, log)
+	go dispatcher.Start(webhookCtx)
+
+	// ── 9. Start Processing with Graceful Shutdown ────────────────────────────
 	// Start is non-blocking. It spins up the goroutines.
 	workerPool.Start(context.Background())
 
@@ -101,6 +108,7 @@ func main() {
 	// Stop triggers the pool context cancellation, making workers exit cleanly
 	// after finishing their current in-flight job, and blocks until they finish.
 	workerPool.Stop()
+	cancelWebhooks()
 
 	// Clean up connections
 	_ = redisClient.Close()

@@ -37,5 +37,12 @@ var (
 		Name: "task_queue_job_sla_compliance_total",
 		Help: "Total number of jobs segmented by SLA compliance status (true/false).",
 	}, []string{"job_type", "tenant_id", "compliant"})
+
+	// WebhookDeliveryFailuresTotal tracks failed webhook delivery attempts.
+	WebhookDeliveryFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_queue_webhook_delivery_failures_total",
+		Help: "Total number of failed webhook delivery attempts.",
+	}, []string{"tenant_id", "reason"})
 )
+
 

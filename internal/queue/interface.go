@@ -52,7 +52,11 @@ type Queue interface {
 
 	// Multi-tenancy
 	IsAllowed(ctx context.Context, tenantID string) (bool, error)
+
+	// Webhooks
+	PublishWebhookEvent(ctx context.Context, event interface{}) error
 }
+
 
 // WorkerInfo represents the status of an individual worker process.
 type WorkerInfo struct {

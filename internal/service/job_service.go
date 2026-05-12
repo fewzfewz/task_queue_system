@@ -150,6 +150,44 @@ func (s *JobService) UpdateJobResult(ctx context.Context, jobID string, status j
 	}
 
 	s.logger.Info("job result updated", "job_id", jobID, "status", status, "worker", workerID)
+
+	// Check if we need to trigger a webhook
+	job, err := s.store.GetByID(ctx, jobID)
+	if err == nil && job != nil && job.Webhook != nil && job.Webhook.URL != "" {
+		shouldTrigger := false
+		for _, e := range job.Webhook.Events {
+			if e == string(status) {
+				shouldTrigger = true
+				break
+			}
+		}
+
+		if shouldTrigger {
+			errStr := ""
+			if status == jobs.StatusFailed {
+				if s, ok := result.(string); ok {
+					errStr = s
+				} else {
+					errStr = fmt.Sprintf("%v", result)
+				}
+			}
+
+			event := map[string]interface{}{
+				"job_id":    job.ID,
+				"tenant_id": job.TenantID,
+				"status":    string(status),
+				"result":    result,
+				"error":     errStr,
+				"timestamp": time.Now().UTC(),
+				"url":       job.Webhook.URL,
+				"secret":    job.Webhook.Secret,
+			}
+			if err := s.queue.PublishWebhookEvent(ctx, event); err != nil {
+				s.logger.Error("failed to publish webhook event", "job_id", jobID, "error", err)
+			}
+		}
+	}
+
 	return nil
 }
 
