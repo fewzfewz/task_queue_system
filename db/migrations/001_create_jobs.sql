@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     scheduled_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     completed_at TIMESTAMP WITH TIME ZONE,
-    processed_by TEXT
+    processed_by TEXT,
+    last_heartbeat_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Indexes for performance and multi-tenancy isolation

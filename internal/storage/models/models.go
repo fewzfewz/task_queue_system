@@ -36,7 +36,29 @@ type Store interface {
 
 	// GetByWorkerAndStatus retrieves all jobs currently marked as being processed by a specific worker.
 	GetByWorkerAndStatus(ctx context.Context, workerID string, status jobs.JobStatus) ([]*jobs.Job, error)
+
+	// Enqueue adds a job for future processing.
+	Enqueue(ctx context.Context, job *jobs.Job) error
+
+	// Dequeue atomically moves a job to 'processing'.
+	Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error)
+
+	// Heartbeat updates the liveness of an active job.
+	Heartbeat(ctx context.Context, jobID string) error
+
+	// Complete marks a job as successfully finished.
+	Complete(ctx context.Context, jobID string, result interface{}) error
+
+	// Fail handles job failures with optional requeue.
+	Fail(ctx context.Context, jobID string, err error, requeue bool) error
+
+	// ListJobs returns a paginated list of jobs for a tenant.
+	ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error)
+
+	// RecoverOrphans resets jobs from crashed workers back to 'pending'.
+	RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error)
 }
+
 
 // ErrJobNotFound is returned when a job ID does not exist in the store.
 var ErrJobNotFound = fmt.Errorf("job not found")
@@ -124,6 +146,40 @@ func (s *InMemoryStore) GetByWorkerAndStatus(_ context.Context, workerID string,
 	}
 	return results, nil
 }
+
+
+func (s *InMemoryStore) Enqueue(ctx context.Context, job *jobs.Job) error {
+	return s.Save(ctx, job)
+}
+
+func (s *InMemoryStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
+	return nil, fmt.Errorf("in-memory dequeue not implemented")
+}
+
+func (s *InMemoryStore) Heartbeat(ctx context.Context, jobID string) error {
+	return nil
+}
+
+func (s *InMemoryStore) Complete(ctx context.Context, jobID string, result interface{}) error {
+	return s.UpdateResult(ctx, jobID, jobs.StatusCompleted, "", result)
+}
+
+func (s *InMemoryStore) Fail(ctx context.Context, jobID string, err error, requeue bool) error {
+	status := jobs.StatusFailed
+	if requeue {
+		status = jobs.StatusPending
+	}
+	return s.UpdateResult(ctx, jobID, status, "", err.Error())
+}
+
+func (s *InMemoryStore) ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error) {
+	return nil, nil
+}
+
+func (s *InMemoryStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
+	return 0, nil
+}
+
 
 // ─── Redis Store ──────────────────────────────────────────────────────────────
 
@@ -239,3 +295,37 @@ func (s *RedisStore) GetByWorkerAndStatus(ctx context.Context, workerID string, 
 	}
 	return results, nil
 }
+
+
+func (s *RedisStore) Enqueue(ctx context.Context, job *jobs.Job) error {
+	return s.Save(ctx, job)
+}
+
+func (s *RedisStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
+	return nil, fmt.Errorf("redis store dequeue not implemented; use RedisQueue")
+}
+
+func (s *RedisStore) Heartbeat(ctx context.Context, jobID string) error {
+	return nil
+}
+
+func (s *RedisStore) Complete(ctx context.Context, jobID string, result interface{}) error {
+	return s.UpdateResult(ctx, jobID, jobs.StatusCompleted, "", result)
+}
+
+func (s *RedisStore) Fail(ctx context.Context, jobID string, err error, requeue bool) error {
+	status := jobs.StatusFailed
+	if requeue {
+		status = jobs.StatusPending
+	}
+	return s.UpdateResult(ctx, jobID, status, "", err.Error())
+}
+
+func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error) {
+	return nil, nil
+}
+
+func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
+	return 0, nil
+}
+
