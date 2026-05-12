@@ -56,8 +56,13 @@ curl -s -X POST http://localhost:8080/jobs \
     \"payload\": {\"url\": \"https://example.com/logo.png\", \"action\": \"resize\"}
   }" | jq .
 
-# 4. Success / Monitoring
-echo -e "\n${YELLOW}[4/4] Monitoring system logs... (Ctrl+C to stop)${NC}"
+# 4. Show Metrics
+echo -e "\n${YELLOW}[4/5] Checking System Metrics (Prometheus Format)...${NC}"
+curl -s http://localhost:8080/metrics | grep -E "task_queue" | head -n 10
+echo -e "${GREEN}✔ Metrics collected successfully${NC}"
+
+# 5. Success / Monitoring
+echo -e "\n${YELLOW}[5/5] Monitoring system logs... (Ctrl+C to stop)${NC}"
 echo -e "${BLUE}Watch for:${NC}"
 echo -e " - ${GREEN}Worker processing${NC} immediate jobs"
 echo -e " - ${GREEN}Scheduler promoting${NC} the image job in 10 seconds"

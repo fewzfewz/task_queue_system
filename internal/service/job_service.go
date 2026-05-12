@@ -199,7 +199,11 @@ func (s *JobService) ReconcileOrphanedJobs(ctx context.Context, workerID string)
 		s.logger.Info("reconciling orphaned job", "job_id", j.ID, "worker_id", workerID)
 		// Reset status to pending so it can be picked up again
 		_ = s.UpdateJobStatus(ctx, j.ID, jobs.StatusPending, "")
-		_ = s.queue.Enqueue(ctx, j)
+		
+		// Re-enqueue the job and CLEAR the old in-flight entry in one sequence.
+		if err := s.queue.Enqueue(ctx, j); err == nil {
+			_ = s.queue.Ack(ctx, j.ID)
+		}
 	}
 
 	return len(stuckJobs), nil

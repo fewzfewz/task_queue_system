@@ -215,11 +215,14 @@ func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs
 
 	// Block the worker for the delay period to enforce backoff.
 	// We listen to shutdownCtx.Done() so graceful shutdowns aren't stalled for seconds.
-	// If shutdown occurs, the job remains safely in the processing hash and
-	// will be rescued by a queue deadbox/reconciler later.
 	select {
 	case <-shutdownCtx.Done():
-		log.Warn("worker shutdown interrupted retry delay; job kept in in-flight set")
+		log.Warn("shutdown interrupted retry delay; proactively re-enqueuing job")
+		// We use execCtx (which isn't cancelled) to ensure the Enqueue/Ack finishes.
+		if err := wp.service.Enqueue(execCtx, job); err != nil {
+			log.Error("failed to re-enqueue during shutdown", "error", err)
+		}
+		_ = wp.service.Ack(execCtx, job.ID)
 		return
 	case <-time.After(delay):
 	}
