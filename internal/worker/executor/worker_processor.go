@@ -132,8 +132,13 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	}
 
 	// ── Step 2: Execute ───────────────────────────────────────────────────────
+	// We wrap the execution in a timeout to ensure a single hanging task
+	// does not block this worker thread indefinitely.
+	jobCtx, cancel := context.WithTimeout(execCtx, 60*time.Second)
+	defer cancel()
+
 	start := time.Now()
-	result, execErr := wp.exec.Execute(execCtx, job)
+	result, execErr := wp.exec.Execute(jobCtx, job)
 	elapsed := time.Since(start)
 
 	if execErr == nil {

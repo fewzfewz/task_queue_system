@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -37,7 +38,7 @@ func (p *EmailPlugin) Type() string {
 }
 
 // Execute extracts email fields from the payload and simulates sending.
-func (p *EmailPlugin) Execute(payload map[string]interface{}) (interface{}, error) {
+func (p *EmailPlugin) Execute(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	to, _ := payload["to"].(string)
 	subject, _ := payload["subject"].(string)
 

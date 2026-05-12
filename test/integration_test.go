@@ -75,7 +75,7 @@ type TestPlugin struct {
 }
 
 func (p *TestPlugin) Type() string { return p.JobType }
-func (p *TestPlugin) Execute(payload map[string]interface{}) (interface{}, error) {
+func (p *TestPlugin) Execute(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	if p.ShouldFail {
 		return nil, fmt.Errorf("intentional failure")
 	}

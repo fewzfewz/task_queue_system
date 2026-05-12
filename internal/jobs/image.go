@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
@@ -28,7 +29,7 @@ func (p *ImagePlugin) Type() string {
 }
 
 // Execute extracts image processing fields from the payload and simulates processing.
-func (p *ImagePlugin) Execute(payload map[string]interface{}) (interface{}, error) {
+func (p *ImagePlugin) Execute(ctx context.Context, payload map[string]interface{}) (interface{}, error) {
 	sourceURL, _ := payload["source_url"].(string)
 	operation, _ := payload["operation"].(string) // e.g. "resize", "compress", "watermark"
 

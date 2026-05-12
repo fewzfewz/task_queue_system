@@ -32,7 +32,7 @@ func (je *JobExecutor) RegisterPlugin(p plugin.JobPlugin) {
 
 // Execute performs the work for a given job by fetching the appropriate plugin.
 // It fulfills the "registry instead of switch-case" requirement by dynamic lookup.
-func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (interface{}, error) {
+func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interface{}, err error) {
 	if job == nil {
 		return nil, fmt.Errorf("job_executor: cannot execute a nil job")
 	}
@@ -45,13 +45,19 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (interface{},
 		return nil, fmt.Errorf("job_executor: no plugin for %q: %w", job.Type, err)
 	}
 
-	// Call plugin.Execute(payload)
-	// Note: We use a deferred recover here to ensure worker threads don't panic on plugin mistakes.
+	// ── Fault Isolation: Recover from Panics ────────────────────────────────
+	// This ensures that even if a plugin developer forgets a nil check or 
+	// encounters an unexpected runtime error, the worker instance remains alive.
 	defer func() {
 		if r := recover(); r != nil {
-			je.logger.Error("plugin panicked during execution", "job_type", job.Type, "panic", r)
+			err = fmt.Errorf("plugin panicked during execution: %v", r)
+			je.logger.Error("plugin panicked during execution", 
+				"job_type", job.Type, 
+				"panic", r,
+				"correlation_id", job.CorrelationID,
+			)
 		}
 	}()
 
-	return p.Execute(job.Payload)
+	return p.Execute(ctx, job.Payload)
 }
