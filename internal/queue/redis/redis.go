@@ -33,6 +33,7 @@ const (
 var promoteScheduledJobsScript = redis.NewScript(`
 	local delayedKey = KEYS[1]
 	local now = ARGV[1]
+	local numPartitions = tonumber(ARGV[2])
 	local jobs = redis.call('ZRANGEBYSCORE', delayedKey, 0, now)
 	
 	for _, job in ipairs(jobs) do
@@ -44,7 +45,16 @@ var promoteScheduledJobsScript = redis.NewScript(`
 			targetKey = KEYS[4]
 		end
 		
-		redis.call('LPUSH', targetKey, job)
+		-- Partition hash matching Go implementation
+		local sum = 0
+		local id = decoded.id
+		for i = 1, #id do
+			sum = sum + string.byte(id, i)
+		end
+		local partition = (sum % numPartitions) + 1
+		local partitionKey = targetKey .. ":" .. partition
+
+		redis.call('LPUSH', partitionKey, job)
 		redis.call('ZREM', delayedKey, job)
 	end
 	return #jobs
@@ -55,6 +65,7 @@ var reclaimTimedOutJobsScript = redis.NewScript(`
 	local inFlightKey = KEYS[1]
 	local payloadKey = KEYS[2]
 	local now = ARGV[1]
+	local numPartitions = tonumber(ARGV[2])
 	local jobs = redis.call('ZRANGEBYSCORE', inFlightKey, 0, now)
 	
 	for _, id in ipairs(jobs) do
@@ -68,7 +79,15 @@ var reclaimTimedOutJobsScript = redis.NewScript(`
 				targetKey = KEYS[5]
 			end
 			
-			redis.call('LPUSH', targetKey, payload)
+			-- Partition hash matching Go implementation
+			local sum = 0
+			for i = 1, #id do
+				sum = sum + string.byte(id, i)
+			end
+			local partition = (sum % numPartitions) + 1
+			local partitionKey = targetKey .. ":" .. partition
+
+			redis.call('LPUSH', partitionKey, payload)
 		end
 		redis.call('ZREM', inFlightKey, id)
 		redis.call('HDEL', payloadKey, id)
@@ -88,6 +107,7 @@ type RedisQueue struct {
 	qLow    string // low priority list
 	qDelayed string // scheduled jobs ZSET
 	dlqKey  string // dead letter queue key
+	numPartitions int
 
 	metricsTotal     string
 	metricsCompleted string
@@ -115,8 +135,43 @@ func New(client *redis.Client, queueName string) *RedisQueue {
 		metricsFailed:    baseKey + ":metrics:failed",
 		heartbeatPrefix:  baseKey + ":workers:heartbeat:",
 		processedKey:     baseKey + ":processed",
+		numPartitions:    3, // default to 3 partitions per priority
 	}
 }
+
+// getPartitionedKey returns the specific partition key for a given job ID and priority.
+func (q *RedisQueue) getPartitionedKey(jobID string, priority jobs.JobPriority) string {
+	// Simple hash-based partitioning
+	sum := 0
+	for _, b := range jobID {
+		sum += int(b)
+	}
+	partition := (sum % q.numPartitions) + 1
+
+	base := q.qMedium
+	switch priority {
+	case jobs.PriorityHigh:
+		base = q.qHigh
+	case jobs.PriorityLow:
+		base = q.qLow
+	}
+
+	return fmt.Sprintf("%s:%d", base, partition)
+}
+
+// getAllPartitionKeys returns all partition keys for all priority levels.
+func (q *RedisQueue) getAllPartitionKeys() []string {
+	var keys []string
+	// Order matters for BLPOP priority: High -> Medium -> Low
+	priorities := []string{q.qHigh, q.qMedium, q.qLow}
+	for _, p := range priorities {
+		for i := 1; i <= q.numPartitions; i++ {
+			keys = append(keys, fmt.Sprintf("%s:%d", p, i))
+		}
+	}
+	return keys
+}
+
 
 // Enqueue serialises the job as JSON and pushes it to the left of the Redis list.
 // BRPOP pops from the right (FIFO ordering).
@@ -141,18 +196,7 @@ func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 		}
 	} else {
 		// Immediate job: push to priority list
-		var targetKey string
-		switch job.Priority {
-		case jobs.PriorityHigh:
-			targetKey = q.qHigh
-		case jobs.PriorityLow:
-			targetKey = q.qLow
-		case jobs.PriorityMedium:
-			fallthrough
-		default:
-			targetKey = q.qMedium
-		}
-
+		targetKey := q.getPartitionedKey(job.ID, job.Priority)
 		if err := q.client.LPush(ctx, targetKey, payload).Err(); err != nil {
 			return fmt.Errorf("queue: LPUSH failed for job %s: %w", job.ID, err)
 		}
@@ -185,7 +229,9 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	}
 
 	// BRPop checks keys left-to-right, ensuring strict priority handling
-	result, err := q.client.BRPop(ctx, timeout, q.qHigh, q.qMedium, q.qLow).Result()
+	// We watch all partitions for all priorities.
+	keys := q.getAllPartitionKeys()
+	result, err := q.client.BRPop(ctx, timeout, keys...).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
@@ -433,7 +479,7 @@ func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 	// KEYS: [delayed_jobs, qMedium, qHigh, qLow]
 	res, err := promoteScheduledJobsScript.Run(ctx, q.client, []string{
 		q.qDelayed, q.qMedium, q.qHigh, q.qLow,
-	}, now).Int()
+	}, now, q.numPartitions).Int()
 	
 	if err != nil && err != redis.Nil {
 		return 0, fmt.Errorf("queue: failed to execute promotion script: %w", err)
@@ -450,7 +496,7 @@ func (q *RedisQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
 	// KEYS: [inFlightKey, payloadsKey, qMedium, qHigh, qLow]
 	res, err := reclaimTimedOutJobsScript.Run(ctx, q.client, []string{
 		processingSetKey, "task_queue:payloads", q.qMedium, q.qHigh, q.qLow,
-	}, now).Int()
+	}, now, q.numPartitions).Int()
 	
 	if err != nil && err != redis.Nil {
 		return 0, fmt.Errorf("queue: failed to execute reclaim script: %w", err)
