@@ -17,6 +17,8 @@ type CreateJobRequest struct {
 	MaxRetries int `json:"max_retries"`
 	// RunAt is optional. If provided and in the future, the job will be scheduled.
 	RunAt string `json:"run_at"`
+	// CorrelationID is optional. If provided, it will be used for tracing logs.
+	CorrelationID string `json:"correlation_id"`
 }
 
 // JobResponse is the JSON body returned for both POST /jobs and GET /jobs/{id}.
@@ -31,6 +33,7 @@ type JobResponse struct {
 	CreatedAt  string                 `json:"created_at"`
 	UpdatedAt  string                 `json:"updated_at"`
 	RunAt      string                 `json:"run_at"`
+	CorrelationID string              `json:"correlation_id,omitempty"`
 }
 
 // ErrorResponse is the JSON body returned on any error.
@@ -49,8 +52,9 @@ func FromJob(j *jobs.Job) JobResponse {
 		Status:     string(j.Status),
 		Retries:    j.Retries,
 		MaxRetries: j.MaxRetries,
-		CreatedAt:  j.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:  j.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		RunAt:      j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
+		CreatedAt:     j.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:     j.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		RunAt:         j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
+		CorrelationID: j.CorrelationID,
 	}
 }

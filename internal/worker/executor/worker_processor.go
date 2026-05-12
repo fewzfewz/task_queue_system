@@ -85,7 +85,12 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	// Identify this worker on the job object.
 	job.ProcessedBy = wp.name
 
-	log := wp.logger.With("job_id", job.ID, "job_type", job.Type)
+	log := wp.logger.With(
+		"job_id", job.ID,
+		"job_type", job.Type,
+		"correlation_id", job.CorrelationID,
+		"worker_id", wp.name,
+	)
 	log.Info("processing job dequeued", "status", jobs.StatusProcessing)
 
 	// 1. Fast Redis Check

@@ -41,15 +41,20 @@ type Job struct {
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 	RunAt       time.Time              `json:"run_at"`
-	ProcessedBy string                 `json:"processed_by,omitempty"`
-	Result      interface{}            `json:"result,omitempty"`
+	ProcessedBy   string                 `json:"processed_by,omitempty"`
+	CorrelationID string                 `json:"correlation_id,omitempty"`
+	Result        interface{}            `json:"result,omitempty"`
 }
 
 // NewJob creates a new Job instance with initial values.
 // The job will be initialized with a new UUID, pending status, and zero retries.
-func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int, runAt time.Time) *Job {
+func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int, runAt time.Time, correlationID string) *Job {
 	if priority == "" {
 		priority = PriorityMedium
+	}
+
+	if correlationID == "" {
+		correlationID = uuid.New().String()
 	}
 	
 	now := time.Now().UTC()
@@ -58,15 +63,16 @@ func NewJob(jobType string, payload map[string]interface{}, priority JobPriority
 	}
 
 	return &Job{
-		ID:         uuid.New().String(),
-		Type:       jobType,
-		Payload:    payload,
-		Status:     StatusPending,
-		Priority:   priority,
-		Retries:    0,
-		MaxRetries: maxRetries,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		RunAt:      runAt,
+		ID:            uuid.New().String(),
+		Type:          jobType,
+		Payload:       payload,
+		Status:        StatusPending,
+		Priority:      priority,
+		Retries:       0,
+		MaxRetries:    maxRetries,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		RunAt:         runAt,
+		CorrelationID: correlationID,
 	}
 }

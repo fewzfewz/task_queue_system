@@ -46,13 +46,17 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	// ── Delegate to service ───────────────────────────────────────────────────
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID)
 	if err != nil {
 		h.writeAppError(w, err)
 		return
 	}
 
-	h.logger.Info("job created", "job_id", job.ID, "job_type", job.Type)
+	h.logger.Info("job created", 
+		"job_id", job.ID, 
+		"job_type", job.Type, 
+		"correlation_id", job.CorrelationID,
+	)
 	h.writeJSON(w, http.StatusCreated, dto.FromJob(job))
 }
 
