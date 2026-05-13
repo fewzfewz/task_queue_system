@@ -28,6 +28,10 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 
 	mux := http.NewServeMux()
 
+	// GET  / and /ui     → browser-based operator UI
+	mux.HandleFunc("GET /", h.ServeAppUI)
+	mux.HandleFunc("GET /ui", h.ServeAppUI)
+
 	// POST /jobs        → create a new job and enqueue it (PROTECTED)
 	mux.Handle("POST /jobs", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.CreateJob)))
 

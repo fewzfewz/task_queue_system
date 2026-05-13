@@ -19,6 +19,10 @@ func main() {
 
 	// ── 2. Initialize Logger ──────────────────────────────────────────────────
 	log := logger.Setup()
+	if err := cfg.Validate(); err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 	log.Info("starting scheduler service")
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────

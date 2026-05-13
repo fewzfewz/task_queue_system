@@ -54,15 +54,44 @@ const adminHTML = `
     </header>
 
     <main class="flex-1 overflow-auto p-6 space-y-6">
+        <!-- Overview -->
+        <section class="grid gap-4 md:grid-cols-4">
+            <div class="glass rounded-xl p-4">
+                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Failed jobs</p>
+                <div id="stat-failed" class="mt-2 text-3xl font-bold text-white">0</div>
+                <p class="text-sm text-gray-400 mt-1">Current DLQ depth</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Queues</p>
+                <div id="stat-queues" class="mt-2 text-3xl font-bold text-white">0</div>
+                <p class="text-sm text-gray-400 mt-1">Distinct failed job types</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Tenants</p>
+                <div id="stat-tenants" class="mt-2 text-3xl font-bold text-white">0</div>
+                <p class="text-sm text-gray-400 mt-1">Tenants represented in DLQ</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Workers</p>
+                <div id="stat-workers" class="mt-2 text-3xl font-bold text-white">0</div>
+                <p class="text-sm text-gray-400 mt-1">Active worker heartbeats</p>
+            </div>
+        </section>
+
         <!-- Toolbar -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass p-4 rounded-xl">
-            <div class="flex items-center space-x-3">
+            <div class="flex flex-col lg:flex-row lg:items-center gap-3">
                 <div class="relative group">
                     <input type="text" id="filter-queue" placeholder="Filter by queue..." 
-                        class="bg-gray-800 border-white/5 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-64 pl-10 pr-3 py-2 placeholder-gray-500 transition-all">
+                        class="bg-gray-800 border-white/5 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-56 pl-10 pr-3 py-2 placeholder-gray-500 transition-all">
                     <svg class="w-4 h-4 text-gray-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                 </div>
-                <button onclick="loadDLQ()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-indigo-600/20 active:scale-95">Refresh</button>
+                <div class="relative group">
+                    <input type="text" id="filter-tenant" placeholder="Filter by tenant..." 
+                        class="bg-gray-800 border-white/5 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-56 pl-10 pr-3 py-2 placeholder-gray-500 transition-all">
+                    <svg class="w-4 h-4 text-gray-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-5-3.87M12 20H7v-2a4 4 0 015-3.87m0 0A4 4 0 1012 4a4 4 0 000 8.13z"></path></svg>
+                </div>
+                <button onclick="loadDashboard()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-indigo-600/20 active:scale-95">Refresh</button>
             </div>
             
             <button onclick="bulkPurge()" class="px-4 py-2 bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white border border-red-500/20 rounded-lg text-sm font-semibold transition-all flex items-center space-x-2">
@@ -92,6 +121,17 @@ const adminHTML = `
                 </tbody>
             </table>
         </div>
+
+        <section class="glass rounded-xl p-5">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white">Active Workers</h2>
+                    <p class="text-sm text-gray-400">Heartbeats from live worker processes</p>
+                </div>
+                <button onclick="loadWorkers()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-semibold transition-all">Refresh workers</button>
+            </div>
+            <div id="workers-list" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
+        </section>
     </main>
 
     <!-- Modal -->
@@ -150,13 +190,62 @@ const adminHTML = `
             loading.classList.remove('hidden');
             try {
                 const queue = document.getElementById('filter-queue').value;
+                const tenant = document.getElementById('filter-tenant').value;
                 const data = await api(` + "`" + `${API_BASE}/dlq?queue=${queue}` + "`" + `);
-                renderTable(data);
+                const filtered = (data || []).filter(j => {
+                    if (!tenant) return true;
+                    return (j.tenant_id || '').includes(tenant);
+                });
+                renderSummary(filtered);
+                renderTable(filtered);
             } catch (e) {
                 console.error(e);
             } finally {
                 loading.classList.add('hidden');
             }
+        }
+
+        async function loadWorkers() {
+            try {
+                const workers = await api(` + "`" + `${API_BASE}/workers` + "`" + `);
+                renderWorkers(workers || []);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function renderSummary(jobs) {
+            const tenants = new Set();
+            const queues = new Set();
+            (jobs || []).forEach(j => {
+                if (j.tenant_id) tenants.add(j.tenant_id);
+                if (j.type) queues.add(j.type);
+            });
+            document.getElementById('stat-failed').innerText = String((jobs || []).length);
+            document.getElementById('stat-queues').innerText = String(queues.size);
+            document.getElementById('stat-tenants').innerText = String(tenants.size);
+        }
+
+        function renderWorkers(workers) {
+            document.getElementById('stat-workers').innerText = String((workers || []).length);
+            const list = document.getElementById('workers-list');
+            if (!workers || workers.length === 0) {
+                list.innerHTML = '<div class="text-sm text-gray-500 italic">No active workers reported</div>';
+                return;
+            }
+
+            list.innerHTML = workers.map(w => ` + "`" + `
+                <div class="bg-gray-950/60 border border-white/5 rounded-xl p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="font-mono text-sm text-white">${w.id}</div>
+                            <div class="text-xs text-gray-500 mt-1">Last heartbeat</div>
+                        </div>
+                        <span class="px-2 py-1 rounded-full text-[10px] uppercase tracking-widest bg-green-500/10 text-green-400 border border-green-500/20">Live</span>
+                    </div>
+                    <div class="mt-3 text-sm text-gray-300">${new Date(w.last_heartbeat).toLocaleString()}</div>
+                </div>
+            ` + "`" + `).join('');
         }
 
         function renderTable(jobs) {
@@ -235,7 +324,7 @@ const adminHTML = `
             
             const queue = document.getElementById('filter-queue').value;
             await api(` + "`" + `${API_BASE}/dlq?older_than=${iso}&queue=${queue}` + "`" + `, { method: 'DELETE' });
-            loadDLQ();
+            loadDashboard();
         }
 
         window.logout = function() {
@@ -254,12 +343,16 @@ const adminHTML = `
                 refreshTimer = setInterval(loadDLQ, 10000);
                 status.innerText = 'Auto-refresh On (10s)';
                 status.classList.replace('text-gray-300', 'text-indigo-400');
-                loadDLQ();
+                loadDashboard();
             }
         });
 
         // Initial Load
-        loadDLQ();
+        async function loadDashboard() {
+            await Promise.all([loadDLQ(), loadWorkers()]);
+        }
+
+        loadDashboard();
     </script>
 </body>
 </html>

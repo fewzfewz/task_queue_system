@@ -39,10 +39,14 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 
 ## Key Routes
 
+- `GET /` or `GET /ui`
+  - Browser-based operator UI with tabs for Create/Search Jobs, Workers/Health, and DLQ/Admin actions
 - `POST /jobs`
 - `GET /jobs/{id}`
 - `GET /metrics`
 - `GET /workers`
+- `GET /healthz`
+- `GET /readyz`
 - `GET /admin/dlq`
 - `GET /api/v1/dlq`
 - `GET /api/v1/dlq/{id}`
@@ -217,6 +221,8 @@ Generate or refresh the Swagger docs with:
 ```bash
 swag init -g cmd/api/main.go
 ```
+
+The checked-in spec is [docs/swagger.yaml](/home/fewzan/Projects/task-queue-system/docs/swagger.yaml), and it now includes the runtime DLQ, workers, and admin console routes in addition to the core job endpoints.
 
 ## Notes
 

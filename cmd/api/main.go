@@ -19,6 +19,7 @@ import (
 
 	"task-queue-system/internal/api/routes"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/secrets"
@@ -31,6 +32,10 @@ func main() {
 
 	// ── 2. Load configuration ─────────────────────────────────────────────────
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 	log.Info("starting api service", "port", cfg.ServerPort)
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
@@ -76,10 +81,15 @@ func main() {
 
 	// ── 6. Setup HTTP Server & Routes ─────────────────────────────────────────
 	router := routes.NewRouter(q, store, log, cfg, secretsProv)
+	checker := health.NewChecker("api", health.AdaptRedis(redisClient))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", checker.Live)
+	mux.HandleFunc("/readyz", checker.Ready)
+	mux.Handle("/", router)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
-		Handler: router,
+		Handler: mux,
 		// Sane timeouts for a production server
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,

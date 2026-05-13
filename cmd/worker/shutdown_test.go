@@ -44,11 +44,6 @@ func TestShutdownEndpointDrainsInFlightJob(t *testing.T) {
 	}
 
 	coord := newShutdownCoordinator(pool, 10*time.Second, log)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz/shutdown", coord.Handler)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
 
 	// Simulate a long-running job.
 	go func() {
@@ -56,12 +51,12 @@ func TestShutdownEndpointDrainsInFlightJob(t *testing.T) {
 		close(pool.jobCompleted)
 	}()
 
-	resp, err := http.Post(ts.URL+"/healthz/shutdown", "", nil)
-	if err != nil {
-		t.Fatalf("shutdown request failed: %v", err)
-	}
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("expected status 202 Accepted, got %d", resp.StatusCode)
+	req := httptest.NewRequest(http.MethodPost, "/healthz/shutdown", nil)
+	rr := httptest.NewRecorder()
+	coord.Handler(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202 Accepted, got %d", rr.Code)
 	}
 
 	select {

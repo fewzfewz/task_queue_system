@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -182,7 +183,39 @@ func (s *InMemoryStore) Fail(ctx context.Context, jobID string, err error, reque
 }
 
 func (s *InMemoryStore) ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error) {
-	return nil, nil
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []*jobs.Job
+	for _, j := range s.data {
+		if (tenantID == "" || j.TenantID == tenantID) &&
+			(status == "" || string(j.Status) == status) &&
+			(typeStr == "" || j.Type == typeStr) {
+			copy := *j
+			results = append(results, &copy)
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CreatedAt.After(results[j].CreatedAt)
+	})
+
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = len(results)
+	}
+	if offset >= len(results) {
+		return []*jobs.Job{}, nil
+	}
+
+	end := offset + limit
+	if end > len(results) {
+		end = len(results)
+	}
+
+	return results[offset:end], nil
 }
 
 func (s *InMemoryStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
@@ -372,7 +405,45 @@ func (s *RedisStore) Fail(ctx context.Context, jobID string, err error, requeue 
 }
 
 func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error) {
-	return nil, nil
+	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis_store: HVALS failed: %w", err)
+	}
+
+	results := make([]*jobs.Job, 0, len(vals))
+	for _, v := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(v), &j); err != nil {
+			continue
+		}
+		if (tenantID == "" || j.TenantID == tenantID) &&
+			(status == "" || string(j.Status) == status) &&
+			(typeStr == "" || j.Type == typeStr) {
+			copy := j
+			results = append(results, &copy)
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CreatedAt.After(results[j].CreatedAt)
+	})
+
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = len(results)
+	}
+	if offset >= len(results) {
+		return []*jobs.Job{}, nil
+	}
+
+	end := offset + limit
+	if end > len(results) {
+		end = len(results)
+	}
+
+	return results[offset:end], nil
 }
 
 func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
@@ -407,9 +478,26 @@ func (s *RedisStore) DeleteJobsBefore(ctx context.Context, tenantID, status, job
 }
 
 func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
-	// Similar to DeleteJobsBefore, we'd need to SCAN. For brevity in Redis, return empty or implement if needed.
-	return make(map[string]map[string]int64), nil
+	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis_store: HVALS failed: %w", err)
+	}
+
+	results := make(map[string]map[string]int64)
+	for _, v := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(v), &j); err != nil {
+			continue
+		}
+		if j.Status != jobs.StatusPending {
+			continue
+		}
+		if results[j.Type] == nil {
+			results[j.Type] = make(map[string]int64)
+		}
+		results[j.Type][j.TenantID]++
+	}
+
+	return results, nil
 }
-
-
 

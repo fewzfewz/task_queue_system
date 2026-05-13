@@ -18,6 +18,10 @@ import (
 func main() {
 	log := logger.Setup()
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	migrateCmd := flag.NewFlagSet("migrate-jobs", flag.ExitOnError)
 	from := migrateCmd.String("from", "redis", "Source backend")

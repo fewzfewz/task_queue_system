@@ -25,8 +25,14 @@ definitions:
     type: object
   dto.JobResponse:
     properties:
+      correlation_id:
+        type: string
       created_at:
         type: string
+      error_history:
+        items:
+          $ref: '#/definitions/jobs.AttemptError'
+        type: array
       id:
         type: string
       max_retries:
@@ -40,9 +46,26 @@ definitions:
         type: integer
       status:
         type: string
+      tenant_id:
+        type: string
+      timeout:
+        type: integer
       type:
         type: string
       updated_at:
+        type: string
+      run_at:
+        type: string
+      version:
+        type: integer
+    type: object
+  jobs.AttemptError:
+    properties:
+      attempt:
+        type: integer
+      error:
+        type: string
+      timestamp:
         type: string
     type: object
   queue.QueueMetrics:
@@ -125,6 +148,153 @@ paths:
       summary: Get job status
       tags:
       - jobs
+  /workers:
+    get:
+      description: Retrieves a list of all currently active worker instances and their
+        last heartbeat timestamp.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/queue.WorkerInfo'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get active workers
+      tags:
+      - metrics
+  /admin/dlq:
+    get:
+      description: Renders the HTML dead letter queue management console.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: OK
+      summary: Get DLQ admin console
+      tags:
+      - dlq
+  /api/v1/dlq:
+    get:
+      description: Returns a paginated list of jobs that have permanently failed for the tenant.
+      parameters:
+      - in: query
+        name: queue
+        type: string
+      - in: query
+        name: limit
+        type: integer
+      - in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/dto.JobResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: List failed jobs
+      tags:
+      - dlq
+    delete:
+      description: Deletes all failed jobs for a tenant/queue that are older than the specified timestamp.
+      parameters:
+      - in: query
+        name: queue
+        type: string
+      - in: query
+        name: older_than
+        type: string
+        required: true
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+            additionalProperties:
+              type: integer
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Bulk purge failed jobs
+      tags:
+      - dlq
+  /api/v1/dlq/{id}:
+    get:
+      description: Returns the full state of a failed job, including its error history.
+      parameters:
+      - in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.JobResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get failed job details
+      tags:
+      - dlq
+    delete:
+      description: Permanently deletes a single failed job record from the store.
+      parameters:
+      - in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Purge a failed job
+      tags:
+      - dlq
+  /api/v1/dlq/{id}/replay:
+    post:
+      description: Resets a failed job to pending state and enqueues it for immediate retry.
+      parameters:
+      - in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.JobResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Re-enqueue a failed job
+      tags:
+      - dlq
   /metrics:
     get:
       description: Retrieves system-wide execution statistics including totals, active
@@ -143,4 +313,13 @@ paths:
       summary: Get queue metrics
       tags:
       - metrics
+  /swagger/:
+    get:
+      description: Swagger UI for the API.
+      responses:
+        "200":
+          description: OK
+      summary: Swagger UI
+      tags:
+      - docs
 swagger: "2.0"

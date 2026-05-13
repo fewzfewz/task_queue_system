@@ -98,6 +98,10 @@ The test suite also uses:
 
 ### HTTP endpoints
 
+- `GET /`
+  - Main browser UI with tabs for create/search jobs, workers/health, and DLQ/admin actions
+- `GET /ui`
+  - Alias of the main browser UI
 - `POST /jobs`
   - Create a new job
 - `GET /jobs/{id}`
@@ -106,6 +110,10 @@ The test suite also uses:
   - Prometheus metrics
 - `GET /workers`
   - Active worker list
+- `GET /healthz`
+  - Liveness check for API and worker processes
+- `GET /readyz`
+  - Readiness check that verifies Redis connectivity
 - `GET /admin/dlq`
   - DLQ web UI
 - `GET /api/v1/dlq`

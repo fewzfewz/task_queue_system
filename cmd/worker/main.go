@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
@@ -31,6 +32,10 @@ func main() {
 
 	// ── 2. Load configuration ─────────────────────────────────────────────────
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	// Get a unique ID for this worker instance (container hostname or random UUID)
 	instanceID, err := os.Hostname()
@@ -105,6 +110,9 @@ func main() {
 	shutdownCoordinator := newShutdownCoordinator(workerPool, time.Duration(cfg.DrainTimeoutSeconds)*time.Second, log)
 
 	mux := http.NewServeMux()
+	checker := health.NewChecker("worker", health.AdaptRedis(redisClient))
+	mux.HandleFunc("/healthz", checker.Live)
+	mux.HandleFunc("/readyz", checker.Ready)
 	mux.HandleFunc("/healthz/shutdown", shutdownCoordinator.Handler)
 	mux.Handle("/metrics", promhttp.Handler())
 

@@ -257,7 +257,13 @@ func (s *PostgresStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 			version, scheduled_at, updated_at,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-		ON CONFLICT (id) DO NOTHING
+		ON CONFLICT (id) DO UPDATE SET
+			status = EXCLUDED.status,
+			attempts = EXCLUDED.attempts,
+			updated_at = EXCLUDED.updated_at,
+			processed_by = EXCLUDED.processed_by,
+			result = EXCLUDED.result,
+			error = EXCLUDED.error
 	`
 	_, err := s.pool.Exec(ctx, query,
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
