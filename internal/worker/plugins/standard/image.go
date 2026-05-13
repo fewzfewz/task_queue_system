@@ -49,7 +49,15 @@ func (p *ImagePlugin) Execute(ctx context.Context, job *jobs.Job) (interface{}, 
 	p.logger.Info("processing image", "source_url", sourceURL, "operation", operation)
 
 	// --- Simulated work ---
-	time.Sleep(100 * time.Millisecond) // simulate image processing latency
+	if sleepMs, ok := payload["sleep_ms"]; ok {
+		if ms, ok := sleepMs.(float64); ok && ms > 0 {
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		} else {
+			time.Sleep(100 * time.Millisecond)
+		}
+	} else {
+		time.Sleep(100 * time.Millisecond)
+	}
 	// ----------------------
 
 	p.logger.Info("image processed successfully", "source_url", sourceURL, "operation", operation)

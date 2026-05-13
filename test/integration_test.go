@@ -3,70 +3,20 @@ package test
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/logger"
 	queue_redis "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 	"task-queue-system/internal/worker/executor"
-	"task-queue-system/internal/logger"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// InMemoryStore is a simple map-backed store for testing.
-type InMemoryStore struct {
-	jobs map[string]*jobs.Job
-	mu   sync.RWMutex
-}
-
-func NewInMemoryStore() *InMemoryStore {
-	return &InMemoryStore{jobs: make(map[string]*jobs.Job)}
-}
-
-func (s *InMemoryStore) Save(ctx context.Context, job *jobs.Job) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.jobs[job.ID] = job
-	return nil
-}
-
-func (s *InMemoryStore) GetByID(ctx context.Context, id string) (*jobs.Job, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	j, ok := s.jobs[id]
-	if !ok {
-		return nil, nil
-	}
-	return j, nil
-}
-
-func (s *InMemoryStore) UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if j, ok := s.jobs[id]; ok {
-		j.Status = status
-		j.ProcessedBy = workerID
-		j.UpdatedAt = time.Now().UTC()
-	}
-	return nil
-}
-
-func (s *InMemoryStore) UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if j, ok := s.jobs[id]; ok {
-		j.Status = status
-		j.ProcessedBy = workerID
-		j.Result = result
-		j.UpdatedAt = time.Now().UTC()
-	}
-	return nil
-}
-
-var _ models.Store = (*InMemoryStore)(nil)
+// Use the existing models.InMemoryStore implementation for integration tests.
 
 // TestPlugin is a simple plugin for integration tests.
 type TestPlugin struct {
@@ -94,7 +44,7 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	defer client.FlushAll(ctx)
 
 	// Setup System
-	store := NewInMemoryStore()
+	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
 	svc := service.New(q, store, log, 0)
 	
@@ -105,7 +55,7 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log)
 
 	// 1. Submit Job
-	job, err := svc.CreateJob(ctx, "test-success", nil, "medium", 3, "", "", 0, 0, "")
+	job, err := svc.CreateJob(ctx, "test-success", nil, "medium", 3, "", "", 0, 0, "", nil)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -136,7 +86,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	}
 	defer client.FlushAll(ctx)
 
-	store := NewInMemoryStore()
+	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
 	svc := service.New(q, store, log, 0)
 	
@@ -147,7 +97,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log)
 
 	// Submit Job with 1 retry
-	job, err := svc.CreateJob(ctx, "test-fail", nil, "medium", 1, "", "", 0, 0, "")
+	job, err := svc.CreateJob(ctx, "test-fail", nil, "medium", 1, "", "", 0, 0, "", nil)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -189,7 +139,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 	}
 	defer client.FlushAll(ctx)
 
-	store := NewInMemoryStore()
+	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
 	svc := service.New(q, store, log, 0)
 	
@@ -201,7 +151,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 
 	// Submit Job scheduled 1 second in the future
 	runAt := time.Now().Add(1 * time.Second).Format(time.RFC3339)
-	job, err := svc.CreateJob(ctx, "test-scheduled", nil, "medium", 3, runAt, "", 0, 0, "")
+	job, err := svc.CreateJob(ctx, "test-scheduled", nil, "medium", 3, runAt, "", 0, 0, "", nil)
 	if err != nil {
 		t.Fatalf("failed to create scheduled job: %v", err)
 	}
@@ -232,7 +182,3 @@ func TestIntegration_Scheduling(t *testing.T) {
 	}
 }
 
-func dbJobFinished(s *InMemoryStore, id string) bool {
-	j, _ := s.GetByID(context.Background(), id)
-	return j != nil && j.Status == jobs.StatusCompleted
-}

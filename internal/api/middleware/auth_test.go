@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"task-queue-system/internal/config"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestAuthRequired(t *testing.T) {
@@ -30,7 +31,7 @@ func TestAuthRequired(t *testing.T) {
 		JwtPublicKey: string(pubKeyPEM),
 	}
 
-	handler := AuthRequired(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := AuthRequired(cfg, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(fmt.Sprintf("OK:%s", tenantID)))

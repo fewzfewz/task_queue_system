@@ -13,6 +13,10 @@ import (
 	"task-queue-system/internal/queue"
 )
 
+// Now allows injection of the current time for deterministic testing.
+// In production it defaults to time.Now.
+var Now = time.Now
+
 const (
 	// defaultQueueKey is the Redis list that holds pending jobs.
 	defaultQueueKey = "task_queue:jobs"
@@ -488,7 +492,7 @@ func (q *RedisQueue) GetActiveWorkers(ctx context.Context) ([]queue.WorkerInfo, 
 // PromoteScheduledJobs checks for jobs in the delayed set that are due and moves them
 // to the active processing queues. Returns the number of promoted jobs.
 func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
-	now := time.Now().Unix()
+	now := Now().Unix()
 	
 	// KEYS: [delayed_jobs, qMedium, qHigh, qLow]
 	res, err := promoteScheduledJobsScript.Run(ctx, q.client, []string{
@@ -505,7 +509,7 @@ func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 // ReclaimTimedOutJobs identifies jobs that have exceeded their visibility timeout
 // and moves them back to the active queues for another attempt.
 func (q *RedisQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
-	now := time.Now().Unix()
+	now := Now().Unix()
 	
 	// KEYS: [inFlightKey, payloadsKey, qMedium, qHigh, qLow]
 	res, err := reclaimTimedOutJobsScript.Run(ctx, q.client, []string{
