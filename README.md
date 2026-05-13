@@ -1,216 +1,225 @@
-# 🚀 Go Distributed Task Queue
+# Task Queue System
 
-A production-ready, horizontally scalable, and pluggable distributed task queue system built in Go. Designed for high availability, transactional consistency, and architectural flexibility.
+This repository contains a Go-based distributed task queue system with four binaries: an HTTP API, a worker, a scheduler, and a small CLI for migration tasks. Jobs are stored in Redis for queueing and state tracking, with optional PostgreSQL persistence for the job record store.
 
----
+## What it does
 
-## 🏗️ Architecture
+- Accepts jobs over HTTP.
+- Persists job state in Redis, PostgreSQL, or both.
+- Processes jobs with pluggable worker handlers.
+- Supports delayed jobs, retries, DLQ inspection, metrics, worker heartbeats, and webhook delivery.
 
-```mermaid
-graph LR
-    Client([Client])
+## Architecture
 
-    subgraph API_Layer ["API Layer"]
-        API[HTTP API Server]
-    end
+The runtime is a small distributed system:
 
-    subgraph Broker ["Broker & Store"]
-        Redis[(Redis)]
-    end
+- `cmd/api` exposes the HTTP API.
+- `cmd/worker` consumes queued jobs and executes plugins.
+- `cmd/scheduler` promotes delayed jobs and reclaims timed-out jobs.
+- `cmd/cli` provides a data migration command.
 
-    subgraph Scheduler_Service ["Maintenance Engine"]
-        SCH[Scheduler]
-    end
+Redis is the queue broker and also stores queue state, worker heartbeats, processed markers, delayed jobs, webhook stream events, and queue metrics. PostgreSQL is an optional durable store for job records.
 
-    subgraph Worker_Pool ["Worker Pool (Scalable)"]
-        W1[Worker 1]
-        W2[Worker 2]
-        W3[Worker N]
-    end
+## Tech Stack
 
-    subgraph DB_Layer ["Database Layer"]
-        DB[(Persistence)]
-    end
+- Go `1.25.0` in `go.mod`
+- Redis via `github.com/redis/go-redis/v9`
+- PostgreSQL via `github.com/jackc/pgx/v5`
+- Prometheus metrics via `github.com/prometheus/client_golang`
+- JWT auth via `github.com/golang-jwt/jwt/v5`
+- Vault integration via `github.com/hashicorp/vault/api`
+- Swagger UI via `github.com/swaggo/swag` and `github.com/swaggo/http-swagger/v2`
 
-    Client -->|POST /jobs| API
-    API -->|Enqueue| Redis
-    SCH -->|Promote/Reclaim| Redis
-    Redis --- W1
-    Redis --- W2
-    Redis --- W3
-    W1 --> DB
-    W2 --> DB
-    W3 --> DB
+## Main Entry Points
 
-    %% Style notes
-    linkStyle 2,3,4 stroke:#f96,stroke-width:2px;
-    linkStyle 5,6,7 stroke-dasharray: 5 5;
-```
+- `cmd/api/main.go`
+- `cmd/worker/main.go`
+- `cmd/scheduler/main.go`
+- `cmd/cli/main.go`
 
----
+## Key Routes
 
-## ✨ Key Features
+- `POST /jobs`
+- `GET /jobs/{id}`
+- `GET /metrics`
+- `GET /workers`
+- `GET /admin/dlq`
+- `GET /api/v1/dlq`
+- `GET /api/v1/dlq/{id}`
+- `POST /api/v1/dlq/{id}/replay`
+- `DELETE /api/v1/dlq/{id}`
+- `DELETE /api/v1/dlq`
+- `GET /swagger/`
 
-- **🛡️ Atomic Visibility Timeouts**: Uses Redis Sorted Sets (`ZSET`) to ensure no job is ever processed by two workers simultaneously, with automatic reclamation for stalled workers.
-- **🔌 Pluggable Architecture**: Add new job types (Email, Image Processing, etc.) without touching the core engine via a dynamic `init()` based plugin registration system.
-- **📈 Horizontal Scaling**: Workers are fully stateless. Spin up 1 or 100 instances flawlessly using standard orchestration.
-- **🔄 Smart Retries**: Built-in exponential backoff (2ⁿ seconds) to handle transient failures gracefully.
-- **📬 Dead Letter Queue (DLQ)**: Failed tasks are preserved with full stack traces/error messages for manual inspection.
-- **📊 Real-time Observability**: JSON structured logging, `/metrics` endpoint for Prometheus, and a `/workers` health registry.
-- **🛡️ API Security**: Simple but effective X-API-Key middleware protection.
+## Configuration
 
----
+Environment variables read by the code:
 
-## 🛠️ Tech Stack
+- `PORT` default `8080`
+- `REDIS_HOST` default `localhost:6379`
+- `REDIS_PASSWORD` default empty
+- `REDIS_DB` default `0`
+- `API_KEY` default `secret-api-key`
+- `JOB_RATE_LIMIT` default `0`
+- `LOG_LEVEL` default `info`
+- `MAX_QUEUE_SIZE` default `10000`
+- `STORE_BACKEND` default `redis`
+- `POSTGRES_CONN_STR` default empty
+- `JWT_PUBLIC_KEY` default empty
+- `JWT_PUBLIC_KEY_PATH` default empty
+- `VAULT_ADDR` default empty
+- `VAULT_ROLE_ID` default empty
+- `VAULT_SECRET_ID` default empty
+- `DRAIN_TIMEOUT` default `60`
 
-- **Core**: Go (Golang) 1.22+
-- **Broker/Storage**: Redis (Optimised for atomic ops)
-- **Database**: PostgreSQL (Persisted Audit Log)
-- **Containerisation**: Docker & Docker Compose
-- **Observability**: Structured `slog` (JSON), Swagger/OpenAPI
+Notes:
 
----
+- `API_KEY` is used for legacy X-API-Key auth.
+- If `JWT_PUBLIC_KEY` or `JWT_PUBLIC_KEY_PATH` is set, Bearer-token auth is enabled.
+- If `VAULT_ADDR` is set, the API will try Vault-backed tenant secrets before falling back to `API_KEY`.
 
-## 🚀 Getting Started
+## Local Run
 
-### 0. Quick Start (Interactive Demo)
-
-The fastest way to see the system in action:
-
-```bash
-./demo.sh
-```
-
-This script boots the entire stack, submits immediate and scheduled jobs, and monitors the processing in real-time.
-
-### 1. Run with Docker Compose
-
-One command to start the API, Redis, and a pool of 3 workers:
+### 1. Install dependencies
 
 ```bash
-docker-compose up --build --scale worker=3
+go mod download
 ```
 
-### 2. Submit a Job (CLI)
-
-Use our pre-built CLI tool for easy testing:
+Or use the Makefile:
 
 ```bash
-./tq submit --type email --payload '{"to":"recruiter@top-tier.com"}'
+make deps
 ```
 
-### 3. Submit a Job (cURL)
+### 2. Start infrastructure
+
+The repo provides Docker Compose files:
+
+- `docker-compose.yml`
+- `deployments/docker-compose.yml`
+
+The top-level `docker-compose.yml` starts Redis, API, worker, and scheduler.
 
 ```bash
-curl -X POST http://localhost:8080/jobs \
-     -H "X-API-Key: secret-api-key" \
-     -H "Content-Type: application/json" \
-     -d '{"type":"email","payload":{"to":"user@example.com"},"priority":"high"}'
+docker compose up --build --scale worker=3
 ```
 
----
-
-## ⚖️ Scaling & Performance
-
-### Horizontal Scalability
-
-This system is architected to be **Shared-Nothing**. Workers do not communicate with each other. They interact solely with the centralized Redis broker using atomic operations (`ZADD`, `LPOP`, `TXPipeline`).
-
-**To scale processing power:**
-
-1. Simply increase the `replicas` in Kubernetes or the `--scale` flag in Docker Compose.
-2. New workers will automatically register their heartbeats and begin competing for available tasks in the queue.
-3. No configuration changes are required on the API or existing workers.
-
-### Performance Benchmarking
-
-A high-concurrency stress test script is included:
+Or:
 
 ```bash
-# Fire 1000 jobs with 50 concurrent connections
-./scripts/load_test.sh 1000 50
+make docker-up
 ```
 
----
+### 3. Minimum environment
 
-## 📁 Project Structure
-
-- `/cmd`: Entry points for API, Worker, and CLI.
-- `/internal/queue`: Core Redis broker implementation with atomic visibility logic.
-- `/internal/worker`: Lifecycle management, plugin registry, and processing loops.
-- `/internal/jobs`: Extensible job plugin implementations.
-- `/internal/api`: HTTP routes, handlers, and middlewares.
-- `/docs`: Swagger 2.0 API documentation.
-
----
-
-## 🛠️ Development
-
-### Generate Swagger Docs
+The default Compose file already sets the basic Redis and API key values. For a local shell run, the minimum useful values are:
 
 ```bash
-swag init -g cmd/api/main.go
+export PORT=8080
+export REDIS_HOST=localhost:6379
+export REDIS_PASSWORD=
+export REDIS_DB=0
+export API_KEY=secret-api-key
+export STORE_BACKEND=redis
 ```
 
-### Run Tests
+An example file is also provided at [`.env.example`](/home/fewzan/Projects/task-queue-system/.env.example).
+
+### 4. Run in development
+
+Run each binary separately:
+
+```bash
+go run ./cmd/api
+go run ./cmd/worker
+go run ./cmd/scheduler
+```
+
+Or use Makefile shortcuts:
+
+```bash
+make run-api
+make run-worker
+make run-scheduler
+```
+
+### 5. Run tests
 
 ```bash
 go test ./...
 ```
 
----
-
-## 📈 Kubernetes Autoscaling (HPA)
-
-The worker pool supports dynamic scaling based on real-time queue depth and worker utilization.
-
-This service already exposes Prometheus metrics on `/metrics`, including: - `task_queue_length{queue,tenant_id}` - `task_queue_worker_busy_ratio`
-
-### 1. Prerequisites
-
-- **Prometheus**: Collected metrics from `/metrics`.
-- **Prometheus Adapter**: Installed in your cluster to expose custom metrics to the K8s API.
-
-### 2. Implementation Steps
-
-1. **Configure Prometheus Adapter**: Apply the rules found in [prometheus-adapter-config.yaml](deploy/k8s/prometheus-adapter-config.yaml). This maps the internal `task_queue_length` and `worker_busy_ratio` metrics to the K8s External Metrics API.
-2. **Deploy HPA**: Apply the [hpa.yaml](deploy/k8s/hpa.yaml) manifest:
-   - **Scale Up**: Triggered when the average queue length exceeds **100** pending jobs.
-   - **Scale Down**: Triggered when worker utilization drops below **20%** for more than **3 minutes**.
-   - **Range**: Scales between **2** and **20** replicas.
+Or:
 
 ```bash
-kubectl apply -f deploy/k8s/hpa.yaml
+make test
 ```
 
-### 4. Graceful Worker Scale-Down
-
-The worker deployment exposes a shutdown endpoint at `/healthz/shutdown` and a metrics endpoint at `/metrics`.
-The Kubernetes worker deployment should include a `preStop` hook so scale-down waits for in-flight jobs to finish:
-
-```yaml
-lifecycle:
-  preStop:
-    exec:
-      command:
-        [
-          "/bin/sh",
-          "-c",
-          "sleep 5 && curl -X POST localhost:8080/healthz/shutdown",
-        ]
-```
-
-This ensures the worker stops accepting new jobs, drains current work, and emits `worker_graceful_shutdown_total` on clean exit.
-
-### 3. Example Prometheus Adapter install
-
-If you have not installed Prometheus Adapter, use Helm:
+### 6. Build production binaries
 
 ```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-helm upgrade --install prometheus-adapter prometheus-community/prometheus-adapter \
-    --namespace monitoring --create-namespace
+go build -o bin/api ./cmd/api
+go build -o bin/worker ./cmd/worker
+go build -o bin/scheduler ./cmd/scheduler
+go build -o bin/cli ./cmd/cli
 ```
 
-Then merge the `deploy/k8s/prometheus-adapter-config.yaml` rules into the adapter values under `rules.external`.
+Or:
+
+```bash
+make build
+```
+
+### 7. Docker build
+
+```bash
+docker build -t task-queue-system .
+```
+
+Or:
+
+```bash
+make docker-build
+```
+
+## Storage and Dependencies
+
+- Redis is required for queueing.
+- PostgreSQL is optional unless `STORE_BACKEND=postgres` or `STORE_BACKEND=dual`.
+- Vault is optional and only used when configured.
+- Prometheus is optional but required if you want to scrape metrics.
+
+## Job Types
+
+The built-in worker plugins currently support:
+
+- `email`
+- `image`
+
+The API also accepts several test job types used by the test suite:
+
+- `test`
+- `test-success`
+- `test-fail`
+- `test-scheduled`
+
+## Useful Scripts
+
+- `scripts/migrate.sh`
+- `scripts/load_test.sh`
+- `scripts/benchmark.sh`
+
+## Swagger
+
+Generate or refresh the Swagger docs with:
+
+```bash
+swag init -g cmd/api/main.go
+```
+
+## Notes
+
+- The DLQ admin page is served at `/admin/dlq`.
+- Worker metrics are exposed on `/metrics` from the worker process.
+- The scheduler is responsible for moving delayed jobs into active queues and reclaiming timed-out jobs.
