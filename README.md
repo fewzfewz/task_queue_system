@@ -391,6 +391,10 @@ What exists:
   - [deploy/grafana/provisioning/datasources/datasource.yaml](/home/fewzan/Projects/task-queue-system/deploy/grafana/provisioning/datasources/datasource.yaml)
 - Prometheus alerting rules:
   - [deploy/monitoring/prometheus-rules.yaml](/home/fewzan/Projects/task-queue-system/deploy/monitoring/prometheus-rules.yaml)
+- Ingress:
+  - [deploy/k8s/ingress.yaml](/home/fewzan/Projects/task-queue-system/deploy/k8s/ingress.yaml)
+- RBAC:
+  - [deploy/k8s/rbac.yaml](/home/fewzan/Projects/task-queue-system/deploy/k8s/rbac.yaml)
 
 What is still missing from the repo:
 

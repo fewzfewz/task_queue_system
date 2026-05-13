@@ -91,6 +91,7 @@ This uses the built-in versioned SQL migration runner and tracks applied version
 
 Apply:
 
+- `deploy/k8s/rbac.yaml`
 - `deploy/k8s/api-deployment.yaml`
 - `deploy/k8s/api-service.yaml`
 - `deploy/k8s/worker-deployment.yaml`
@@ -145,11 +146,12 @@ Use those endpoints for probes and graceful shutdown hooks.
 
 1. Create namespace.
 2. Create secrets.
-3. Apply Redis.
-4. Apply Postgres schema if needed.
-5. Apply API, worker, and scheduler deployments.
-6. Apply service and ingress resources.
-7. Confirm `/readyz` returns `200 OK`.
+3. Apply RBAC.
+4. Apply Redis.
+5. Apply Postgres schema if needed.
+6. Apply API, worker, and scheduler deployments.
+7. Apply service and ingress resources.
+8. Confirm `/readyz` returns `200 OK`.
 
 ## What Is Still Missing
 

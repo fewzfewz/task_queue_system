@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: task-queue-scheduler
-  namespace: default
+  namespace: task-queue
 spec:
   replicas: 1
   selector:
@@ -13,6 +13,7 @@ spec:
       labels:
         app: task-queue-scheduler
     spec:
+      serviceAccountName: task-queue-scheduler
       containers:
         - name: scheduler
           image: task-queue-scheduler:latest

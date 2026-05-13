@@ -1,0 +1,117 @@
+#
+# Least-privilege RBAC for the task queue system.
+#
+# This manifest gives each workload its own ServiceAccount and only the
+# minimal permissions it needs:
+# - all workloads can read the specific secrets this system uses
+# - only worker and scheduler can read configmaps if runtime config is added
+#
+# Apply order:
+# 1. kubectl apply -f deploy/k8s/rbac.yaml
+# 2. kubectl apply -f deploy/k8s/redis-service.yaml
+# 3. kubectl apply -f deploy/k8s/redis-statefulset.yaml
+# 4. kubectl apply -f deploy/k8s/api-service.yaml
+# 5. kubectl apply -f deploy/k8s/api-deployment.yaml
+# 6. kubectl apply -f deploy/k8s/worker-deployment.yaml
+# 7. kubectl apply -f deploy/k8s/scheduler-deployment.yaml
+#
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: task-queue-api
+  namespace: task-queue
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: task-queue-worker
+  namespace: task-queue
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: task-queue-scheduler
+  namespace: task-queue
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: task-queue-secret-reader
+  namespace: task-queue
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["task-queue-secrets", "task-queue-postgres"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: task-queue-api-secret-reader
+  namespace: task-queue
+subjects:
+  - kind: ServiceAccount
+    name: task-queue-api
+    namespace: task-queue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: task-queue-secret-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: task-queue-worker-secret-reader
+  namespace: task-queue
+subjects:
+  - kind: ServiceAccount
+    name: task-queue-worker
+    namespace: task-queue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: task-queue-secret-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: task-queue-scheduler-secret-reader
+  namespace: task-queue
+subjects:
+  - kind: ServiceAccount
+    name: task-queue-scheduler
+    namespace: task-queue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: task-queue-secret-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: task-queue-worker-role
+  namespace: task-queue
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: task-queue-worker-configmap-reader
+  namespace: task-queue
+subjects:
+  - kind: ServiceAccount
+    name: task-queue-worker
+    namespace: task-queue
+  - kind: ServiceAccount
+    name: task-queue-scheduler
+    namespace: task-queue
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: task-queue-worker-role
