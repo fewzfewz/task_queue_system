@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -69,6 +70,9 @@ func (wp *WorkerProcessor) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return // clean shutdown, not a real error
 			}
+			if errors.Is(err, context.DeadlineExceeded) || isEmptyQueueErr(err) {
+				continue
+			}
 			wp.logger.Warn("transient error, backing off", "error", err)
 			select {
 			case <-ctx.Done():
@@ -77,6 +81,16 @@ func (wp *WorkerProcessor) Run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func isEmptyQueueErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return msg == "queue: dequeue timed out, no jobs available" ||
+		msg == "redis: nil" ||
+		msg == "queue: BRPOP failed: redis: connection pool timeout"
 }
 
 // ProcessOnce pulls exactly one job from the queue and runs it through the

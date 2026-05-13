@@ -1,0 +1,44 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: task-queue-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: task-queue.rules
+      rules:
+        - alert: TaskQueueHighDepth
+          expr: sum(task_queue_length) > 1000
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Task queue depth is high"
+            description: "The combined queue depth has been above 1000 for 5 minutes."
+
+        - alert: TaskQueueNoBusyWorkers
+          expr: task_queue_worker_busy_ratio < 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker utilization is very low"
+            description: "Workers appear mostly idle or unavailable."
+
+        - alert: TaskQueueDLQGrowing
+          expr: increase(task_queue_jobs_total{status="failed"}[15m]) > 25
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "DLQ is growing rapidly"
+            description: "Failed job count has increased sharply in the last 15 minutes."
+
+        - alert: TaskQueueWebhookFailuresSpike
+          expr: increase(task_queue_webhook_delivery_failures_total[10m]) > 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Webhook failures are spiking"
+            description: "Webhook delivery failures have increased in the last 10 minutes."

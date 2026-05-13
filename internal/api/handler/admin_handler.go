@@ -40,6 +40,14 @@ const adminHTML = `
             </div>
         </div>
         <div class="flex items-center space-x-4">
+            <div class="hidden md:flex items-center space-x-2 bg-gray-800/50 rounded-full px-4 py-1.5 border border-white/5">
+                <input id="token" type="password" placeholder="API key or JWT" class="bg-transparent border-0 outline-none text-sm w-56" />
+                <select id="auth-mode" class="bg-gray-800 text-sm border-0 rounded-md px-2 py-1">
+                    <option value="api-key">API Key</option>
+                    <option value="bearer">Bearer</option>
+                </select>
+                <button onclick="saveToken()" class="px-3 py-1 bg-indigo-600 rounded-md text-xs font-semibold">Save</button>
+            </div>
             <div class="flex items-center space-x-2 bg-gray-800/50 rounded-full px-4 py-1.5 border border-white/5">
                 <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                 <span id="refresh-status" class="text-xs font-semibold text-gray-300">Auto-refresh Off</span>
@@ -160,22 +168,37 @@ const adminHTML = `
         const API_BASE = '/api/v1';
         let refreshTimer = null;
 
-        // Auth
-        if (!sessionStorage.getItem('task_queue_token')) {
-            const token = prompt('Enter your API/Bearer Token:');
-            if (token) sessionStorage.setItem('task_queue_token', token);
-            else document.body.innerHTML = '<div class="h-full flex items-center justify-center text-red-400 font-bold">Authentication Required</div>';
+        function saveToken() {
+            sessionStorage.setItem('task_queue_token', document.getElementById('token').value.trim());
+            sessionStorage.setItem('task_queue_auth_mode', document.getElementById('auth-mode').value);
+            loadDashboard();
+        }
+
+        function getAuthMode() {
+            return sessionStorage.getItem('task_queue_auth_mode') || 'api-key';
         }
 
         async function api(path, options = {}) {
             const token = sessionStorage.getItem('task_queue_token');
+            const mode = getAuthMode();
+            const headers = {
+                ...options.headers,
+                'Content-Type': 'application/json'
+            };
+            if (token) {
+                if (mode === 'bearer') {
+                    headers['Authorization'] = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
+                } else if (token.startsWith('Bearer ')) {
+                    headers['Authorization'] = token;
+                } else if (token.includes('.') && token.split('.').length === 3) {
+                    headers['Authorization'] = 'Bearer ' + token;
+                } else {
+                    headers['X-API-Key'] = token;
+                }
+            }
             const res = await fetch(path, {
                 ...options,
-                headers: {
-                    ...options.headers,
-                    'Authorization': token.startsWith('Bearer ') ? token : ` + "`" + `Bearer ${token}` + "`" + `,
-                    'Content-Type': 'application/json'
-                }
+                headers
             });
             if (res.status === 401) {
                 sessionStorage.removeItem('task_queue_token');
@@ -191,7 +214,7 @@ const adminHTML = `
             try {
                 const queue = document.getElementById('filter-queue').value;
                 const tenant = document.getElementById('filter-tenant').value;
-                const data = await api(` + "`" + `${API_BASE}/dlq?queue=${queue}` + "`" + `);
+        const data = await api(` + "`" + `${API_BASE}/dlq?queue=${queue}` + "`" + `);
                 const filtered = (data || []).filter(j => {
                     if (!tenant) return true;
                     return (j.tenant_id || '').includes(tenant);
@@ -329,8 +352,14 @@ const adminHTML = `
 
         window.logout = function() {
             sessionStorage.removeItem('task_queue_token');
+            sessionStorage.removeItem('task_queue_auth_mode');
             location.reload();
         }
+
+        const tokenInput = document.getElementById('token');
+        const authMode = document.getElementById('auth-mode');
+        tokenInput.value = sessionStorage.getItem('task_queue_token') || '';
+        authMode.value = getAuthMode();
 
         document.getElementById('toggle-refresh').addEventListener('click', () => {
             const status = document.getElementById('refresh-status');

@@ -23,7 +23,7 @@ spec:
     - type: External
       external:
         metric:
-          name: worker_busy_ratio
+          name: task_queue_worker_busy_ratio
         target:
           type: Value
           value: "0.2"

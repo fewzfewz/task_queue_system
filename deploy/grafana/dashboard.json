@@ -1,0 +1,48 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Queue Depth",
+      "targets": [
+        { "expr": "sum(task_queue_length)", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Worker Busy Ratio",
+      "targets": [
+        { "expr": "task_queue_worker_busy_ratio", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Jobs Processed",
+      "targets": [
+        { "expr": "sum(rate(task_queue_jobs_total[5m])) by (status)", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Webhook Failures",
+      "targets": [
+        { "expr": "sum(rate(task_queue_webhook_delivery_failures_total[5m])) by (reason)", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    }
+  ],
+  "schemaVersion": 37,
+  "style": "dark",
+  "tags": ["task-queue"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Task Queue System",
+  "uid": "task-queue-system",
+  "version": 1
+}

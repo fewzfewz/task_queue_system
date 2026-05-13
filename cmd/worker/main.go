@@ -44,13 +44,14 @@ func main() {
 	}
 
 	log = log.With("instance_id", instanceID)
-	log.Info("starting worker service", "workers", 50)
+	log.Info("starting worker service", "workers", cfg.WorkerPoolSize)
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     cfg.RedisHost,
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
+		PoolSize: 128,
 	})
 
 	// PING Redis to ensure the connection is alive
@@ -82,7 +83,7 @@ func main() {
 	// ── 6. Setup Worker Pool ──────────────────────────────────────────────────
 	// Number of concurrent workers. We use 50 as a default for massive load testing.
 	poolCfg := pool.Config{
-		NumWorkers:    50,
+		NumWorkers:    cfg.WorkerPoolSize,
 		JobsPerSecond: cfg.JobRateLimit,
 	}
 

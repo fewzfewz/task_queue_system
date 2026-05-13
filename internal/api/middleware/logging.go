@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"task-queue-system/internal/tracing"
 )
 
 // responseWriter is a minimal wrapper to capture the HTTP status code.
@@ -21,6 +23,8 @@ func (rw *responseWriter) WriteHeader(code int) {
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, traceID := tracing.Start(r.Context())
+			r = r.WithContext(ctx)
 			start := time.Now()
 			
 			rw := &responseWriter{w, http.StatusOK}
@@ -36,6 +40,7 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"duration_ms", duration.Milliseconds(),
 				"remote_addr", r.RemoteAddr,
 				"user_agent", r.UserAgent(),
+				"trace_id", traceID,
 			)
 		})
 	}

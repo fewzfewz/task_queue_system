@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-queue-scheduler
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: task-queue-scheduler
+  template:
+    metadata:
+      labels:
+        app: task-queue-scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: task-queue-scheduler:latest
+          imagePullPolicy: IfNotPresent
+          command: ["./scheduler"]
+          env:
+            - name: REDIS_HOST
+              value: "redis.default.svc.cluster.local:6379"
+            - name: REDIS_PASSWORD
+              value: ""
+            - name: REDIS_DB
+              value: "0"
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "test -n \"$(pgrep scheduler || true)\""]
+            initialDelaySeconds: 10
+            periodSeconds: 20

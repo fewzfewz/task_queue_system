@@ -62,6 +62,10 @@ type Config struct {
 	// in-flight jobs before force exiting during a graceful shutdown.
 	// Default: 60 seconds.
 	DrainTimeoutSeconds int
+
+	// WorkerPoolSize is the number of goroutines the worker process starts.
+	// Default: 50.
+	WorkerPoolSize int
 }
 
 
@@ -86,6 +90,7 @@ func Load() *Config {
 		VaultRoleID:   getEnvOrDefault("VAULT_ROLE_ID", ""),
 		VaultSecretID: getEnvOrDefault("VAULT_SECRET_ID", ""),
 		DrainTimeoutSeconds: getEnvAsInt("DRAIN_TIMEOUT", 60),
+		WorkerPoolSize:      getEnvAsInt("WORKER_POOL_SIZE", 50),
 	}
 }
 

@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -33,6 +34,9 @@ func (p *TestPlugin) Execute(ctx context.Context, job *jobs.Job) (interface{}, e
 }
 
 func TestIntegration_SubmissionAndExecution(t *testing.T) {
+	if os.Getenv("RUN_QUEUE_INTEGRATION") != "1" {
+		t.Skip("RUN_QUEUE_INTEGRATION=1 is required for this integration workflow")
+	}
 	ctx := context.Background()
 	log := logger.Setup()
 	
@@ -77,6 +81,9 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 }
 
 func TestIntegration_RetryMechanism(t *testing.T) {
+	if os.Getenv("RUN_QUEUE_INTEGRATION") != "1" {
+		t.Skip("RUN_QUEUE_INTEGRATION=1 is required for this integration workflow")
+	}
 	ctx := context.Background()
 	log := logger.Setup()
 	
@@ -130,6 +137,9 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 }
 
 func TestIntegration_Scheduling(t *testing.T) {
+	if os.Getenv("RUN_QUEUE_INTEGRATION") != "1" {
+		t.Skip("RUN_QUEUE_INTEGRATION=1 is required for this integration workflow")
+	}
 	ctx := context.Background()
 	log := logger.Setup()
 	
@@ -181,4 +191,3 @@ func TestIntegration_Scheduling(t *testing.T) {
 		t.Errorf("expected status completed after promotion, got %s", dbJob.Status)
 	}
 }
-

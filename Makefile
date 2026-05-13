@@ -1,6 +1,6 @@
 APP_NAME=task-queue-system
 
-.PHONY: help deps test build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler swagger docker-build docker-up docker-down migrate load-test benchmark
+.PHONY: help deps test build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler swagger docker-build docker-up docker-down migrate migrate-schema chaos load-test benchmark
 
 help:
 	@echo "Targets:"
@@ -15,6 +15,8 @@ help:
 	@echo "  docker-up       Start the local Docker Compose stack"
 	@echo "  docker-down     Stop the local Docker Compose stack"
 	@echo "  migrate         Run the Redis -> Postgres migration CLI"
+	@echo "  migrate-schema  Apply versioned SQL migrations to Postgres"
+	@echo "  chaos           Run chaos tests and export JSON results"
 	@echo "  load-test       Run the load test script"
 	@echo "  benchmark       Run the benchmark script"
 
@@ -54,13 +56,19 @@ docker-build:
 	docker build -t $(APP_NAME) .
 
 docker-up:
-	docker compose up --build --scale worker=3
+	docker compose -f deploy/local/docker-compose.yml up --build --scale worker=3
 
 docker-down:
-	docker compose down
+	docker compose -f deploy/local/docker-compose.yml down
 
 migrate:
-	go run ./cmd/cli migrate-jobs --from redis --to postgres --batch 500
+	./scripts/migrate.sh
+
+migrate-schema:
+	go run ./cmd/cli migrate-schema --dir db/migrations
+
+chaos:
+	./scripts/chaos.sh chaos-report.json
 
 load-test:
 	./scripts/load_test.sh

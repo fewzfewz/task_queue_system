@@ -65,8 +65,12 @@ const appHTML = `
       <h1>Task Queue System</h1>
       <div class="muted">Simple browser UI for jobs, workers, health, metrics, and DLQ actions</div>
     </div>
-    <div class="toolbar" style="max-width:520px;">
-      <input id="token" placeholder="API key or Bearer token" />
+    <div class="toolbar" style="max-width:720px;">
+      <select id="auth-mode" onchange="saveAuthMode()">
+        <option value="api-key">API Key</option>
+        <option value="bearer">Bearer Token</option>
+      </select>
+      <input id="token" placeholder="Paste API key or JWT" />
       <button class="secondary" onclick="saveToken()">Save token</button>
       <button class="secondary" onclick="loadEverything()">Refresh all</button>
     </div>
@@ -78,6 +82,17 @@ const appHTML = `
       <div class="card"><div class="label">Jobs</div><div id="stat-jobs" class="value">-</div><div class="muted">Newest jobs returned by the API</div></div>
       <div class="card"><div class="label">Workers</div><div id="stat-workers" class="value">-</div><div class="muted">Active worker heartbeats</div></div>
       <div class="card"><div class="label">DLQ</div><div id="stat-dlq" class="value">-</div><div class="muted">Failed jobs currently listed</div></div>
+    </section>
+
+    <section class="card">
+      <div class="toolbar">
+        <button onclick="fillExample()">Example email job</button>
+        <button class="secondary" onclick="checkHealth('/healthz')">Health</button>
+        <button class="secondary" onclick="checkHealth('/readyz')">Ready</button>
+        <button class="secondary" onclick="loadWorkers()">Workers</button>
+        <button class="secondary" onclick="loadMetrics()">Metrics</button>
+        <button class="secondary" onclick="loadDLQ()">DLQ</button>
+      </div>
     </section>
 
     <section class="card">
@@ -214,16 +229,33 @@ const appHTML = `
       flash('Token saved');
     }
 
+    function saveAuthMode() {
+      localStorage.setItem('task_queue_auth_mode', document.getElementById('auth-mode').value);
+      flash('Auth mode saved');
+    }
+
     function getToken() {
       const t = localStorage.getItem(TOKEN_KEY) || '';
       document.getElementById('token').value = t;
+      document.getElementById('auth-mode').value = localStorage.getItem('task_queue_auth_mode') || 'api-key';
       return t;
     }
 
     function headers() {
       const token = (localStorage.getItem(TOKEN_KEY) || '').trim();
+      const mode = localStorage.getItem('task_queue_auth_mode') || 'api-key';
       const hdr = { 'Content-Type': 'application/json' };
-      if (token) hdr['Authorization'] = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
+      if (token) {
+        if (mode === 'bearer') {
+          hdr['Authorization'] = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
+        } else if (token.startsWith('Bearer ')) {
+          hdr['Authorization'] = token;
+        } else if (token.includes('.') && token.split('.').length === 3) {
+          hdr['Authorization'] = 'Bearer ' + token;
+        } else {
+          hdr['X-API-Key'] = token;
+        }
+      }
       return hdr;
     }
 
@@ -260,7 +292,7 @@ const appHTML = `
         version: parseInt(document.getElementById('create-version').value || '1', 10),
         payload: JSON.parse(document.getElementById('create-payload').value)
       };
-      const out = await api(API_BASE + '/jobs', { method: 'POST', body: JSON.stringify(body) });
+      const out = await api('/jobs', { method: 'POST', body: JSON.stringify(body) });
       document.getElementById('job-output').innerText = JSON.stringify(out, null, 2);
       document.getElementById('job-id').value = out.id || '';
       flash('Job created');
@@ -270,7 +302,7 @@ const appHTML = `
       const id = document.getElementById('job-id').value.trim();
       if (!id) return;
       const tenant = document.getElementById('job-tenant-filter').value.trim();
-      const path = API_BASE + '/jobs/' + encodeURIComponent(id) + (tenant ? '?tenant_id=' + encodeURIComponent(tenant) : '');
+      const path = '/jobs/' + encodeURIComponent(id) + (tenant ? '?tenant_id=' + encodeURIComponent(tenant) : '');
       const out = await api(path);
       document.getElementById('job-output').innerText = JSON.stringify(out, null, 2);
     }
@@ -357,6 +389,9 @@ const appHTML = `
       getToken();
       const tab = localStorage.getItem('task_queue_tab') || 'jobs';
       showTab(tab);
+      if (tab === 'jobs') {
+        document.getElementById('stat-jobs').innerText = 'Ready';
+      }
       await Promise.all([loadDLQ(), loadWorkers(), loadMetrics(), checkHealth('/healthz'), checkHealth('/readyz')]);
     }
 

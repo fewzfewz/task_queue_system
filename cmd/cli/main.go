@@ -6,8 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
+	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/jobs"
@@ -27,6 +32,9 @@ func main() {
 	from := migrateCmd.String("from", "redis", "Source backend")
 	to := migrateCmd.String("to", "postgres", "Destination backend")
 	batch := migrateCmd.Int("batch", 500, "Batch size for migration")
+
+	schemaCmd := flag.NewFlagSet("migrate-schema", flag.ExitOnError)
+	migrationsDir := schemaCmd.String("dir", "db/migrations", "Directory containing versioned SQL migrations")
 
 	if len(os.Args) < 2 {
 		fmt.Println("expected 'migrate-jobs' subcommand")
@@ -100,8 +108,99 @@ func main() {
 			"total", totalMigrated, 
 			"duration", time.Since(start).String())
 
+	case "migrate-schema":
+		_ = schemaCmd.Parse(os.Args[2:])
+
+		if cfg.PostgresConnStr == "" {
+			log.Error("POSTGRES_CONN_STR is required for schema migration")
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
+		if err != nil {
+			log.Error("failed to connect to postgres", "error", err)
+			os.Exit(1)
+		}
+		defer pgStore.Close()
+
+		if err := applyMigrations(ctx, cfg.PostgresConnStr, *migrationsDir, log); err != nil {
+			log.Error("schema migration failed", "error", err)
+			os.Exit(1)
+		}
+		log.Info("schema migration completed successfully")
+
 	default:
 		fmt.Println("unknown command:", os.Args[1])
 		os.Exit(1)
 	}
+}
+
+func applyMigrations(ctx context.Context, connStr, dir string, log *slog.Logger) error {
+	pool, err := pgx.Connect(ctx, connStr)
+	if err != nil {
+		return err
+	}
+	defer pool.Close(ctx)
+
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return err
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".sql") {
+			files = append(files, entry.Name())
+		}
+	}
+	sort.Strings(files)
+
+	for _, name := range files {
+		version := strings.TrimSuffix(filepath.Base(name), ".sql")
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			log.Info("migration already applied", "version", version)
+			continue
+		}
+
+		sqlBytes, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return err
+		}
+
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("migration %s failed: %w", version, err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES ($1)`, version); err != nil {
+			_ = tx.Rollback(ctx)
+			return err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		log.Info("applied migration", "version", version)
+	}
+
+	return nil
 }

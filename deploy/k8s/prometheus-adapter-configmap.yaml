@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    rules:
+      external:
+        - seriesQuery: '{__name__="task_queue_length"}'
+          resources:
+            template: <<.Resource>>
+          name:
+            as: "task_queue_length"
+          metricsQuery: 'sum(task_queue_length{<<.LabelMatchers>>})'
+
+        - seriesQuery: '{__name__="task_queue_worker_busy_ratio"}'
+          resources:
+            template: <<.Resource>>
+          name:
+            as: "task_queue_worker_busy_ratio"
+          metricsQuery: 'avg(task_queue_worker_busy_ratio{<<.LabelMatchers>>})'

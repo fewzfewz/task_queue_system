@@ -102,6 +102,8 @@ The test suite also uses:
   - Main browser UI with tabs for create/search jobs, workers/health, and DLQ/admin actions
 - `GET /ui`
   - Alias of the main browser UI
+- `GET /admin/dlq`
+  - DLQ-focused management console
 - `POST /jobs`
   - Create a new job
 - `GET /jobs/{id}`
