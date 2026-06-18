@@ -38,6 +38,11 @@ func (s *DualStore) UpdateStatus(ctx context.Context, id string, status jobs.Job
 	return s.Primary.UpdateStatus(ctx, id, status, workerID)
 }
 
+func (s *DualStore) UpdateProgress(ctx context.Context, id string, progress float64) error {
+	_ = s.Secondary.UpdateProgress(ctx, id, progress)
+	return s.Primary.UpdateProgress(ctx, id, progress)
+}
+
 func (s *DualStore) UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
 	_ = s.Secondary.UpdateResult(ctx, id, status, workerID, result)
 	return s.Primary.UpdateResult(ctx, id, status, workerID, result)
@@ -54,10 +59,10 @@ func (s *DualStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return s.Primary.Enqueue(ctx, job)
 }
 
-func (s *DualStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
+func (s *DualStore) Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error) {
 	// Dequeue involves a state change 'pending' -> 'processing'.
 	// We MUST perform this on primary.
-	job, err := s.Primary.Dequeue(ctx, tenantID)
+	job, err := s.Primary.Dequeue(ctx, tenantID, shardKey)
 	if err == nil && job != nil {
 		// Try to sync the state change to secondary if possible
 		_ = s.Secondary.UpdateStatus(ctx, job.ID, jobs.StatusProcessing, job.ProcessedBy)
@@ -84,6 +89,10 @@ func (s *DualStore) ListJobs(ctx context.Context, tenantID string, status string
 	return s.Primary.ListJobs(ctx, tenantID, status, typeStr, limit, offset)
 }
 
+func (s *DualStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.Job, error) {
+	return s.Primary.SearchJobs(ctx, filter)
+}
+
 func (s *DualStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	// Recovery should happen on primary.
 	return s.Primary.RecoverOrphans(ctx, timeout)
@@ -97,6 +106,14 @@ func (s *DualStore) DeleteJob(ctx context.Context, jobID string) error {
 func (s *DualStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
 	_, _ = s.Secondary.DeleteJobsBefore(ctx, tenantID, status, jobType, before)
 	return s.Primary.DeleteJobsBefore(ctx, tenantID, status, jobType, before)
+}
+
+func (s *DualStore) IsDedupKeyTaken(ctx context.Context, dedupKey, tenantID string) (bool, error) {
+	return s.Primary.IsDedupKeyTaken(ctx, dedupKey, tenantID)
+}
+
+func (s *DualStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error) {
+	return s.Primary.GetByIDs(ctx, ids)
 }
 
 func (s *DualStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {

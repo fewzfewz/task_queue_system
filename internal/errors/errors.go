@@ -28,6 +28,7 @@ const (
 	CodePermissionDenied = "PERMISSION_DENIED"
 	CodeQueueFull        = "QUEUE_FULL"
 	CodeTooManyRequests  = "TOO_MANY_REQUESTS"
+	CodeConflict         = "CONFLICT"
 )
 
 // NewNotFound returns a 404-style error.
@@ -67,6 +68,14 @@ func NewQueueFull() *AppError {
 func NewTooManyRequests(msg string) *AppError {
 	return &AppError{
 		Code:    CodeTooManyRequests,
+		Message: msg,
+	}
+}
+
+// NewConflict returns a 409-style error.
+func NewConflict(msg string) *AppError {
+	return &AppError{
+		Code:    CodeConflict,
 		Message: msg,
 	}
 }

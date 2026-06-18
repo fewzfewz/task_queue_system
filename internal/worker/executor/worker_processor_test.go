@@ -153,7 +153,7 @@ func setupProcessor(t *testing.T, executeFn func(ctx context.Context, job *jobs.
 		jobType:   "test",
 		executeFn: executeFn,
 	})
-	je := &JobExecutor{registry: reg, logger: slog.Default()}
+	je := &JobExecutor{registry: reg, circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second), logger: slog.Default()}
 
 	wp := NewWorkerProcessor("test-worker", svc, je, nil, slog.Default(), 0)
 	return wp, store, q
@@ -164,7 +164,7 @@ func TestProcessOnce_Success(t *testing.T) {
 		return "success", nil
 	})
 
-	job := jobs.NewJob("test", map[string]interface{}{"key": "val"}, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", map[string]interface{}{"key": "val"}, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
 	err := wp.ProcessOnce(context.Background())
@@ -196,7 +196,7 @@ func TestProcessOnce_RetryThenSuccess(t *testing.T) {
 		return store.Save(ctx, job)
 	}
 
-	job := jobs.NewJob("test", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
 	// First attempt should fail and retry
@@ -222,7 +222,7 @@ func TestProcessOnce_PermanentFail(t *testing.T) {
 		return nil, errors.New("fatal error")
 	})
 
-	job := jobs.NewJob("test", nil, jobs.PriorityMedium, 0, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 0, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
 	err := wp.ProcessOnce(context.Background())
@@ -244,7 +244,7 @@ func TestProcessOnce_AlreadyProcessed(t *testing.T) {
 	})
 
 	// Save a job with completed status
-	job := jobs.NewJob("test", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusCompleted
 	store.Save(context.Background(), job)
 
@@ -302,7 +302,7 @@ func TestWorkerProcessor_Run_StopsOnContextCancel(t *testing.T) {
 		return "done", nil
 	})
 
-	job := jobs.NewJob("test", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)

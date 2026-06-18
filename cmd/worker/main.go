@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -131,6 +132,19 @@ func main() {
 	mux.HandleFunc("/readyz", checker.Ready)
 	mux.HandleFunc("/healthz/shutdown", shutdownCoordinator.Handler)
 	mux.Handle("/metrics", promhttp.Handler())
+
+	mux.HandleFunc("GET /circuit-breaker", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		status := jobExec.CircuitBreakerStatus()
+		b, _ := json.Marshal(status)
+		w.Write(b)
+	})
+	mux.HandleFunc("POST /circuit-breaker/reset/{type}", func(w http.ResponseWriter, r *http.Request) {
+		jobType := r.PathValue("type")
+		jobExec.ResetCircuitBreaker(jobType)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","type":%q}`, jobType)
+	})
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.WorkerPort),

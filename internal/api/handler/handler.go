@@ -4,9 +4,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -15,19 +18,34 @@ import (
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/service"
-	"strconv"
-	"time"
+	"task-queue-system/internal/sse"
+	"task-queue-system/internal/storage/models"
+	"task-queue-system/internal/webhooks"
 )
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
 type JobHandler struct {
-	service *service.JobService
-	logger  *slog.Logger
+	service      *service.JobService
+	webhookStore *webhooks.WebhookStore
+	sseBroker    *sse.Broker
+	logger       *slog.Logger
 }
 
 // New creates a JobHandler.
 func New(svc *service.JobService, logger *slog.Logger) *JobHandler {
-	return &JobHandler{service: svc, logger: logger}
+	return &JobHandler{
+		service:   svc,
+		sseBroker: sse.NewBroker(logger.With("component", "sse")),
+		logger:    logger,
+	}
+}
+
+// SSEBroker returns the SSE broker for wiring into other components.
+func (h *JobHandler) SSEBroker() *sse.Broker { return h.sseBroker }
+
+// SetWebhookStore attaches the persistent webhook store for CRUD endpoints.
+func (h *JobHandler) SetWebhookStore(ws *webhooks.WebhookStore) {
+	h.webhookStore = ws
 }
 
 // CreateJob handles POST /jobs.
@@ -70,7 +88,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Priority, req.MaxRetries, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID, webhookConfig)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Labels, req.Priority, req.MaxRetries, req.BackoffAlgorithm, req.BackoffJitter, req.CronExpr, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID, webhookConfig, req.DedupKey, req.Dependencies, req.ShardKey)
 	if err != nil {
 		h.writeAppError(w, err)
 		return
@@ -82,6 +100,139 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		"correlation_id", job.CorrelationID,
 	)
 	h.writeJSON(w, http.StatusCreated, dto.FromJob(job))
+}
+
+// CreateJobBatch handles POST /jobs/batch.
+//
+// @Summary      Create multiple jobs
+// @Description  Submits up to 100 jobs in a single request.
+// @Tags         jobs
+// @Accept       json
+// @Produce      json
+// @Param        request  body      dto.BatchJobRequest  true  "Batch Job Creation Request"
+// @Success      200      {object}  dto.BatchJobResponse
+// @Failure      400      {object}  dto.ErrorResponse
+// @Failure      500      {object}  dto.ErrorResponse
+// @Router       /jobs/batch [post]
+func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
+	var req dto.BatchJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+
+	if err := req.Validate(); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, err.Error())
+		return
+	}
+
+	res := dto.BatchJobResponse{
+		Total:     len(req.Jobs),
+		Processed: len(req.Jobs),
+	}
+
+	for i, jr := range req.Jobs {
+		var webhookConfig *jobs.WebhookConfig
+		if jr.Webhook != nil {
+			webhookConfig = &jobs.WebhookConfig{
+				URL:    jr.Webhook.URL,
+				Secret: jr.Webhook.Secret,
+				Events: jr.Webhook.Events,
+			}
+			if len(webhookConfig.Events) == 0 {
+				webhookConfig.Events = []string{"completed", "failed"}
+			}
+		}
+
+		job, err := h.service.CreateJob(r.Context(), jr.Type, jr.Payload, jr.Labels, jr.Priority, jr.MaxRetries, jr.BackoffAlgorithm, jr.BackoffJitter, jr.CronExpr, jr.RunAt, jr.CorrelationID, jr.Timeout, jr.Version, jr.TenantID, webhookConfig, jr.DedupKey, jr.Dependencies, jr.ShardKey)
+		if err != nil {
+			res.Processed--
+			res.Failed = append(res.Failed, dto.BatchJobError{Index: i, Error: err.Error()})
+			continue
+		}
+
+		res.Successful = append(res.Successful, dto.BatchJobResult{Index: i, Job: ptr(dto.FromJob(job))})
+	}
+
+	h.writeJSON(w, http.StatusOK, res)
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// ListJobs handles GET /jobs with optional query filters.
+//
+// @Summary      List/search jobs
+// @Description  Returns a paginated, filtered list of jobs. Supports filtering by status, type,
+//               tenant, label key/value, and creation time range.
+// @Tags         jobs
+// @Produce      json
+// @Param        status        query  string  false  "Filter by status (pending, processing, completed, failed)"
+// @Param        type          query  string  false  "Filter by job type"
+// @Param        label_key     query  string  false  "Filter by label key"
+// @Param        label_value   query  string  false  "Filter by label value (requires label_key)"
+// @Param        created_after query  string  false  "ISO8601 timestamp"
+// @Param        created_before query string  false  "ISO8601 timestamp"
+// @Param        limit         query  int     false  "Page size (default 20)"
+// @Param        offset        query  int     false  "Page offset (default 0)"
+// @Success      200           {array} dto.JobResponse
+// @Failure      400           {object} dto.ErrorResponse
+// @Router       /jobs [get]
+func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
+	filter := models.JobFilter{
+		TenantID: r.URL.Query().Get("tenant_id"),
+		Status:   r.URL.Query().Get("status"),
+		Type:     r.URL.Query().Get("type"),
+		LabelKey: r.URL.Query().Get("label_key"),
+		LabelValue: r.URL.Query().Get("label_value"),
+	}
+
+	if after := r.URL.Query().Get("created_after"); after != "" {
+		if t, err := time.Parse(time.RFC3339, after); err == nil {
+			filter.CreatedAfter = t
+		}
+	}
+	if before := r.URL.Query().Get("created_before"); before != "" {
+		if t, err := time.Parse(time.RFC3339, before); err == nil {
+			filter.CreatedBefore = t
+		}
+	}
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page <= 0 { page = 1 }
+
+	filter.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if filter.Limit <= 0 {
+		filter.Limit = 20
+	}
+	filter.Offset = (page - 1) * filter.Limit
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+
+	jobs, err := h.service.SearchJobs(r.Context(), filter)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	res := make([]dto.JobResponse, len(jobs))
+	for i, j := range jobs {
+		res[i] = dto.FromJob(j)
+	}
+
+	// Count total matching for pagination metadata
+	totalFilter := filter
+	totalFilter.Limit = 0
+	totalFilter.Offset = 0
+	totalJobs, _ := h.service.SearchJobs(r.Context(), totalFilter)
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"jobs":  res,
+		"total": len(totalJobs),
+		"page":  page,
+		"limit": filter.Limit,
+	})
 }
 
 // GetJobStatus handles GET /jobs/{id}.
@@ -130,6 +281,83 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, dto.FromJob(job))
 }
 
+// GetStats handles GET /api/v1/stats.
+func (h *JobHandler) GetStats(w http.ResponseWriter, r *http.Request) {
+	queueLengths, err := h.service.QueueLengths(r.Context())
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	workers, _ := h.service.GetActiveWorkers(r.Context())
+
+	// Aggregate counts
+	totalPending := int64(0)
+	byQueue := make(map[string]int64)
+	for qtype, tenants := range queueLengths {
+		for _, count := range tenants {
+			totalPending += count
+		}
+		byQueue[qtype] = totalPending
+	}
+
+	// Count by status via search
+	completedJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Status: string(jobs.StatusCompleted), Limit: 1})
+	failedJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Status: string(jobs.StatusFailed), Limit: 1})
+
+	stats := map[string]interface{}{
+		"total_pending":    totalPending,
+		"queue_breakdown":  queueLengths,
+		"worker_count":     len(workers),
+		"workers":          workers,
+		"approx_completed": len(completedJobs), // hacky but gives a sense
+		"approx_failed":    len(failedJobs),
+	}
+	h.writeJSON(w, http.StatusOK, stats)
+}
+
+// GetJobDeps returns the DAG dependency chain for a job.
+func (h *JobHandler) GetJobDeps(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+
+	job, err := h.service.GetJobStatus(r.Context(), jobID)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	deps := make([]dto.JobResponse, 0)
+	if len(job.Dependencies) > 0 {
+		depJobs, err := h.service.GetJobByIDs(r.Context(), job.Dependencies)
+		if err == nil {
+			for _, d := range depJobs {
+				deps = append(deps, dto.FromJob(d))
+			}
+		}
+	}
+
+	// Also find dependents (jobs that list this job as a dependency)
+	dependents := make([]dto.JobResponse, 0)
+	allJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Limit: 500})
+	for _, j := range allJobs {
+		for _, depID := range j.Dependencies {
+			if depID == jobID {
+				dependents = append(dependents, dto.FromJob(j))
+				break
+			}
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"job":         dto.FromJob(job),
+		"depends_on":  deps,
+		"dependents":  dependents,
+	})
+}
+
 // GetMetrics handles GET /metrics.
 //
 // @Summary      Get queue metrics
@@ -163,6 +391,187 @@ func (h *JobHandler) GetWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, workers)
+}
+
+// ── Webhook CRUD ──────────────────────────────────────────────────────────────
+
+// RegisterWebhook handles POST /api/v1/webhooks.
+func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL    string   `json:"url"`
+		Secret string   `json:"secret"`
+		Events []string `json:"events"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+	if req.URL == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "url is required")
+		return
+	}
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	wh, err := h.webhookStore.Create(r.Context(), tenantID, req.URL, req.Secret, req.Events)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusCreated, wh)
+}
+
+// ListWebhooks handles GET /api/v1/webhooks.
+func (h *JobHandler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
+	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	list, err := h.webhookStore.List(r.Context(), tenantID)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, list)
+}
+
+// GetWebhook handles GET /api/v1/webhooks/{id}.
+func (h *JobHandler) GetWebhook(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	wh, err := h.webhookStore.GetByID(r.Context(), id)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, apperr.CodeNotFound, "webhook not found")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, wh)
+}
+
+// UpdateWebhook handles PUT /api/v1/webhooks/{id}.
+func (h *JobHandler) UpdateWebhook(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		URL    string   `json:"url"`
+		Secret string   `json:"secret"`
+		Events []string `json:"events"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+	wh, err := h.webhookStore.Update(r.Context(), id, req.URL, req.Secret, req.Events)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, apperr.CodeNotFound, "webhook not found")
+		return
+	}
+	h.writeJSON(w, http.StatusOK, wh)
+}
+
+// DeleteWebhook handles DELETE /api/v1/webhooks/{id}.
+func (h *JobHandler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.webhookStore.Delete(r.Context(), id); err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PauseJob handles POST /jobs/{id}/pause.
+func (h *JobHandler) PauseJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+	if err := h.service.PauseJob(r.Context(), jobID); err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "paused", "job_id": jobID})
+}
+
+// ResumeJob handles POST /jobs/{id}/resume.
+func (h *JobHandler) ResumeJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+	if err := h.service.ResumeJob(r.Context(), jobID); err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "resumed", "job_id": jobID})
+}
+
+// JobEventsSSE handles GET /events — SSE stream of job status changes.
+func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	ch := h.sseBroker.Subscribe()
+	defer h.sseBroker.Unsubscribe(ch)
+
+	// Send initial keepalive.
+	fmt.Fprintf(w, ": keepalive\n\n")
+	flusher.Flush()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			fmt.Fprint(w, msg)
+			flusher.Flush()
+		}
+	}
+}
+
+// CancelJob handles POST /jobs/{id}/cancel.
+func (h *JobHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+	if err := h.service.CancelJob(r.Context(), jobID); err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "job_id": jobID})
+}
+
+// UpdateJobProgress handles PATCH /jobs/{id}/progress.
+func (h *JobHandler) UpdateJobProgress(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
+	if jobID == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+
+	var req struct {
+		Progress float64 `json:"progress"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+
+	if err := h.service.UpdateJobProgress(r.Context(), jobID, req.Progress); err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{"job_id": jobID, "progress": req.Progress})
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -204,6 +613,8 @@ func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
 		status = http.StatusTooManyRequests
 	case apperr.CodePermissionDenied:
 		status = http.StatusForbidden
+	case apperr.CodeConflict:
+		status = http.StatusConflict
 	case apperr.CodeInternal:
 		status = http.StatusInternalServerError
 	}

@@ -274,7 +274,7 @@ func TestGetJobStatus_NotFound(t *testing.T) {
 func TestGetJobStatus_TenantFilter(t *testing.T) {
 	h, store := newTestHandler()
 
-	job := jobs.NewJob("email", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
 	req := httptest.NewRequest("GET", "/jobs/"+job.ID+"?tenant_id=tenant-b", nil)
@@ -290,7 +290,7 @@ func TestGetJobStatus_TenantFilter(t *testing.T) {
 func TestListFailedJobs(t *testing.T) {
 	h, store := newTestHandler()
 
-	job := jobs.NewJob("email", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusFailed
 	store.Save(context.Background(), job)
 
@@ -312,7 +312,7 @@ func TestListFailedJobs(t *testing.T) {
 func TestBulkPurgeDLQ_Success(t *testing.T) {
 	h, store := newTestHandler()
 
-	job := jobs.NewJob("email", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusFailed
 	store.Save(context.Background(), job)
 

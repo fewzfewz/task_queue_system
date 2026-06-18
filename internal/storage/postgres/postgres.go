@@ -79,6 +79,7 @@ func (s *PostgresStore) Close() {
 
 func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 	payload, _ := json.Marshal(job.Payload)
+	depsJSON, _ := json.Marshal(job.Dependencies)
 	var url, secret *string
 	var events []string
 	var lastStatus, attempts int
@@ -92,11 +93,12 @@ func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 
 	query := `
 		INSERT INTO jobs (
-			id, tenant_id, type, payload, status, priority, 
-			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, updated_at,
-			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+			id, tenant_id, type, payload, status, priority,
+			attempts, max_attempts, correlation_id, timeout_seconds,
+			version, scheduled_at, updated_at, progress,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			dedup_key, dependencies, shard_key
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			attempts = EXCLUDED.attempts,
@@ -105,11 +107,15 @@ func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 			result = EXCLUDED.result,
 			error = EXCLUDED.error
 	`
+	dedup := nullIfEmpty(job.DedupKey)
+	shard := nullIfEmpty(job.ShardKey)
 	_, err := s.pool.Exec(ctx, query,
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 		job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout,
 		job.Version, job.RunAt, time.Now().UTC(),
+		job.Progress,
 		url, secret, events, lastStatus, attempts,
+		dedup, string(depsJSON), shard,
 	)
 	return err
 }
@@ -126,22 +132,24 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 	var webhookEvents []string
 	var webhookLastStatus, webhookAttempts *int
 	var errHistoryJSON []byte
+	var dedupKey, shardKey *string
+	var depsJSON []byte
 
 	query := `
 		SELECT 
-			id, tenant_id, type, payload, status, priority, 
-			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, created_at, updated_at, processed_by, result, error,
+			id, tenant_id, type, payload, status, priority,
+			attempts, max_attempts, correlation_id, timeout_seconds,
+			version, scheduled_at, created_at, updated_at, processed_by, result, error, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			error_history
+			error_history, dedup_key, dependencies, shard_key
 		FROM jobs WHERE id = $1
 	`
 	err := s.pool.QueryRow(ctx, query, id).Scan(
 		&j.ID, &j.TenantID, &j.Type, &payload, &status, &priority,
 		&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
-		&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy, &res, &errStr,
+		&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy, &res, &errStr, &j.Progress,
 		&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
-		&errHistoryJSON,
+		&errHistoryJSON, &dedupKey, &depsJSON, &shardKey,
 	)
 
 	if err != nil {
@@ -176,6 +184,16 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 		}
 	}
 
+	if dedupKey != nil {
+		j.DedupKey = *dedupKey
+	}
+	if len(depsJSON) > 0 {
+		_ = json.Unmarshal(depsJSON, &j.Dependencies)
+	}
+	if shardKey != nil {
+		j.ShardKey = *shardKey
+	}
+
 	if errHistoryJSON != nil {
 		_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
 	}
@@ -186,6 +204,20 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 func (s *PostgresStore) UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error {
 	query := `UPDATE jobs SET status = $1, processed_by = $2, updated_at = $3 WHERE id = $4`
 	ct, err := s.pool.Exec(ctx, query, string(status), workerID, time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %s", models.ErrJobNotFound, id)
+	}
+	return nil
+}
+
+func (s *PostgresStore) UpdateProgress(ctx context.Context, id string, progress float64) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE jobs SET progress = $1, updated_at = $2 WHERE id = $3`,
+		progress, time.Now().UTC(), id,
+	)
 	if err != nil {
 		return err
 	}
@@ -282,9 +314,9 @@ func (s *PostgresStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 		INSERT INTO jobs (
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, updated_at,
+			version, scheduled_at, updated_at, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			attempts = EXCLUDED.attempts,
@@ -297,12 +329,13 @@ func (s *PostgresStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 		job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout,
 		job.Version, job.RunAt, time.Now().UTC(),
+		job.Progress,
 		url, secret, events, lastStatus, attempts,
 	)
 	return err
 }
 
-func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
+func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -310,14 +343,27 @@ func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job
 	defer tx.Rollback(ctx)
 
 	query := `
-		SELECT id FROM jobs 
-		WHERE status = 'pending' AND scheduled_at <= $1 AND ($2 = '' OR tenant_id = $2)
-		ORDER BY priority = 'high' DESC, priority = 'medium' DESC, scheduled_at ASC
+		SELECT id FROM jobs j
+		WHERE j.status = 'pending'
+		  AND j.scheduled_at <= $1
+		  AND ($2 = '' OR j.tenant_id = $2)
+		  AND ($3 = '' OR j.shard_key = $3)
+		  AND (
+		    j.dependencies IS NULL
+		    OR j.dependencies = '[]'::jsonb
+		    OR NOT EXISTS (
+		      SELECT 1
+		      FROM jsonb_array_elements_text(j.dependencies) AS dep_id
+		      LEFT JOIN jobs d ON d.id = dep_id AND d.status = 'completed'
+		      WHERE d.id IS NULL
+		    )
+		  )
+		ORDER BY j.priority = 'high' DESC, j.priority = 'medium' DESC, j.scheduled_at ASC
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
 	`
 	var id string
-	err = tx.QueryRow(ctx, query, time.Now().UTC(), tenantID).Scan(&id)
+	err = tx.QueryRow(ctx, query, time.Now().UTC(), tenantID, shardKey).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil 
@@ -362,7 +408,10 @@ func (s *PostgresStore) ListJobs(ctx context.Context, tenantID string, status st
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
 			version, scheduled_at, created_at, updated_at, processed_by,
-			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts
+			progress,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			error_history,
+			dedup_key, dependencies, shard_key
 		FROM jobs 
 		WHERE ($1 = '' OR tenant_id = $1)
 		  AND ($2 = '' OR status = $2)
@@ -377,6 +426,10 @@ func (s *PostgresStore) ListJobs(ctx context.Context, tenantID string, status st
 	defer rows.Close()
 
 	return s.scanJobs(rows)
+}
+
+func (s *PostgresStore) SearchJobs(ctx context.Context, filter models.JobFilter) ([]*jobs.Job, error) {
+	return s.ListJobs(ctx, filter.TenantID, filter.Status, filter.Type, filter.Limit, filter.Offset)
 }
 
 func (s *PostgresStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
@@ -411,6 +464,35 @@ func (s *PostgresStore) DeleteJobsBefore(ctx context.Context, tenantID, status, 
 		return 0, err
 	}
 	return ct.RowsAffected(), nil
+}
+
+func (s *PostgresStore) IsDedupKeyTaken(ctx context.Context, dedupKey, tenantID string) (bool, error) {
+	if dedupKey == "" {
+		return false, nil
+	}
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM jobs WHERE dedup_key = $1 AND tenant_id = $2)`,
+		dedupKey, tenantID,
+	).Scan(&exists)
+	return exists, err
+}
+
+func (s *PostgresStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, tenant_id, type, payload, status, priority,
+		        retries, max_retries, correlation_id, timeout_seconds,
+		        version, scheduled_at, created_at, updated_at, processed_by,
+		        progress,
+		        webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+		        error_history,
+		        dedup_key, dependencies, shard_key
+		 FROM jobs WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return s.scanJobs(rows)
 }
 
 func (s *PostgresStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
@@ -454,13 +536,17 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		var webhookEvents []string
 		var webhookLastStatus, webhookAttempts *int
 		var errHistoryJSON []byte
+		var dedupKey, shardKey *string
+		var depsJSON []byte
 
 		err := rows.Scan(
 			&j.ID, &j.TenantID, &j.Type, &payload, &stat, &priority,
 			&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 			&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy,
+			&j.Progress,
 			&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
 			&errHistoryJSON,
+			&dedupKey, &depsJSON, &shardKey,
 		)
 		if err != nil {
 			return nil, err
@@ -483,10 +569,27 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 				Attempts:   *webhookAttempts,
 			}
 		}
+		if dedupKey != nil {
+			j.DedupKey = *dedupKey
+		}
+		if len(depsJSON) > 0 {
+			_ = json.Unmarshal(depsJSON, &j.Dependencies)
+		}
+		if shardKey != nil {
+			j.ShardKey = *shardKey
+		}
 		if errHistoryJSON != nil {
 			_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
 		}
 		results = append(results, &j)
 	}
 	return results, nil
+}
+
+// nullIfEmpty returns nil if s is empty, otherwise a pointer to s.
+func nullIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

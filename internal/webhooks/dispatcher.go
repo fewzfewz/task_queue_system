@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"time"
 
@@ -17,9 +19,32 @@ import (
 )
 
 const (
-	StreamKey = "task_queue:webhooks:stream"
-	Group     = "dispatcher-group"
+	StreamKey        = "task_queue:webhooks:stream"
+	Group            = "dispatcher-group"
+	DefaultMaxRetries = 5
+	DefaultBaseDelay  = 1 * time.Second
+	DefaultMaxDelay   = 5 * time.Minute
 )
+
+// DispatcherConfig configures webhook delivery retry behaviour.
+type DispatcherConfig struct {
+	MaxRetries int
+	BaseDelay  time.Duration
+	MaxDelay   time.Duration
+}
+
+func (c DispatcherConfig) defaults() DispatcherConfig {
+	if c.MaxRetries <= 0 {
+		c.MaxRetries = DefaultMaxRetries
+	}
+	if c.BaseDelay <= 0 {
+		c.BaseDelay = DefaultBaseDelay
+	}
+	if c.MaxDelay <= 0 {
+		c.MaxDelay = DefaultMaxDelay
+	}
+	return c
+}
 
 type Event struct {
 	JobID     string      `json:"job_id"`
@@ -36,15 +61,21 @@ type Dispatcher struct {
 	redis  *redis.Client
 	logger *slog.Logger
 	client *http.Client
+	config DispatcherConfig
 }
 
-func NewDispatcher(rdb *redis.Client, logger *slog.Logger) *Dispatcher {
+func NewDispatcher(rdb *redis.Client, logger *slog.Logger, cfg ...DispatcherConfig) *Dispatcher {
+	c := DispatcherConfig{}.defaults()
+	if len(cfg) > 0 {
+		c = cfg[0].defaults()
+	}
 	return &Dispatcher{
 		redis:  rdb,
 		logger: logger,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		config: c,
 	}
 }
 
@@ -87,28 +118,79 @@ func (d *Dispatcher) Start(ctx context.Context) {
 }
 
 func (d *Dispatcher) dispatch(ctx context.Context, ev Event, msgID string) {
-	backoffs := []time.Duration{0, 5 * time.Second, 30 * time.Second, 5 * time.Minute}
-	
-	for attempt := 0; attempt < len(backoffs); attempt++ {
+	for attempt := 0; attempt < d.config.MaxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(backoffs[attempt])
+			delay := d.backoff(attempt)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
 		}
 
 		err := d.send(ctx, ev)
 		if err == nil {
 			d.redis.XAck(ctx, StreamKey, Group, msgID)
+			metrics.WebhookDeliveryTotal.WithLabelValues(ev.TenantID, "delivered").Inc()
 			return
 		}
 
-		d.logger.Warn("webhook delivery failed", 
-			"job_id", ev.JobID, 
-			"attempt", attempt+1, 
+		// Don't retry client errors (4xx).
+		if isClientError(err) {
+			d.logger.Warn("webhook rejected with client error, not retrying",
+				"job_id", ev.JobID, "error", err)
+			d.redis.XAck(ctx, StreamKey, Group, msgID)
+			metrics.WebhookDeliveryFailuresTotal.WithLabelValues(ev.TenantID, "client_error").Inc()
+			return
+		}
+
+		d.logger.Warn("webhook delivery failed",
+			"job_id", ev.JobID,
+			"attempt", attempt+1,
+			"max_retries", d.config.MaxRetries,
 			"error", err)
+		metrics.WebhookDeliveryFailuresTotal.WithLabelValues(ev.TenantID, "retry").Inc()
 	}
 
 	d.logger.Error("webhook marked as dead after all attempts", "job_id", ev.JobID)
 	metrics.WebhookDeliveryFailuresTotal.WithLabelValues(ev.TenantID, "exhausted_retries").Inc()
-	d.redis.XAck(ctx, StreamKey, Group, msgID) // Dead letter
+	d.redis.XAck(ctx, StreamKey, Group, msgID)
+}
+
+// backoff computes an exponential backoff with jitter for the given attempt.
+func (d *Dispatcher) backoff(attempt int) time.Duration {
+	delay := d.config.BaseDelay * (1 << min(attempt, d.config.MaxRetries))
+	if delay > d.config.MaxDelay {
+		delay = d.config.MaxDelay
+	}
+	// Add ±25% jitter.
+	jitter := time.Duration(rand.Int63n(int64(delay / 2))) - time.Duration(int64(delay)/4)
+	return delay + jitter
+}
+
+type webhookHTTPError struct {
+	status int
+}
+
+func (e *webhookHTTPError) Error() string {
+	return fmt.Sprintf("server returned status: %d", e.status)
+}
+
+func (e *webhookHTTPError) StatusCode() int { return e.status }
+
+func isClientError(err error) bool {
+	var se interface{ StatusCode() int }
+	if errors.As(err, &se) {
+		return se.StatusCode() >= 400 && se.StatusCode() < 500
+	}
+	return false
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (d *Dispatcher) send(ctx context.Context, ev Event) error {
@@ -132,7 +214,7 @@ func (d *Dispatcher) send(ctx context.Context, ev Event) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("server returned status: %d", resp.StatusCode)
+		return &webhookHTTPError{status: resp.StatusCode}
 	}
 
 	return nil

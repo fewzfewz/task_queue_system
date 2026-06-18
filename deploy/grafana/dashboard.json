@@ -1,48 +1,207 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": { "list": [] },
   "editable": true,
   "panels": [
     {
-      "type": "timeseries",
+      "type": "row",
+      "title": "Overview",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
       "title": "Queue Depth",
-      "targets": [
-        { "expr": "sum(task_queue_length)", "refId": "A" }
-      ],
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+      "targets": [{ "expr": "sum(task_queue_length)", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 500 },
+              { "color": "red", "value": 1000 }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 }
     },
     {
-      "type": "timeseries",
+      "type": "stat",
+      "title": "Busy Workers",
+      "targets": [{ "expr": "task_queue_worker_busy", "refId": "A" }],
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 }
+    },
+    {
+      "type": "stat",
       "title": "Worker Busy Ratio",
-      "targets": [
-        { "expr": "task_queue_worker_busy_ratio", "refId": "A" }
-      ],
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+      "targets": [{ "expr": "task_queue_worker_busy_ratio", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.1 },
+              { "color": "green", "value": 0.3 }
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 }
+    },
+    {
+      "type": "stat",
+      "title": "SLA Compliance",
+      "targets": [{ "expr": "sum(rate(task_queue_job_sla_compliance_total{compliant=\"true\"}[5m])) / sum(rate(task_queue_job_sla_compliance_total[5m])) * 100", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 95 },
+              { "color": "green", "value": 99 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 }
+    },
+    {
+      "type": "stat",
+      "title": "Graceful Shutdowns",
+      "targets": [{ "expr": "worker_graceful_shutdown_total", "refId": "A" }],
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 }
+    },
+    {
+      "type": "stat",
+      "title": "Webhook Failures (5m)",
+      "targets": [{ "expr": "sum(rate(task_queue_webhook_delivery_failures_total[5m]))", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 }
+    },
+    {
+      "type": "row",
+      "title": "Throughput & Latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
     },
     {
       "type": "timeseries",
-      "title": "Jobs Processed",
+      "title": "Queue Depth by Queue & Tenant",
+      "targets": [
+        { "expr": "sum(task_queue_length) by (queue, tenant_id)", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Jobs Processed (rate, 5m) by Status",
       "targets": [
         { "expr": "sum(rate(task_queue_jobs_total[5m])) by (status)", "refId": "A" }
       ],
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 }
     },
     {
       "type": "timeseries",
-      "title": "Webhook Failures",
+      "title": "Job Latency P50 / P95 / P99",
       "targets": [
-        { "expr": "sum(rate(task_queue_webhook_delivery_failures_total[5m])) by (reason)", "refId": "A" }
+        { "expr": "histogram_quantile(0.50, sum(rate(task_queue_job_latency_seconds_bucket[5m])) by (le, job_type, tenant_id))", "refId": "A", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(task_queue_job_latency_seconds_bucket[5m])) by (le, job_type, tenant_id))", "refId": "B", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(task_queue_job_latency_seconds_bucket[5m])) by (le, job_type, tenant_id))", "refId": "C", "legendFormat": "p99" }
       ],
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Worker Utilization (busy count)",
+      "targets": [
+        { "expr": "task_queue_worker_busy", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 }
+    },
+    {
+      "type": "row",
+      "title": "Reliability",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 }
+    },
+    {
+      "type": "timeseries",
+      "title": "SLA Compliance Rate (%)",
+      "targets": [
+        { "expr": "sum(rate(task_queue_job_sla_compliance_total{compliant=\"true\"}[5m])) / sum(rate(task_queue_job_sla_compliance_total[5m])) * 100", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 95 },
+              { "color": "green", "value": 99 }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Webhook Deliveries (success vs failure)",
+      "targets": [
+        { "expr": "sum(rate(task_queue_webhook_delivery_total[5m])) by (result)", "refId": "A" },
+        { "expr": "sum(rate(task_queue_webhook_delivery_failures_total[5m])) by (reason)", "refId": "B" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Failed Jobs (rate) by Type & Tenant",
+      "targets": [
+        { "expr": "sum(rate(task_queue_jobs_total{status=\"failed\"}[5m])) by (job_type, tenant_id)", "refId": "A" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 }
     }
   ],
   "schemaVersion": 37,
   "style": "dark",
-  "tags": ["task-queue"],
-  "templating": { "list": [] },
+  "tags": ["task-queue", "production"],
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "tenant_id",
+        "query": "label_values(task_queue_jobs_total, tenant_id)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "type": "query",
+        "name": "job_type",
+        "query": "label_values(task_queue_jobs_total, job_type)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
   "time": { "from": "now-6h", "to": "now" },
   "title": "Task Queue System",
   "uid": "task-queue-system",
-  "version": 1
+  "version": 2
 }

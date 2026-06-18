@@ -59,7 +59,7 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
 
 	// 1. Submit Job
-	job, err := svc.CreateJob(ctx, "test-success", nil, "medium", 3, "", "", 0, 0, "", nil)
+	job, err := svc.CreateJob(ctx, "test-success", nil, nil, "medium", 3, "", "", "", "", "", 0, 0, "", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
 
 	// Submit Job with 1 retry
-	job, err := svc.CreateJob(ctx, "test-fail", nil, "medium", 1, "", "", 0, 0, "", nil)
+	job, err := svc.CreateJob(ctx, "test-fail", nil, nil, "medium", 1, "", "", "", "", "", 0, 0, "", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 
 	// Submit Job scheduled 1 second in the future
 	runAt := time.Now().Add(1 * time.Second).Format(time.RFC3339)
-	job, err := svc.CreateJob(ctx, "test-scheduled", nil, "medium", 3, runAt, "", 0, 0, "", nil)
+	job, err := svc.CreateJob(ctx, "test-scheduled", nil, nil, "medium", 3, "", "", "", runAt, "", 0, 0, "", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("failed to create scheduled job: %v", err)
 	}

@@ -99,7 +99,7 @@ func TestEnqueue_Immediate(t *testing.T) {
 	mr, q, rdb, ctx := newTestQueue(t)
 	defer mr.Close()
 
-	job := jobs.NewJob("test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	err := q.Enqueue(ctx, job)
 	if err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
@@ -130,7 +130,7 @@ func TestEnqueue_Scheduled(t *testing.T) {
 	mr, q, rdb, ctx := newTestQueue(t)
 	defer mr.Close()
 
-	job := jobs.NewJob("test", nil, jobs.PriorityMedium, 3, time.Now().Add(time.Hour), "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, time.Now().Add(time.Hour), "", 60, 1, "tenant-a")
 	err := q.Enqueue(ctx, job)
 	if err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
@@ -455,8 +455,8 @@ func TestEnqueue_MultiplePriorities(t *testing.T) {
 	mr, q, rdb, ctx := newTestQueue(t)
 	defer mr.Close()
 
-	high := jobs.NewJob("test", nil, jobs.PriorityHigh, 3, time.Time{}, "", 60, 1, "tenant-a")
-	low := jobs.NewJob("test", nil, jobs.PriorityLow, 3, time.Time{}, "", 60, 1, "tenant-a")
+	high := jobs.NewJob("test", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 60, 1, "tenant-a")
+	low := jobs.NewJob("test", nil, nil, jobs.PriorityLow, 3, time.Time{}, "", 60, 1, "tenant-a")
 
 	q.Enqueue(ctx, high)
 	q.Enqueue(ctx, low)

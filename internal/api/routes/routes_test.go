@@ -18,7 +18,7 @@ func TestNewRouter_RegistersRoutes(t *testing.T) {
 	cfg := config.Load()
 	secretsProv := secrets.NewEnvSecretsProvider()
 
-	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv)
+	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv, nil)
 	if handler == nil {
 		t.Fatal("expected non-nil handler")
 	}
@@ -55,7 +55,7 @@ func TestNewRouter_DLQEndpointsRequireAuth(t *testing.T) {
 	cfg := config.Load()
 	secretsProv := secrets.NewEnvSecretsProvider()
 
-	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv)
+	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv, nil)
 
 	dlqTests := []struct {
 		method string
@@ -87,7 +87,7 @@ func TestNewRouter_SwaggerUI(t *testing.T) {
 	cfg := config.Load()
 	secretsProv := secrets.NewEnvSecretsProvider()
 
-	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv)
+	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv, nil)
 
 	req := httptest.NewRequest("GET", "/swagger/", nil)
 	rec := httptest.NewRecorder()

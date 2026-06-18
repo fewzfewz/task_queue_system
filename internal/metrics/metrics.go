@@ -50,6 +50,18 @@ var (
 		Help: "Total number of jobs segmented by SLA compliance status (true/false).",
 	}, []string{"job_type", "tenant_id", "compliant"})
 
+	// CircuitBreakerOpen tracks open circuit breakers per plugin type.
+	CircuitBreakerOpen = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "task_queue_circuit_breaker_open",
+		Help: "Indicates whether the circuit breaker is open (1) or closed (0) per plugin type.",
+	}, []string{"plugin_type"})
+
+	// WebhookDeliveryTotal tracks successful webhook deliveries.
+	WebhookDeliveryTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_queue_webhook_delivery_total",
+		Help: "Total number of webhook delivery attempts (success + failure).",
+	}, []string{"tenant_id", "result"})
+
 	// WebhookDeliveryFailuresTotal tracks failed webhook delivery attempts.
 	WebhookDeliveryFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "task_queue_webhook_delivery_failures_total",

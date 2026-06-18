@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"math/rand"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,8 @@ const (
 	StatusCompleted JobStatus = "completed"
 	// StatusFailed indicates the job has failed after all retries.
 	StatusFailed JobStatus = "failed"
+	// StatusCancelled indicates the job was cancelled before completion.
+	StatusCancelled JobStatus = "cancelled"
 )
 
 // JobPriority defines the execution urgency for a job.
@@ -47,15 +50,35 @@ type AttemptError struct {
 
 
 
+type BackoffAlgorithm string
+
+const (
+	BackoffExponential BackoffAlgorithm = "exponential"
+	BackoffLinear      BackoffAlgorithm = "linear"
+	BackoffFixed       BackoffAlgorithm = "fixed"
+)
+
+type BackoffJitter string
+
+const (
+	JitterNone  BackoffJitter = "none"
+	JitterFull  BackoffJitter = "full"
+	JitterEqual BackoffJitter = "equal"
+)
+
 // Job represents a task in the distributed task queue system.
 type Job struct {
 	ID         string                 `json:"id"`
 	Type       string                 `json:"type"`
 	Payload    map[string]interface{} `json:"payload"`
+	Labels     map[string]string      `json:"labels,omitempty"`
 	Status     JobStatus              `json:"status"`
 	Priority   JobPriority            `json:"priority"`
 	Retries    int                    `json:"retries"`
 	MaxRetries int                    `json:"max_retries"`
+	BackoffAlgorithm BackoffAlgorithm `json:"backoff_algorithm,omitempty"`
+	BackoffJitter    BackoffJitter    `json:"backoff_jitter,omitempty"`
+	CronExpr      string               `json:"cron_expr,omitempty"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 	RunAt       time.Time              `json:"run_at"`
@@ -64,8 +87,13 @@ type Job struct {
 	Timeout       int                    `json:"timeout,omitempty"` // in seconds
 	Version       int                    `json:"version"`           // schema version
 	TenantID      string                 `json:"tenant_id"`         // for multi-tenancy
+	Paused        bool                   `json:"paused"`
+	Progress      float64                `json:"progress"`
 	Result        interface{}            `json:"result,omitempty"`
 	Webhook       *WebhookConfig         `json:"webhook,omitempty"`
+	DedupKey      string                 `json:"dedup_key,omitempty"`
+	Dependencies  []string               `json:"dependencies,omitempty"`
+	ShardKey      string                 `json:"shard_key,omitempty"`
 	ErrorHistory  []AttemptError         `json:"error_history,omitempty"`
 }
 
@@ -73,7 +101,7 @@ type Job struct {
 
 // NewJob creates a new Job instance with initial values.
 // The job will be initialized with a new UUID, pending status, and zero retries.
-func NewJob(jobType string, payload map[string]interface{}, priority JobPriority, maxRetries int, runAt time.Time, correlationID string, timeout int, version int, tenantID string) *Job {
+func NewJob(jobType string, payload map[string]interface{}, labels map[string]string, priority JobPriority, maxRetries int, runAt time.Time, correlationID string, timeout int, version int, tenantID string) *Job {
 	if priority == "" {
 		priority = PriorityMedium
 	}
@@ -91,14 +119,21 @@ func NewJob(jobType string, payload map[string]interface{}, priority JobPriority
 		runAt = now
 	}
 
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+
 	return &Job{
 		ID:            uuid.New().String(),
 		Type:          jobType,
 		Payload:       payload,
+		Labels:        labels,
 		Status:        StatusPending,
 		Priority:      priority,
 		Retries:       0,
 		MaxRetries:    maxRetries,
+		BackoffAlgorithm: BackoffExponential,
+		BackoffJitter:    JitterNone,
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		RunAt:         runAt,
@@ -107,4 +142,47 @@ func NewJob(jobType string, payload map[string]interface{}, priority JobPriority
 		Version:       version,
 		TenantID:      tenantID,
 	}
+}
+
+// BackoffDelay computes the retry delay for a job based on its algorithm and
+// jitter settings. The base unit is 1 second.
+func BackoffDelay(job *Job) time.Duration {
+	if job == nil {
+		return time.Duration(1<<1) * time.Second
+	}
+	retry := job.Retries
+	if retry <= 0 {
+		retry = 1
+	}
+
+	var delay time.Duration
+	switch job.BackoffAlgorithm {
+	case BackoffLinear:
+		delay = time.Duration(retry) * time.Second
+	case BackoffFixed:
+		delay = 1 * time.Second
+	default: // exponential
+		delay = time.Duration(1<<retry) * time.Second
+	}
+
+	switch job.BackoffJitter {
+	case JitterFull:
+		n := int64(delay)
+		if n <= 0 {
+			n = 1
+		}
+		delay = time.Duration(rand.Int63n(n))
+	case JitterEqual:
+		n := int64(delay)
+		if n <= 0 {
+			n = 1
+		}
+		half := n / 2
+		if half <= 0 {
+			half = 1
+		}
+		delay = time.Duration(half + rand.Int63n(half))
+	}
+
+	return delay
 }

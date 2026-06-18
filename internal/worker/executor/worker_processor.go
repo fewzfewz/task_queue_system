@@ -10,6 +10,7 @@ import (
 	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/worker/limiter"
+	"task-queue-system/internal/worker/plugin"
 )
 
 // defaultSLATarget is the fallback SLA duration when none is configured.
@@ -139,7 +140,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	// 2. Persistent Store Check (Fallback)
 	storedJob, err := wp.service.GetJobStatus(ctx, job.ID)
 	if err == nil && storedJob != nil {
-		if storedJob.Status == jobs.StatusCompleted || storedJob.Status == jobs.StatusFailed {
+		if storedJob.Status == jobs.StatusCompleted || storedJob.Status == jobs.StatusFailed || storedJob.Status == jobs.StatusCancelled {
 			log.Info("skipping duplicate execution; job already finished in database", "final_status", storedJob.Status)
 			_ = wp.service.Ack(ctx, job.ID) // clear from broker
 			return nil
@@ -186,7 +187,10 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	defer cancel()
 
 	start := time.Now()
-	result, execErr := wp.exec.Execute(jobCtx, job)
+	progressCtx := plugin.WithProgressCallback(jobCtx, func(pct float64) {
+		_ = wp.service.UpdateJobProgress(execCtx, job.ID, pct)
+	})
+	result, execErr := wp.exec.Execute(progressCtx, job)
 	elapsed := time.Since(start)
 
 	if execErr == nil {
@@ -196,7 +200,8 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		// Mark as processed in Redis for idempotency
 		_ = wp.service.MarkProcessed(execCtx, job.ID)
 
-		// Persist result and status
+		// Persist result, progress, and status
+		_ = wp.service.UpdateJobProgress(execCtx, job.ID, 100)
 		_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusCompleted, wp.name, result)
 		_ = wp.service.Ack(execCtx, job.ID)
 
@@ -257,9 +262,7 @@ func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs
 	job.Status = jobs.StatusPending
 	job.UpdatedAt = time.Now().UTC()
 
-	// Exponential backoff: 2^retry seconds (e.g. 2s, 4s, 8s...)
-	// Note: We use the *new* Retries value for the delay exponent.
-	delay := time.Duration(1<<job.Retries) * time.Second
+	delay := jobs.BackoffDelay(job)
 
 	log.Warn("scheduling job for retry with backoff",
 		"next_attempt", job.Retries+1,

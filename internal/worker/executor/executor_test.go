@@ -30,9 +30,9 @@ func (m *mockPlugin) Execute(ctx context.Context, job *jobs.Job) (interface{}, e
 func TestJobExecutor_Execute_Success(t *testing.T) {
 	reg := plugin.NewRegistry()
 	reg.Register(&mockPlugin{jobType: "test-plugin"})
-	je := &JobExecutor{registry: reg, logger: slog.Default()}
+	je := &JobExecutor{registry: reg, circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second), logger: slog.Default()}
 
-	job := jobs.NewJob("test-plugin", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("test-plugin", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	result, err := je.Execute(context.Background(), job)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -45,7 +45,7 @@ func TestJobExecutor_Execute_Success(t *testing.T) {
 func TestJobExecutor_Execute_UnknownType(t *testing.T) {
 	je := NewJobExecutor(slog.Default())
 
-	job := jobs.NewJob("nonexistent", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("nonexistent", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	_, err := je.Execute(context.Background(), job)
 	if err == nil {
 		t.Fatal("expected error for unknown job type")
@@ -69,9 +69,9 @@ func TestJobExecutor_Execute_PluginError(t *testing.T) {
 			return nil, errors.New("plugin error")
 		},
 	})
-	je := &JobExecutor{registry: reg, logger: slog.Default()}
+	je := &JobExecutor{registry: reg, circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second), logger: slog.Default()}
 
-	job := jobs.NewJob("failing", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("failing", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	_, err := je.Execute(context.Background(), job)
 	if err == nil {
 		t.Fatal("expected error from plugin")
@@ -86,9 +86,9 @@ func TestJobExecutor_Execute_PanicRecovery(t *testing.T) {
 			panic("something went wrong")
 		},
 	})
-	je := &JobExecutor{registry: reg, logger: slog.Default()}
+	je := &JobExecutor{registry: reg, circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second), logger: slog.Default()}
 
-	job := jobs.NewJob("panicking", nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("panicking", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	_, err := je.Execute(context.Background(), job)
 	if err == nil {
 		t.Fatal("expected error from panic recovery")

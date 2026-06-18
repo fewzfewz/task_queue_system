@@ -16,6 +16,21 @@ import (
 	"task-queue-system/internal/jobs"
 )
 
+const dedupKeyTTL = 24 * time.Hour
+
+// JobFilter holds search parameters for querying jobs.
+type JobFilter struct {
+	TenantID     string
+	Status       string
+	Type         string
+	LabelKey     string
+	LabelValue   string
+	CreatedAfter time.Time
+	CreatedBefore time.Time
+	Limit        int
+	Offset       int
+}
+
 // ─── Store interface ──────────────────────────────────────────────────────────
 
 // Store is the persistence contract for job records.
@@ -32,6 +47,9 @@ type Store interface {
 	// Returns ErrJobNotFound if no record exists.
 	UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error
 
+	// UpdateProgress sets the progress percentage (0.0 – 100.0) for an in-flight job.
+	UpdateProgress(ctx context.Context, id string, progress float64) error
+
 	// UpdateResult updates status, processor and the final result of the job.
 	UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error
 
@@ -42,7 +60,7 @@ type Store interface {
 	Enqueue(ctx context.Context, job *jobs.Job) error
 
 	// Dequeue atomically moves a job to 'processing'.
-	Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error)
+	Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error)
 
 	// Heartbeat updates the liveness of an active job.
 	Heartbeat(ctx context.Context, jobID string) error
@@ -56,12 +74,21 @@ type Store interface {
 	// ListJobs returns a paginated list of jobs for a tenant.
 	ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error)
 
+	// SearchJobs returns a filtered, paginated list of jobs.
+	SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.Job, error)
+
 	// RecoverOrphans resets jobs from crashed workers back to 'pending'.
 	RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error)
 
 	// DLQ Management
 	DeleteJob(ctx context.Context, jobID string) error
 	DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error)
+
+	// IsDedupKeyTaken returns true if the given dedup_key already exists (exactly-once guard).
+	IsDedupKeyTaken(ctx context.Context, dedupKey string, tenantID string) (bool, error)
+
+	// GetByIDs returns multiple jobs by their IDs (for DAG dependency checks).
+	GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error)
 
 	// GetQueueLengths returns pending job counts segmented by queue and tenant.
 	GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error)
@@ -127,6 +154,20 @@ func (s *InMemoryStore) UpdateStatus(_ context.Context, id string, status jobs.J
 	return nil
 }
 
+// UpdateProgress sets the progress percentage for an in-flight job.
+func (s *InMemoryStore) UpdateProgress(_ context.Context, id string, progress float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	job, ok := s.data[id]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrJobNotFound, id)
+	}
+	job.Progress = progress
+	job.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
 // UpdateResult mutates Status, ProcessedBy and Result fields.
 func (s *InMemoryStore) UpdateResult(_ context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
 	s.mu.Lock()
@@ -162,7 +203,7 @@ func (s *InMemoryStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return s.Save(ctx, job)
 }
 
-func (s *InMemoryStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
+func (s *InMemoryStore) Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error) {
 	return nil, fmt.Errorf("InMemoryStore.Dequeue is not implemented; use RedisQueue which owns the dequeue/priority LUA script logic")
 }
 
@@ -218,6 +259,57 @@ func (s *InMemoryStore) ListJobs(ctx context.Context, tenantID string, status st
 	return results[offset:end], nil
 }
 
+func (s *InMemoryStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []*jobs.Job
+	for _, j := range s.data {
+		if filter.TenantID != "" && j.TenantID != filter.TenantID {
+			continue
+		}
+		if filter.Status != "" && string(j.Status) != filter.Status {
+			continue
+		}
+		if filter.Type != "" && j.Type != filter.Type {
+			continue
+		}
+		if filter.LabelKey != "" {
+			v, ok := j.Labels[filter.LabelKey]
+			if !ok || (filter.LabelValue != "" && v != filter.LabelValue) {
+				continue
+			}
+		}
+		if !filter.CreatedAfter.IsZero() && j.CreatedAt.Before(filter.CreatedAfter) {
+			continue
+		}
+		if !filter.CreatedBefore.IsZero() && j.CreatedAt.After(filter.CreatedBefore) {
+			continue
+		}
+		copy := *j
+		results = append(results, &copy)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].CreatedAt.After(results[j].CreatedAt)
+	})
+
+	if filter.Limit <= 0 {
+		filter.Limit = 20
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	if filter.Offset >= len(results) {
+		return []*jobs.Job{}, nil
+	}
+	end := filter.Offset + filter.Limit
+	if end > len(results) {
+		end = len(results)
+	}
+	return results[filter.Offset:end], nil
+}
+
 func (s *InMemoryStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -255,6 +347,32 @@ func (s *InMemoryStore) DeleteJobsBefore(_ context.Context, tenantID, status, jo
 		}
 	}
 	return count, nil
+}
+
+func (s *InMemoryStore) IsDedupKeyTaken(_ context.Context, dedupKey, tenantID string) (bool, error) {
+	if dedupKey == "" {
+		return false, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, j := range s.data {
+		if j.DedupKey == dedupKey && j.TenantID == tenantID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *InMemoryStore) GetByIDs(_ context.Context, ids []string) ([]*jobs.Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*jobs.Job, 0, len(ids))
+	for _, id := range ids {
+		if j, ok := s.data[id]; ok {
+			out = append(out, j)
+		}
+	}
+	return out, nil
 }
 
 func (s *InMemoryStore) GetQueueLengths(_ context.Context) (map[string]map[string]int64, error) {
@@ -345,6 +463,31 @@ func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.Jo
 	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
 }
 
+func (s *RedisStore) UpdateProgress(ctx context.Context, id string, progress float64) error {
+	val, err := s.client.HGet(ctx, jobStoreKey, id).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%w: %s", ErrJobNotFound, id)
+		}
+		return fmt.Errorf("redis_store: HGET failed: %w", err)
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(val), &job); err != nil {
+		return fmt.Errorf("redis_store: failed to unmarshal job: %w", err)
+	}
+
+	job.Progress = progress
+	job.UpdatedAt = time.Now().UTC()
+
+	updated, err := json.Marshal(&job)
+	if err != nil {
+		return fmt.Errorf("redis_store: failed to marshal updated job: %w", err)
+	}
+
+	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
+}
+
 func (s *RedisStore) UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
 	val, err := s.client.HGet(ctx, jobStoreKey, id).Result()
 	if err != nil {
@@ -396,7 +539,7 @@ func (s *RedisStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return s.Save(ctx, job)
 }
 
-func (s *RedisStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
+func (s *RedisStore) Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error) {
 	return nil, fmt.Errorf("redis store dequeue not implemented; use RedisQueue")
 }
 
@@ -458,6 +601,10 @@ func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status strin
 	return results[offset:end], nil
 }
 
+func (s *RedisStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.Job, error) {
+	return s.ListJobs(ctx, filter.TenantID, filter.Status, filter.Type, filter.Limit, filter.Offset)
+}
+
 func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
 	if err != nil {
@@ -511,6 +658,39 @@ func (s *RedisStore) DeleteJobsBefore(ctx context.Context, tenantID, status, job
 		}
 	}
 	return count, nil
+}
+
+func (s *RedisStore) IsDedupKeyTaken(ctx context.Context, dedupKey, tenantID string) (bool, error) {
+	if dedupKey == "" {
+		return false, nil
+	}
+	// Use a Redis SET with TTL for dedup keys.
+	key := fmt.Sprintf("dedup:%s:%s", tenantID, dedupKey)
+	// SETNX returns true if key was set (didn't exist).
+	return s.client.SetNX(ctx, key, "1", 24*time.Hour).Result()
+}
+
+func (s *RedisStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error) {
+	vals, err := s.client.HMGet(ctx, jobStoreKey, ids...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis_store: HMGET failed: %w", err)
+	}
+	out := make([]*jobs.Job, 0, len(ids))
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		str, ok := v.(string)
+		if !ok {
+			continue
+		}
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(str), &j); err != nil {
+			continue
+		}
+		out = append(out, &j)
+	}
+	return out, nil
 }
 
 func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {

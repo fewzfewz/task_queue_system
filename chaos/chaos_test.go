@@ -47,7 +47,7 @@ func TestRedisCrashMidTransition(t *testing.T) {
 			"source_url": fmt.Sprintf("http://example.com/%d.jpg", i),
 			"operation":  "resize",
 			"sleep_ms":   5000,
-		}, "medium", 1, "", "", 0, 0, "tenant-1")
+		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
 		if err != nil {
 			t.Fatalf("failed to create job: %v", err)
 		}
@@ -105,7 +105,7 @@ func TestWorkerHardKill(t *testing.T) {
 			"source_url": fmt.Sprintf("http://example.com/hardkill/%d.jpg", i),
 			"operation":  "compress",
 			"sleep_ms":   5000,
-		}, "medium", 1, "", "", 0, 0, "tenant-1")
+		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
 		if err != nil {
 			stopProcess(t, workerCmd)
 			t.Fatalf("failed to create job: %v", err)
@@ -161,7 +161,7 @@ func TestNetworkPartition(t *testing.T) {
 			"source_url": fmt.Sprintf("http://example.com/partition/%d.jpg", i),
 			"operation":  "watermark",
 			"sleep_ms":   1000,
-		}, "medium", 1, "", "", 0, 0, "tenant-1")
+		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
 		if err != nil {
 			stopProcess(t, workerCmd)
 			t.Fatalf("failed to create job: %v", err)
@@ -210,7 +210,7 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		"source_url": "http://example.com/skew/fresh.jpg",
 		"operation":  "process",
 		"sleep_ms":   100,
-	}, "medium", 1, "", "", 0, 0, "tenant-1")
+	}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("failed to create fresh job: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		"source_url": "http://example.com/skew/stale.jpg",
 		"operation":  "process",
 		"sleep_ms":   100,
-	}, "medium", 1, "", "", 0, 0, "tenant-1")
+	}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("failed to create stale job: %v", err)
 	}

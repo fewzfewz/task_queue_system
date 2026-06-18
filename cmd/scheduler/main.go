@@ -14,7 +14,9 @@ import (
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
+	"task-queue-system/internal/service"
 	queue_redis "task-queue-system/internal/queue/redis"
+	"task-queue-system/internal/storage"
 	"task-queue-system/internal/tracing"
 )
 
@@ -55,8 +57,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ── 4. Initialize Queue Backend ──────────────────────────────────────────
+	// ── 4. Initialize Queue and Store ────────────────────────────────────────
 	q := queue_redis.New(redisClient, "")
+
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+
+	store, err := storage.InitStore(schedulerCtx, cfg, redisClient)
+	if err != nil {
+		log.Error("failed to initialise storage", "error", err)
+		os.Exit(1)
+	}
+	svc := service.New(q, store, log, cfg.MaxQueueSize)
 
 	// ── 5. Start Health/Metrics HTTP Server ───────────────────────────────────
 	checker := health.NewChecker("scheduler", health.AdaptRedis(redisClient))
@@ -97,6 +109,7 @@ func main() {
 
 	log.Info("scheduler maintenance loop active", "interval_ms", 1500)
 
+	tickCount := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -122,6 +135,26 @@ func main() {
 			} else if reclaimed > 0 {
 				log.Info("stalled jobs reclaimed", "count", reclaimed)
 			}
+
+			// 3. Process recurring jobs
+			recurring, err := svc.RecurringJobsDue(ctx)
+			if err != nil {
+				log.Error("recurring job check failed", "error", err)
+			} else if recurring > 0 {
+				log.Info("recurring job instances created", "count", recurring)
+			}
+
+			// 4. TTL Auto-Cleanup — purge terminal jobs older than 7 days, ran every ~90s
+			if tickCount%60 == 0 {
+				cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
+				cleaned, err := svc.PurgeJobsBefore(ctx, cutoff)
+				if err != nil {
+					log.Error("TTL cleanup failed", "error", err)
+				} else if cleaned > 0 {
+					log.Info("TTL cleanup purged old terminal jobs", "count", cleaned)
+				}
+			}
+			tickCount++
 		}
 	}
 }

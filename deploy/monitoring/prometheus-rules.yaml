@@ -14,7 +14,16 @@ spec:
             severity: warning
           annotations:
             summary: "Task queue depth is high"
-            description: "The combined queue depth has been above 1000 for 5 minutes."
+            description: "The combined queue depth has been above 1000 for 5 minutes (current: {{ $value }})."
+
+        - alert: TaskQueueDepthPerQueue
+          expr: task_queue_length > 500
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Queue depth high for {{ $labels.queue }} / {{ $labels.tenant_id }}"
+            description: "Queue {{ $labels.queue }} tenant {{ $labels.tenant_id }} depth is {{ $value }}."
 
         - alert: TaskQueueNoBusyWorkers
           expr: task_queue_worker_busy_ratio < 0.05
@@ -23,7 +32,16 @@ spec:
             severity: warning
           annotations:
             summary: "Worker utilization is very low"
-            description: "Workers appear mostly idle or unavailable."
+            description: "Workers appear mostly idle or unavailable (ratio: {{ $value }})."
+
+        - alert: TaskQueueWorkerPoolExhausted
+          expr: task_queue_worker_busy_ratio > 0.95
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Worker pool nearly exhausted"
+            description: "Worker utilization is above 95% ({{ $value }}). Consider scaling up."
 
         - alert: TaskQueueDLQGrowing
           expr: increase(task_queue_jobs_total{status="failed"}[15m]) > 25
@@ -32,7 +50,25 @@ spec:
             severity: critical
           annotations:
             summary: "DLQ is growing rapidly"
-            description: "Failed job count has increased sharply in the last 15 minutes."
+            description: "Failed job count increased sharply in the last 15 minutes ({{ $value }} failures)."
+
+        - alert: TaskQueueHighFailureRate
+          expr: rate(task_queue_jobs_total{status="failed"}[5m]) / rate(task_queue_jobs_total[5m]) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High job failure rate"
+            description: "Failure rate is above 10% ({{ $value | humanizePercentage }}) for job_type={{ $labels.job_type }}, tenant={{ $labels.tenant_id }}."
+
+        - alert: TaskQueueSLABreach
+          expr: sum(rate(task_queue_job_sla_compliance_total{compliant="false"}[5m])) / sum(rate(task_queue_job_sla_compliance_total[5m])) > 0.05
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "SLA compliance breach"
+            description: "More than 5% of jobs are exceeding the SLA target (non-compliant rate: {{ $value | humanizePercentage }})."
 
         - alert: TaskQueueWebhookFailuresSpike
           expr: increase(task_queue_webhook_delivery_failures_total[10m]) > 10
@@ -41,4 +77,31 @@ spec:
             severity: warning
           annotations:
             summary: "Webhook failures are spiking"
-            description: "Webhook delivery failures have increased in the last 10 minutes."
+            description: "Webhook delivery failures increased in the last 10 minutes ({{ $value }} failures)."
+
+        - alert: TaskQueueWebhookExhaustedRetries
+          expr: increase(task_queue_webhook_delivery_failures_total{reason="exhausted_retries"}[15m]) > 5
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Webhooks exhausting retries"
+            description: "Multiple webhooks are exhausting all retry attempts. Manual intervention may be needed."
+
+        - alert: TaskQueueCircuitBreakerOpen
+          expr: task_queue_circuit_breaker_open > 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Circuit breaker open for plugin {{ $labels.plugin_type }}"
+            description: "Plugin {{ $labels.plugin_type }} circuit breaker is open. Jobs of this type are being rejected."
+
+        - alert: TaskQueueNoWorkerHeartbeats
+          expr: count(task_queue_worker_busy) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No worker heartbeats detected"
+            description: "No workers are reporting heartbeats. The system may be completely down."

@@ -19,7 +19,7 @@ func TestEmailPlugin_Type(t *testing.T) {
 
 func TestEmailPlugin_Execute_Success(t *testing.T) {
 	p := NewEmailPlugin(slog.Default())
-	job := jobs.NewJob("email", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"to":      "user@example.com",
 		"subject": "Hello",
@@ -37,7 +37,7 @@ func TestEmailPlugin_Execute_Success(t *testing.T) {
 
 func TestEmailPlugin_Execute_MissingTo(t *testing.T) {
 	p := NewEmailPlugin(slog.Default())
-	job := jobs.NewJob("email", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"subject": "Hello",
 	}
@@ -50,7 +50,7 @@ func TestEmailPlugin_Execute_MissingTo(t *testing.T) {
 
 func TestEmailPlugin_Execute_HigherVersion(t *testing.T) {
 	p := NewEmailPlugin(slog.Default())
-	job := jobs.NewJob("email", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"to":      "user@example.com",
 		"subject": "Hello",
@@ -75,7 +75,7 @@ func TestImagePlugin_Type(t *testing.T) {
 
 func TestImagePlugin_Execute_Success(t *testing.T) {
 	p := NewImagePlugin(slog.Default())
-	job := jobs.NewJob("image", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("image", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"source_url": "https://example.com/image.jpg",
 		"operation":  "resize",
@@ -99,7 +99,7 @@ func TestImagePlugin_Execute_Success(t *testing.T) {
 
 func TestImagePlugin_Execute_DefaultOperation(t *testing.T) {
 	p := NewImagePlugin(slog.Default())
-	job := jobs.NewJob("image", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("image", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"source_url": "https://example.com/image.jpg",
 	}
@@ -119,7 +119,7 @@ func TestImagePlugin_Execute_DefaultOperation(t *testing.T) {
 
 func TestImagePlugin_Execute_MissingSourceURL(t *testing.T) {
 	p := NewImagePlugin(slog.Default())
-	job := jobs.NewJob("image", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("image", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"operation": "resize",
 	}
@@ -132,7 +132,7 @@ func TestImagePlugin_Execute_MissingSourceURL(t *testing.T) {
 
 func TestImagePlugin_Execute_HigherVersion(t *testing.T) {
 	p := NewImagePlugin(slog.Default())
-	job := jobs.NewJob("image", nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job := jobs.NewJob("image", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
 	job.Payload = map[string]interface{}{
 		"source_url": "https://example.com/image.jpg",
 	}

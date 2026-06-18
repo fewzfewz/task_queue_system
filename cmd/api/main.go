@@ -94,7 +94,7 @@ func main() {
 	}
 
 	// ── 6. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, log, cfg, secretsProv)
+	router := routes.NewRouter(q, store, log, cfg, secretsProv, nil)
 	checker := health.NewChecker("api", health.AdaptRedis(redisClient))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", checker.Live)

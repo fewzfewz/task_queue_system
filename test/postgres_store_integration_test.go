@@ -28,7 +28,7 @@ func TestPostgresStoreIntegrationWorkflow(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("test-success", map[string]interface{}{"hello": "world"}, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-int")
+	job := jobs.NewJob("test-success", map[string]interface{}{"hello": "world"}, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-int")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestPostgresStore_UpdateStatus(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("update-status", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-upd")
+	job := jobs.NewJob("update-status", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-upd")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestPostgresStore_UpdateResult(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("update-result", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-res")
+	job := jobs.NewJob("update-result", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-res")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPostgresStore_GetByWorkerAndStatus(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("get-by-worker", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-worker")
+	job := jobs.NewJob("get-by-worker", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-worker")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestPostgresStore_Complete(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("complete-test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-complete")
+	job := jobs.NewJob("complete-test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-complete")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestPostgresStore_Fail(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("fail-test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-fail")
+	job := jobs.NewJob("fail-test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-fail")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestPostgresStore_DeleteJob(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("delete-test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-del")
+	job := jobs.NewJob("delete-test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-del")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestPostgresStore_GetQueueLengths(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("ql-test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-ql")
+	job := jobs.NewJob("ql-test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-ql")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestPostgresStore_Heartbeat(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("hb-test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-hb")
+	job := jobs.NewJob("hb-test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-hb")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestPostgresStore_RecoverOrphans(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("orphan-test", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-orphan")
+	job := jobs.NewJob("orphan-test", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-orphan")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestPostgresStore_ListJobsPagination(t *testing.T) {
 	defer store.Close()
 
 	for i := 0; i < 3; i++ {
-		job := jobs.NewJob("list-paginate", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-page")
+		job := jobs.NewJob("list-paginate", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-page")
 		if err := store.Save(ctx, job); err != nil {
 			t.Fatalf("save failed for job %d: %v", i, err)
 		}
@@ -274,7 +274,7 @@ func TestPostgresStore_DeleteJobsBefore(t *testing.T) {
 	store, ctx := newPostgresStore(t)
 	defer store.Close()
 
-	job := jobs.NewJob("delete-before", nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-db")
+	job := jobs.NewJob("delete-before", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 30, 1, "tenant-db")
 	if err := store.Save(ctx, job); err != nil {
 		t.Fatalf("save failed: %v", err)
 	}

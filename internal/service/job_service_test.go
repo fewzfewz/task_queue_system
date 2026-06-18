@@ -146,7 +146,7 @@ func TestCreateJob_Valid(t *testing.T) {
 	q := &mockQueue{}
 	svc := newService(q, store)
 
-	job, err := svc.CreateJob(context.Background(), "email", map[string]interface{}{"to": "a@b.com"}, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	job, err := svc.CreateJob(context.Background(), "email", map[string]interface{}{"to": "a@b.com"}, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -173,7 +173,7 @@ func TestCreateJob_Valid(t *testing.T) {
 func TestCreateJob_InvalidType(t *testing.T) {
 	svc := newService(&mockQueue{}, models.NewInMemoryStore())
 
-	_, err := svc.CreateJob(context.Background(), "invalid-type", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	_, err := svc.CreateJob(context.Background(), "invalid-type", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err == nil {
 		t.Fatal("expected error for invalid job type")
 	}
@@ -191,7 +191,7 @@ func TestCreateJob_RateLimited(t *testing.T) {
 	}
 	svc := newService(q, store)
 
-	_, err := svc.CreateJob(context.Background(), "email", map[string]interface{}{"to": "a@b.com"}, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	_, err := svc.CreateJob(context.Background(), "email", map[string]interface{}{"to": "a@b.com"}, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err == nil {
 		t.Fatal("expected rate limit error")
 	}
@@ -209,7 +209,7 @@ func TestCreateJob_QueueFull(t *testing.T) {
 	}
 	svc := New(q, store, slog.Default(), 5)
 
-	_, err := svc.CreateJob(context.Background(), "email", map[string]interface{}{"to": "a@b.com"}, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	_, err := svc.CreateJob(context.Background(), "email", map[string]interface{}{"to": "a@b.com"}, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err == nil {
 		t.Fatal("expected queue full error")
 	}
@@ -222,7 +222,7 @@ func TestCreateJob_DefaultMaxRetries(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
 
-	job, err := svc.CreateJob(context.Background(), "email", nil, "medium", 0, "", "", 60, 1, "tenant-a", nil)
+	job, err := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 0, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -236,7 +236,7 @@ func TestCreateJob_FutureSchedule(t *testing.T) {
 	svc := newService(&mockQueue{}, store)
 
 	future := time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
-	job, err := svc.CreateJob(context.Background(), "email", nil, "medium", 3, future, "", 60, 1, "tenant-a", nil)
+	job, err := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", future, "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -249,7 +249,7 @@ func TestCreateJob_PastSchedule(t *testing.T) {
 	svc := newService(&mockQueue{}, models.NewInMemoryStore())
 
 	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
-	_, err := svc.CreateJob(context.Background(), "email", nil, "medium", 3, past, "", 60, 1, "tenant-a", nil)
+	_, err := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", past, "", 60, 1, "tenant-a", nil, "", nil, "")
 	if err == nil {
 		t.Fatal("expected error for past schedule")
 	}
@@ -259,7 +259,7 @@ func TestGetJobStatus_Found(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
 
-	created, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	created, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	found, err := svc.GetJobStatus(context.Background(), created.ID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -285,7 +285,7 @@ func TestReplayJob(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
 
-	created, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	created, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	created.Status = jobs.StatusFailed
 	store.Save(context.Background(), created)
 
@@ -305,7 +305,7 @@ func TestReplayJob_WrongTenant(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
 
-	created, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	created, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	created.Status = jobs.StatusFailed
 	store.Save(context.Background(), created)
 
@@ -322,7 +322,7 @@ func TestDeleteJob(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
 
-	created, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	created, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 
 	err := svc.DeleteJob(context.Background(), created.ID, "tenant-a")
 	if err != nil {
@@ -340,7 +340,7 @@ func TestUpdateJobResult(t *testing.T) {
 	q := &mockQueue{}
 	svc := newService(q, store)
 
-	created, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	created, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 
 	err := svc.UpdateJobResult(context.Background(), created.ID, jobs.StatusCompleted, "worker-1", "success")
 	if err != nil {
@@ -357,7 +357,7 @@ func TestReconcileOrphanedJobs(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
 
-	created, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+	created, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 	created.Status = jobs.StatusProcessing
 	created.ProcessedBy = "worker-1"
 	store.Save(context.Background(), created)
@@ -384,13 +384,13 @@ func TestBulkPurgeDLQ(t *testing.T) {
 	recent := time.Now().Add(-1 * time.Hour)
 
 	for i := 0; i < 3; i++ {
-		job, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+		job, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 		job.Status = jobs.StatusFailed
 		job.CreatedAt = old
 		store.Save(context.Background(), job)
 	}
 	for i := 0; i < 2; i++ {
-		job, _ := svc.CreateJob(context.Background(), "email", nil, "medium", 3, "", "", 60, 1, "tenant-a", nil)
+		job, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "")
 		job.Status = jobs.StatusFailed
 		job.CreatedAt = recent
 		store.Save(context.Background(), job)

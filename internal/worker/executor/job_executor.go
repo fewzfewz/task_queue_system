@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/worker/plugin"
@@ -11,15 +12,17 @@ import (
 
 // JobExecutor manages the registration and execution of job plugins.
 type JobExecutor struct {
-	registry *plugin.Registry
-	logger   *slog.Logger
+	registry       *plugin.Registry
+	circuitBreaker *plugin.CircuitBreaker
+	logger         *slog.Logger
 }
 
 // NewJobExecutor creates a JobExecutor using the system-wide global plugin registry.
 func NewJobExecutor(logger *slog.Logger) *JobExecutor {
 	return &JobExecutor{
-		registry: plugin.GetGlobalRegistry(),
-		logger:   logger,
+		registry:       plugin.GetGlobalRegistry(),
+		circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second),
+		logger:         logger,
 	}
 }
 
@@ -30,11 +33,26 @@ func (je *JobExecutor) RegisterPlugin(p plugin.JobPlugin) {
 	}
 }
 
+// ResetCircuitBreaker resets the circuit breaker for the given job type.
+func (je *JobExecutor) ResetCircuitBreaker(jobType string) {
+	je.circuitBreaker.Reset(jobType)
+}
+
+// CircuitBreakerStatus returns the current state of all monitored plugins.
+func (je *JobExecutor) CircuitBreakerStatus() map[string]string {
+	return je.circuitBreaker.Status()
+}
+
 // Execute performs the work for a given job by fetching the appropriate plugin.
 // It fulfills the "registry instead of switch-case" requirement by dynamic lookup.
 func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interface{}, err error) {
 	if job == nil {
 		return nil, fmt.Errorf("job_executor: cannot execute a nil job")
+	}
+
+	// ── Circuit Breaker Check ──────────────────────────────────────────────
+	if !je.circuitBreaker.IsAllowed(job.Type) {
+		return nil, fmt.Errorf("circuit breaker open for plugin %q — too many consecutive failures", job.Type)
 	}
 
 	je.logger.Debug("executing job", "job_id", job.ID, "job_type", job.Type)
@@ -46,18 +64,25 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interfac
 	}
 
 	// ── Fault Isolation: Recover from Panics ────────────────────────────────
-	// This ensures that even if a plugin developer forgets a nil check or 
-	// encounters an unexpected runtime error, the worker instance remains alive.
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("plugin panicked during execution: %v", r)
-			je.logger.Error("plugin panicked during execution", 
-				"job_type", job.Type, 
+			je.circuitBreaker.RecordFailure(job.Type, err)
+			je.logger.Error("plugin panicked during execution",
+				"job_type", job.Type,
 				"panic", r,
 				"correlation_id", job.CorrelationID,
 			)
 		}
 	}()
 
-	return p.Execute(ctx, job)
+	res, err = p.Execute(ctx, job)
+
+	if err != nil {
+		je.circuitBreaker.RecordFailure(job.Type, err)
+	} else {
+		je.circuitBreaker.RecordSuccess(job.Type)
+	}
+
+	return
 }

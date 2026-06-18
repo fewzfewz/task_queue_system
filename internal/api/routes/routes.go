@@ -1,5 +1,3 @@
-// Package routes wires HTTP handlers to URL patterns using the standard
-// net/http ServeMux (Go 1.22+ enhanced pattern syntax).
 package routes
 
 import (
@@ -8,7 +6,7 @@ import (
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
-	_ "task-queue-system/docs" // Import generated swagger files natively
+	_ "task-queue-system/docs"
 	"task-queue-system/internal/api/handler"
 	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/config"
@@ -16,59 +14,63 @@ import (
 	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
+	"task-queue-system/internal/webhooks"
 )
 
-// NewRouter builds and returns a fully configured http.ServeMux.
-// It is the single source of truth for all route → handler mappings.
-//
-// Pass models.NewInMemoryStore() for local dev or a PostgresStore for production.
-func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, secrets secrets.SecretsProvider) http.Handler {
+func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, secrets secrets.SecretsProvider, webhookStore *webhooks.WebhookStore) http.Handler {
 	svc := service.New(q, store, logger, cfg.MaxQueueSize)
+	if webhookStore != nil {
+		svc.SetWebhookStore(webhookStore)
+	}
 	h := handler.New(svc, logger)
+	svc.SetSSEBroker(h.SSEBroker())
+	if webhookStore != nil {
+		h.SetWebhookStore(webhookStore)
+	}
 
 	mux := http.NewServeMux()
 
-	// GET  / and /ui     → browser-based operator UI
 	mux.HandleFunc("GET /", h.ServeAppUI)
 	mux.HandleFunc("GET /ui", h.ServeAppUI)
 
-	// POST /jobs        → create a new job and enqueue it (PROTECTED)
 	mux.Handle("POST /jobs", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.CreateJob)))
+	mux.Handle("POST /jobs/batch", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.CreateJobBatch)))
 
-	// GET  /jobs/{id}   → return the current status of a job
+	mux.Handle("GET /jobs", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.ListJobs)))
 	mux.HandleFunc("GET /jobs/{id}", h.GetJobStatus)
+	mux.HandleFunc("PATCH /jobs/{id}/progress", h.UpdateJobProgress)
+	mux.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
+	mux.HandleFunc("POST /jobs/{id}/pause", h.PauseJob)
+	mux.HandleFunc("POST /jobs/{id}/resume", h.ResumeJob)
 
-	// GET  /metrics     → system performance numbers
 	mux.HandleFunc("GET /metrics", h.GetMetrics)
-
-	// GET  /workers     → worker health and count details
 	mux.HandleFunc("GET /workers", h.GetWorkers)
-
-	// GET  /admin/dlq    → High-fidelity DLQ management UI
+	mux.HandleFunc("GET /events", h.JobEventsSSE)
 	mux.HandleFunc("GET /admin/dlq", h.ServeAdminDLQ)
 
-	// ── DLQ Endpoints ────────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/v1/stats", h.GetStats)
+	mux.HandleFunc("GET /api/v1/jobs/{id}/deps", h.GetJobDeps)
+
 	auth := middleware.AuthRequired(cfg, secrets)
 
-	// GET    /api/v1/dlq        → List failed jobs
 	mux.Handle("GET /api/v1/dlq", auth(http.HandlerFunc(h.ListFailedJobs)))
-	// GET    /api/v1/dlq/{id}   → Get detailed failure reason
 	mux.Handle("GET /api/v1/dlq/{id}", auth(http.HandlerFunc(h.GetFailedJobDetail)))
-	// POST   /api/v1/dlq/{id}/replay → Re-enqueue failed job
 	mux.Handle("POST /api/v1/dlq/{id}/replay", auth(http.HandlerFunc(h.ReplayFailedJob)))
-	// DELETE /api/v1/dlq/{id}   → Purge single job
 	mux.Handle("DELETE /api/v1/dlq/{id}", auth(http.HandlerFunc(h.DeleteFailedJob)))
-	// DELETE /api/v1/dlq        → Bulk purge
 	mux.Handle("DELETE /api/v1/dlq", auth(http.HandlerFunc(h.BulkPurgeDLQ)))
 
-	// Swagger UI integration
-	// The http-swagger driver handles the static asset serving natively.
+	if webhookStore != nil {
+		ws := middleware.AuthRequired(cfg, secrets)
+		mux.Handle("POST /api/v1/webhooks", ws(http.HandlerFunc(h.RegisterWebhook)))
+		mux.Handle("GET /api/v1/webhooks", ws(http.HandlerFunc(h.ListWebhooks)))
+		mux.Handle("GET /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.GetWebhook)))
+		mux.Handle("PUT /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.UpdateWebhook)))
+		mux.Handle("DELETE /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.DeleteWebhook)))
+	}
+
 	mux.HandleFunc("GET /swagger/", httpSwagger.Handler(
-		httpSwagger.URL("/swagger/doc.json"), // Provides the canonical JSON schema natively
+		httpSwagger.URL("/swagger/doc.json"),
 	))
 
-	// Apply middleware: log all requests
-	handlerWithMiddleware := middleware.RequestLogger(logger)(mux)
-
-	return handlerWithMiddleware
+	return middleware.RequestLogger(logger)(mux)
 }

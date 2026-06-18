@@ -65,3 +65,12 @@
 | ✅ | **Postgres store integration tests** | 10 tests (skip without `POSTGRES_CONN_STR`) | `test/postgres_store_integration_test.go` |
 | ✅ | Created `internal/queue/mock.go` | — | — |
 | ✅ | Updated `deploy/k8s/rbac.yaml` apply order comment | — | — |
+| ✅ | **DAG dependency checks** in dequeue (SQL subquery filters blocked jobs) | — | `postgres.go` |
+| ✅ | **Shard routing** via `Store.Dequeue(ctx, tenantID, shardKey)` parameter | — | `models.go`, `postgres.go` |
+| ✅ | **TTL auto-cleanup** with 7-day retention, ~90s loop in scheduler | — | `cmd/scheduler/main.go` |
+| ✅ | **Pagination metadata** in `ListJobs` (`total`, `page`, `limit`) | — | `handler.go` |
+| ✅ | **Stats API** (`GET /api/v1/stats`) with queue/worker breakdown | — | `handler.go` |
+| ✅ | **Circuit breaker reset** via worker HTTP (port 8081) | — | `circuitbreaker.go`, `cmd/worker/main.go` |
+| ✅ | **DAG visualization** (`GET /api/v1/jobs/{id}/deps`) with upstream + downstream | — | `handler.go` |
+| ✅ | **Progress reporting** via `plugin.WithProgressCallback` / `plugin.ReportProgress` | — | `plugin/interface.go`, `worker_processor.go` |
+| ✅ | **Full HTML UI rewrite** with 7 tabs, pagination, toast notifications, circuit breaker controls | — | `ui_handler.go` |
