@@ -13,35 +13,17 @@
 
 | # | Item | Location | Effort | Notes |
 |---|------|----------|--------|-------|
-| 1 | **Webhook dispatcher Start() untested** | `internal/webhooks/dispatcher.go` | Medium | `Start()` reads from Redis Streams — needs a mock or integration test |
-| 2 | **shutdown_test coverage gaps** | `cmd/worker/shutdown_test.go` | Small | Only 1 test. Missing: timeout scenario, double-initiate, GET vs POST method handling |
-| 3 | **Chaos tests not CI-integrated** | `chaos/` | Medium | Requires Docker + root. No CI pipeline runs these |
-
-### Medium Priority
-
-| # | Item | Location | Effort | Notes |
-|---|------|----------|--------|-------|
-| 4 | **No NetworkPolicy** | `deploy/k8s/` | Medium | No pod-level network isolation |
-| 5 | **No cert-manager resources** | `deploy/k8s/ingress.yaml` | Small | Ingress references `letsencrypt-prod` issuer but no Certificate resource is included |
-| 6 | **No HPA for API** | `deploy/k8s/` | Small | Only worker has autoscaling — API is a single replica |
-| 7 | **Missing chaos test docs** | `chaos/` | Small | No README explaining setup (Docker, root, iptables) |
-| 8 | **benchmark.sh assumes `ab` + `jq`** | `scripts/benchmark.sh` | Small | Not portable. Consider adding a check or fallback to curl |
-| 9 | **load_test.sh uses `bc`** | `scripts/load_test.sh` | Small | Not available on all systems |
-| 10 | **PostgreSQL connection retry** | `internal/storage/postgres/postgres.go` | Small | Store fails immediately if Postgres is unavailable on startup. No retry/backoff |
+| 1 | **Webhook dispatcher Start() untested** | `internal/webhooks/dispatcher.go` | Medium | `send()` and `sign()` tested, but `Start()` loops on Redis Streams — needs integration test |
+| 2 | **Chaos tests not CI-integrated** | `chaos/` | Medium | Requires Docker + root. CI pipeline step documented in `chaos/README.md` but not wired into any CI config |
 
 ### Low Priority / Nice-to-Have
 
 | # | Item | Location | Effort | Notes |
 |---|------|----------|--------|-------|
-| 11 | **OpenTelemetry / Jaeger exporter** | `internal/tracing/` | Large | Trace ID is already in request logging. Need OTEL SDK + exporter + context propagation across queue boundaries |
-| 12 | **Helm chart** | `deploy/helm/` | X-Large | Package all K8s manifests into a versioned chart with values.yaml |
-| 13 | **Ingress manifest** | `deploy/k8s/ingress.yaml` | Medium | Exists as a skeleton but needs TLS cert configuration and path routing |
-| 14 | **RBAC per workload** | `deploy/k8s/rbac.yaml` | Medium | Single set of ServiceAccounts/Roles. Should be one per workload (api, worker, scheduler) |
-| 15 | **Secrets management workflow** | `docs/` | Medium | Document production secret handling for K8s, Vault, and environment variables |
-| 16 | **Rate limit per-tenant from UI** | `internal/queue/redis/redis.go` | Small | Rate limit is now configurable via env var but not exposed via any API endpoint |
-| 17 | **SLA target configurable** | `internal/worker/executor/worker_processor.go` | Small | SLA target is hardcoded at 5 seconds |
-| 18 | **API HPA with custom metrics** | `deploy/k8s/` | Medium | Only workers autoscale. API could scale based on request rate |
-| 19 | **Cleanup expired processed IDs** | `internal/queue/redis/redis.go` | Medium | The `processed` set grows unboundedly — needs periodic cleanup |
+| 3 | **API HPA with custom metrics (request rate)** | `deploy/helm/task-queue/` | Medium | HPA currently uses CPU/memory only — could scale on request rate via Prometheus adapter |
+| 4 | **OpenTelemetry context propagation across queue boundaries** | `internal/tracing/` | Medium | OTel SDK + OTLP exporter wired in. Trace IDs flow through request logging but not yet propagated across Enqueue/Dequeue boundaries |
+| 5 | **Helm chart production hardening** | `deploy/helm/task-queue/` | Medium | Chart skeleton exists. Needs: CI-tested install/upgrade, pod disruption budgets, topology spread constraints |
+| 6 | **Postgres migration improvements** | `cmd/cli/` | Small | Migrations work but have no rollback or version tracking |
 
 ---
 
@@ -49,25 +31,37 @@
 
 | # | Item | Tests Added | Lines |
 |---|------|-------------|-------|
-| ✅ | Removed empty `internal/utils/` and `pkg/middleware/` packages | — | — |
+| ✅ | Removed empty packages (`internal/utils/`, `pkg/middleware/`, `pkg/`) | — | — |
 | ✅ | Fixed API/worker port conflict (added `WORKER_PORT`, `SCHEDULER_PORT`) | — | — |
 | ✅ | Added HTTP server (health/metrics) to scheduler | — | — |
 | ✅ | Fixed Postgres `UpdateResult` JSONB race condition (atomic `jsonb` append) | — | — |
 | ✅ | Made per-tenant rate limit configurable via `TENANT_RATE_LIMIT` env var | — | — |
 | ✅ | Fixed `GetJobStatus` returning INTERNAL_ERROR instead of NOT_FOUND | — | — |
-| ✅ | Removed empty `pkg/` directory | — | — |
 | ✅ | Created `deploy/k8s/namespace.yaml` | — | — |
-| ✅ | Added `.gitignore` with `bin/`, `.env`, IDE files | — | — |
+| ✅ | Added `.gitignore` | — | — |
 | ✅ | Removed pre-built binaries from `bin/` | — | — |
 | ✅ | Implemented `RecoverOrphans` for `InMemoryStore` and `RedisStore` | — | — |
 | ✅ | Fixed K8s namespace inconsistency (`default` → `task-queue` in all manifests) | — | — |
-| ✅ | Fixed scheduler K8s deployment: added `SCHEDULER_PORT`, HTTP liveness/readiness probes | — | — |
-| ✅ | Fixed worker K8s deployment: updated port to 8081, correct probes | — | — |
+| ✅ | Fixed scheduler K8s deployment: `SCHEDULER_PORT`, HTTP probes | — | — |
+| ✅ | Fixed worker K8s deployment: port 8081, correct probes | — | — |
 | ✅ | Fixed Redis FQDN references (`redis.default` → `redis.task-queue`) | — | — |
-| ✅ | **Worker pool tests** | 7 tests | pool_test.go |
-| ✅ | **Redis queue tests** | 20 tests | redis/redis_test.go |
-| ✅ | **Plugin tests (email + image)** | 12 tests | plugins/standard/plugins_test.go |
-| ✅ | **Route tests** | 3 tests | routes/routes_test.go |
-| ✅ | **Postgres store integration tests** | 10 tests (gated behind `POSTGRES_CONN_STR`) | test/postgres_store_integration_test.go |
-| ✅ | Created `internal/queue/mock.go` (blocking `MockQueue` with channel-based `Dequeue`) | — | — |
+| ✅ | **PostgreSQL connection retry** with exponential backoff (1s, 2s, 4s, … ×5) | — | `postgres.go` |
+| ✅ | **Processed ID cleanup** (TTL-backed keys, bounded memory) | — | `redis.go` |
+| ✅ | **Configurable SLA target** via `SLA_TARGET_SECONDS` env | — | `worker_processor.go` |
+| ✅ | **Complete shutdown_test coverage** | 5 new tests (GET, double-initiate, method-not-allowed, done-waits, shutdown flow) | `shutdown_test.go` |
+| ✅ | **Ingress TLS cert-manager Certificate** | — | `deploy/k8s/certificate.yaml` |
+| ✅ | **NetworkPolicy manifests** | — | `deploy/k8s/network-policy.yaml` |
+| ✅ | **API HPA manifest** | — | `deploy/k8s/api-hpa.yaml` |
+| ✅ | **RBAC per workload** (separate Role/RoleBinding for api, worker, scheduler) | — | `deploy/k8s/rbac.yaml` |
+| ✅ | **Script portability fixes** (benchmark.sh fallback for `ab`+`jq`, load_test.sh fallback for `bc`) | — | `scripts/` |
+| ✅ | **Chaos test docs** (CHAOS.md with prerequisites, scenarios, CI snippet) | — | `chaos/README.md` |
+| ✅ | **Secrets management docs** (env vars, K8s Secrets, Vault tiers) | — | `docs/secrets-management.md` |
+| ✅ | **OpenTelemetry/Jaeger exporter** (OTel SDK + OTLP/HTTP, no-op fallback, graceful shutdown) | — | `internal/tracing/tracing.go` |
+| ✅ | **Helm chart skeleton** (Chart.yaml, values.yaml, all templates) | — | `deploy/helm/task-queue/` |
+| ✅ | **Worker pool tests** | 7 tests | `pool_test.go` |
+| ✅ | **Redis queue tests** | 20 tests (miniredis) | `redis/redis_test.go` |
+| ✅ | **Plugin tests (email + image)** | 12 tests | `plugins/standard/plugins_test.go` |
+| ✅ | **Route tests** | 3 tests | `routes/routes_test.go` |
+| ✅ | **Postgres store integration tests** | 10 tests (skip without `POSTGRES_CONN_STR`) | `test/postgres_store_integration_test.go` |
+| ✅ | Created `internal/queue/mock.go` | — | — |
 | ✅ | Updated `deploy/k8s/rbac.yaml` apply order comment | — | — |

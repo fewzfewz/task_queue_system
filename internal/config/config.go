@@ -77,9 +77,16 @@ type Config struct {
 
 	// TenantRateLimit is the max requests per second per tenant. Default: 0 (unlimited).
 	TenantRateLimit int64
+
+	// SLATargetSeconds is the target execution time in seconds for SLA compliance.
+	// Default: 5.
+	SLATargetSeconds int
+
+	// OTELExporterOTLPEndpoint is the OpenTelemetry OTLP/HTTP endpoint.
+	// When set, traces are exported via OTLP. When empty, no tracing SDK is initialized.
+	// Example: "localhost:4318"
+	OTELExporterOTLPEndpoint string
 }
-
-
 
 
 // Load reads environment variables and returns a populated Config with defaults.
@@ -105,6 +112,8 @@ func Load() *Config {
 		WorkerPort:          getEnvOrDefault("WORKER_PORT", "8081"),
 		SchedulerPort:       getEnvOrDefault("SCHEDULER_PORT", "8082"),
 		TenantRateLimit:     getEnvAsInt64("TENANT_RATE_LIMIT", 0),
+		SLATargetSeconds:           getEnvAsInt("SLA_TARGET_SECONDS", 5),
+		OTELExporterOTLPEndpoint:   getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 	}
 }
 

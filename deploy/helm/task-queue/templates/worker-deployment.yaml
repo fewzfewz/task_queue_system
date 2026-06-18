@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-queue-worker
+  namespace: {{ include "task-queue.namespace" . }}
+  labels:
+    app: task-queue-worker
+spec:
+  replicas: {{ .Values.replicas.worker }}
+  selector:
+    matchLabels:
+      app: task-queue-worker
+  template:
+    metadata:
+      labels:
+        app: task-queue-worker
+    spec:
+      serviceAccountName: task-queue-worker
+      terminationGracePeriodSeconds: 75
+      containers:
+        - name: worker
+          image: {{ include "task-queue.worker.image" . }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - name: REDIS_HOST
+              value: "{{ .Values.env.REDIS_HOST | default (printf "redis.%s.svc.cluster.local:6379" (include "task-queue.namespace" .)) }}"
+            - name: REDIS_DB
+              value: "{{ .Values.env.REDIS_DB }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.env.LOG_LEVEL }}"
+            - name: MAX_QUEUE_SIZE
+              value: "{{ .Values.env.MAX_QUEUE_SIZE }}"
+            - name: STORE_BACKEND
+              value: "{{ .Values.env.STORE_BACKEND }}"
+            - name: WORKER_POOL_SIZE
+              value: "{{ .Values.env.WORKER_POOL_SIZE }}"
+            - name: JOB_RATE_LIMIT
+              value: "{{ .Values.env.JOB_RATE_LIMIT }}"
+            - name: DRAIN_TIMEOUT
+              value: "{{ .Values.env.DRAIN_TIMEOUT }}"
+            - name: SLA_TARGET_SECONDS
+              value: "{{ .Values.env.SLA_TARGET_SECONDS }}"
+            - name: TENANT_RATE_LIMIT
+              value: "{{ .Values.env.TENANT_RATE_LIMIT }}"
+            - name: WORKER_PORT
+              value: "{{ .Values.networking.workerPort }}"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "{{ .Values.env.OTEL_EXPORTER_OTLP_ENDPOINT }}"
+          ports:
+            - containerPort: {{ .Values.networking.workerPort }}
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.networking.workerPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz/shutdown
+              port: {{ .Values.networking.workerPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - "curl -sf -X POST http://localhost:{{ .Values.networking.workerPort }}/healthz/shutdown; sleep 5"
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}

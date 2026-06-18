@@ -1,0 +1,75 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-default-deny
+  namespace: {{ include "task-queue.namespace" . }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-api-ingress
+  namespace: {{ include "task-queue.namespace" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: task-queue-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - port: {{ .Values.networking.apiPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-redis-ingress
+  namespace: {{ include "task-queue.namespace" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: task-queue-api
+        - podSelector:
+            matchLabels:
+              app: task-queue-worker
+        - podSelector:
+            matchLabels:
+              app: task-queue-scheduler
+      ports:
+        - port: {{ .Values.networking.redisPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-egress-redis
+  namespace: {{ include "task-queue.namespace" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: task-queue-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - port: {{ .Values.networking.redisPort }}
+{{- end }}

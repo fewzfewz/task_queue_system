@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"time"
@@ -531,14 +532,29 @@ func (q *RedisQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
 	return res, nil
 }
 
+// processedTTL is how long a processed job ID is kept for idempotency checks.
+// After this period, Redis automatically evicts the key, bounding memory use.
+const processedTTL = 24 * time.Hour
+
 // IsProcessed checks if a job has already been marked as completed in Redis.
+// Uses a TTL-backed key so old entries are automatically evicted.
 func (q *RedisQueue) IsProcessed(ctx context.Context, jobID string) (bool, error) {
-	return q.client.SIsMember(ctx, q.processedKey, jobID).Result()
+	_, err := q.client.Get(ctx, q.processedKey+":"+jobID).Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
-// MarkProcessed adds a job ID to the set of completed jobs.
+// MarkProcessed records a job ID as completed with a TTL, bounding memory growth.
 func (q *RedisQueue) MarkProcessed(ctx context.Context, jobID string) error {
-	return q.client.SAdd(ctx, q.processedKey, jobID).Err()
+	return q.client.Set(ctx, q.processedKey+":"+jobID, "1", processedTTL).Err()
+}
+
+// CleanupProcessedIDs is a no-op now that processed IDs self-expire via TTL.
+// Retained for backwards compatibility with any caller that expects a maintenance hook.
+func (q *RedisQueue) CleanupProcessedIDs(ctx context.Context) (int64, error) {
+	return 0, nil
 }
 
 

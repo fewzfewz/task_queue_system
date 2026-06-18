@@ -155,7 +155,7 @@ func setupProcessor(t *testing.T, executeFn func(ctx context.Context, job *jobs.
 	})
 	je := &JobExecutor{registry: reg, logger: slog.Default()}
 
-	wp := NewWorkerProcessor("test-worker", svc, je, nil, slog.Default())
+	wp := NewWorkerProcessor("test-worker", svc, je, nil, slog.Default(), 0)
 	return wp, store, q
 }
 

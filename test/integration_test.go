@@ -56,7 +56,7 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	p := &TestPlugin{JobType: "test-success"}
 	exec.RegisterPlugin(p)
 	
-	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log)
+	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
 
 	// 1. Submit Job
 	job, err := svc.CreateJob(ctx, "test-success", nil, "medium", 3, "", "", 0, 0, "", nil)
@@ -101,7 +101,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	p := &TestPlugin{JobType: "test-fail", ShouldFail: true} // This worker will fail
 	exec.RegisterPlugin(p)
 	
-	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log)
+	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
 
 	// Submit Job with 1 retry
 	job, err := svc.CreateJob(ctx, "test-fail", nil, "medium", 1, "", "", 0, 0, "", nil)
@@ -157,7 +157,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 	p := &TestPlugin{JobType: "test-scheduled"}
 	exec.RegisterPlugin(p)
 	
-	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log)
+	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
 
 	// Submit Job scheduled 1 second in the future
 	runAt := time.Now().Add(1 * time.Second).Format(time.RFC3339)

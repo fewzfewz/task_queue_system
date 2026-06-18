@@ -23,6 +23,9 @@ type Config struct {
 	// JobsPerSecond limits the global processing rate across all workers.
 	// A value of 0 means no limit.
 	JobsPerSecond float64
+	// SLATarget is the duration within which a job is considered SLA-compliant.
+	// Default 5s.
+	SLATarget time.Duration
 }
 
 // Pool manages a fixed number of worker processors and their lifecycle.
@@ -83,7 +86,7 @@ func (p *Pool) Start(ctx context.Context) {
 
 	for i := 0; i < p.cfg.NumWorkers; i++ {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
-		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger)
+		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger, p.cfg.SLATarget)
 		
 		w.SetHooks(
 			func() { p.busyCount.Add(1) },

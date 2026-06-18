@@ -24,6 +24,7 @@ import (
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/storage"
+	"task-queue-system/internal/tracing"
 )
 
 func main() {
@@ -37,6 +38,19 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("starting api service", "port", cfg.ServerPort)
+
+	// ── 2b. Initialize OpenTelemetry ───────────────────────────────────────────
+	otelShutdown, err := tracing.Init(context.Background(), cfg.OTELExporterOTLPEndpoint)
+	if err != nil {
+		log.Error("failed to init tracing", "error", err)
+		os.Exit(1)
+	}
+	if cfg.OTELExporterOTLPEndpoint != "" {
+		log.Info("opentelemetry tracing enabled", "endpoint", cfg.OTELExporterOTLPEndpoint)
+	}
+	defer func() {
+		_ = otelShutdown(context.Background())
+	}()
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{

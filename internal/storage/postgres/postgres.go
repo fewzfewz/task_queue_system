@@ -23,8 +23,16 @@ type PostgresStore struct {
 // Ensure PostgresStore satisfies the Store interface.
 var _ models.Store = (*PostgresStore)(nil)
 
-// New creates a new PostgresStore and verifies connectivity.
+// New creates a new PostgresStore with connection retry and backoff.
+// It retries up to maxRetries times with exponential backoff (1s, 2s, 4s, ...)
+// before giving up. A zero or negative maxRetries disables retry.
 func New(ctx context.Context, connStr string) (*PostgresStore, error) {
+	return NewWithRetry(ctx, connStr, 5)
+}
+
+// NewWithRetry creates a PostgresStore, retrying the initial connection
+// with exponential backoff. maxRetries=0 means no retry, just one attempt.
+func NewWithRetry(ctx context.Context, connStr string, maxRetries int) (*PostgresStore, error) {
 	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: failed to parse config: %w", err)
@@ -33,16 +41,35 @@ func New(ctx context.Context, connStr string) (*PostgresStore, error) {
 	config.MaxConns = 25
 	config.MinConns = 5
 
-	pool, err := pgxpool.NewWithConfig(ctx, config)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: failed to create pool: %w", err)
+	var pool *pgxpool.Pool
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<(attempt-1)) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("postgres: context cancelled during retry: %w", ctx.Err())
+			case <-time.After(backoff):
+			}
+		}
+
+		pool, err = pgxpool.NewWithConfig(ctx, config)
+		if err != nil {
+			lastErr = fmt.Errorf("postgres: failed to create pool (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
+			continue
+		}
+
+		if err := pool.Ping(ctx); err != nil {
+			pool.Close()
+			lastErr = fmt.Errorf("postgres: health check failed (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
+			continue
+		}
+
+		return &PostgresStore{pool: pool}, nil
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("postgres: health check failed: %w", err)
-	}
-
-	return &PostgresStore{pool: pool}, nil
+	return nil, lastErr
 }
 
 // Close shut downs the pool.

@@ -17,6 +17,7 @@ import (
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage"
+	"task-queue-system/internal/tracing"
 	"task-queue-system/internal/webhooks"
 	"task-queue-system/internal/worker/executor"
 	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
@@ -45,6 +46,19 @@ func main() {
 
 	log = log.With("instance_id", instanceID)
 	log.Info("starting worker service", "workers", cfg.WorkerPoolSize)
+
+	// ── 2b. Initialize OpenTelemetry ───────────────────────────────────────────
+	otelShutdown, err := tracing.Init(context.Background(), cfg.OTELExporterOTLPEndpoint)
+	if err != nil {
+		log.Error("failed to init tracing", "error", err)
+		os.Exit(1)
+	}
+	if cfg.OTELExporterOTLPEndpoint != "" {
+		log.Info("opentelemetry tracing enabled", "endpoint", cfg.OTELExporterOTLPEndpoint)
+	}
+	defer func() {
+		_ = otelShutdown(context.Background())
+	}()
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{
@@ -85,6 +99,7 @@ func main() {
 	poolCfg := pool.Config{
 		NumWorkers:    cfg.WorkerPoolSize,
 		JobsPerSecond: cfg.JobRateLimit,
+		SLATarget:     time.Duration(cfg.SLATargetSeconds) * time.Second,
 	}
 
 	workerPool, err := pool.New(poolCfg, instanceID, svc, jobExec, log)

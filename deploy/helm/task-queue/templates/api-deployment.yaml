@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-queue-api
+  namespace: {{ include "task-queue.namespace" . }}
+  labels:
+    app: task-queue-api
+spec:
+  replicas: {{ .Values.replicas.api }}
+  selector:
+    matchLabels:
+      app: task-queue-api
+  template:
+    metadata:
+      labels:
+        app: task-queue-api
+    spec:
+      serviceAccountName: task-queue-api
+      containers:
+        - name: api
+          image: {{ include "task-queue.api.image" . }}
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            - name: PORT
+              value: "{{ .Values.networking.apiPort }}"
+            - name: REDIS_HOST
+              value: "{{ .Values.env.REDIS_HOST | default (printf "redis.%s.svc.cluster.local:6379" (include "task-queue.namespace" .)) }}"
+            - name: REDIS_DB
+              value: "{{ .Values.env.REDIS_DB }}"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: task-queue-secrets
+                  key: api-key
+                  optional: true
+            - name: API_KEY
+              value: "{{ .Values.env.API_KEY }}"
+            - name: LOG_LEVEL
+              value: "{{ .Values.env.LOG_LEVEL }}"
+            - name: MAX_QUEUE_SIZE
+              value: "{{ .Values.env.MAX_QUEUE_SIZE }}"
+            - name: STORE_BACKEND
+              value: "{{ .Values.env.STORE_BACKEND }}"
+            - name: TENANT_RATE_LIMIT
+              value: "{{ .Values.env.TENANT_RATE_LIMIT }}"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "{{ .Values.env.OTEL_EXPORTER_OTLP_ENDPOINT }}"
+          ports:
+            - containerPort: {{ .Values.networking.apiPort }}
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.networking.apiPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.networking.apiPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: task-queue-api
+  namespace: {{ include "task-queue.namespace" . }}
+  labels:
+    app: task-queue-api
+spec:
+  selector:
+    app: task-queue-api
+  ports:
+    - protocol: TCP
+      port: {{ .Values.networking.apiPort }}
+      targetPort: {{ .Values.networking.apiPort }}
+      name: http

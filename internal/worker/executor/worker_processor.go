@@ -12,6 +12,9 @@ import (
 	"task-queue-system/internal/worker/limiter"
 )
 
+// defaultSLATarget is the fallback SLA duration when none is configured.
+const defaultSLATarget = 5 * time.Second
+
 // WorkerProcessor orchestrates the full job lifecycle for a single worker:
 //
 //  1. Pull a job from the queue (blocking)
@@ -28,6 +31,8 @@ type WorkerProcessor struct {
 	limiter limiter.RateLimiter
 	logger  *slog.Logger
 
+	slaTarget time.Duration
+
 	onBusy    func()
 	onIdle    func()
 }
@@ -35,13 +40,18 @@ type WorkerProcessor struct {
 
 // NewWorkerProcessor creates a WorkerProcessor.
 // name is used for log attribution and job metadata. limiter can be nil if no rate limiting applies.
-func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l limiter.RateLimiter, logger *slog.Logger) *WorkerProcessor {
+// slaTarget of 0 means use the default (5s).
+func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l limiter.RateLimiter, logger *slog.Logger, slaTarget time.Duration) *WorkerProcessor {
+	if slaTarget <= 0 {
+		slaTarget = defaultSLATarget
+	}
 	return &WorkerProcessor{
-		name:    name,
-		service: svc,
-		exec:    je,
-		limiter: l,
-		logger:  logger.With("worker_id", name),
+		name:      name,
+		service:   svc,
+		exec:      je,
+		limiter:   l,
+		logger:    logger.With("worker_id", name),
+		slaTarget: slaTarget,
 	}
 }
 
@@ -194,9 +204,9 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		metrics.JobTotal.WithLabelValues(job.Type, job.TenantID, "completed").Inc()
 		metrics.JobLatency.WithLabelValues(job.Type, job.TenantID).Observe(elapsed.Seconds())
 
-		// SLA Tracking: Assume 5s target for all jobs for now
+		// SLA Tracking
 		compliant := "false"
-		if elapsed < 5*time.Second {
+		if elapsed < wp.slaTarget {
 			compliant = "true"
 		}
 		metrics.JobSLACompliance.WithLabelValues(job.Type, job.TenantID, compliant).Inc()
@@ -229,7 +239,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 
 	// SLA Tracking: Even failed jobs contribute to SLA statistics
 	compliant := "false"
-	if elapsed < 5*time.Second {
+	if elapsed < wp.slaTarget {
 		compliant = "true"
 	}
 	metrics.JobSLACompliance.WithLabelValues(job.Type, job.TenantID, compliant).Inc()
