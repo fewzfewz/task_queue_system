@@ -163,7 +163,7 @@ func (s *InMemoryStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 }
 
 func (s *InMemoryStore) Dequeue(ctx context.Context, tenantID string) (*jobs.Job, error) {
-	return nil, fmt.Errorf("in-memory dequeue not implemented")
+	return nil, fmt.Errorf("InMemoryStore.Dequeue is not implemented; use RedisQueue which owns the dequeue/priority LUA script logic")
 }
 
 func (s *InMemoryStore) Heartbeat(ctx context.Context, jobID string) error {
@@ -219,7 +219,19 @@ func (s *InMemoryStore) ListJobs(ctx context.Context, tenantID string, status st
 }
 
 func (s *InMemoryStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
-	return 0, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := time.Now().Add(-timeout)
+	var count int64
+	for _, j := range s.data {
+		if j.Status == jobs.StatusProcessing && j.UpdatedAt.Before(cutoff) {
+			j.Status = jobs.StatusPending
+			j.ProcessedBy = ""
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (s *InMemoryStore) DeleteJob(_ context.Context, jobID string) error {
@@ -447,7 +459,31 @@ func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status strin
 }
 
 func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
-	return 0, nil
+	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis_store: HVALS failed: %w", err)
+	}
+
+	cutoff := time.Now().Add(-timeout)
+	var count int64
+	for _, v := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(v), &j); err != nil {
+			continue
+		}
+		if j.Status == jobs.StatusProcessing && j.UpdatedAt.Before(cutoff) {
+			j.Status = jobs.StatusPending
+			j.ProcessedBy = ""
+			payload, err := json.Marshal(j)
+			if err != nil {
+				continue
+			}
+			if err := s.client.HSet(ctx, jobStoreKey, j.ID, payload).Err(); err == nil {
+				count++
+			}
+		}
+	}
+	return count, nil
 }
 
 func (s *RedisStore) DeleteJob(ctx context.Context, jobID string) error {

@@ -57,25 +57,28 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 
 ## Configuration
 
-Environment variables read by the code:
-
-- `PORT` default `8080`
-- `REDIS_HOST` default `localhost:6379`
-- `REDIS_PASSWORD` default empty
-- `REDIS_DB` default `0`
-- `API_KEY` default `secret-api-key`
-- `JOB_RATE_LIMIT` default `0`
-- `LOG_LEVEL` default `info`
-- `MAX_QUEUE_SIZE` default `10000`
-- `STORE_BACKEND` default `redis`
-- `POSTGRES_CONN_STR` default empty
-- `JWT_PUBLIC_KEY` default empty
-- `JWT_PUBLIC_KEY_PATH` default empty
-- `VAULT_ADDR` default empty
-- `VAULT_ROLE_ID` default empty
-- `VAULT_SECRET_ID` default empty
-- `DRAIN_TIMEOUT` default `60`
-- `WORKER_POOL_SIZE` default `50`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | API HTTP port |
+| `WORKER_PORT` | `8081` | Worker metrics/health port |
+| `SCHEDULER_PORT` | `8082` | Scheduler metrics/health port |
+| `REDIS_HOST` | `localhost:6379` | Redis address |
+| `REDIS_PASSWORD` | `` | Redis password |
+| `REDIS_DB` | `0` | Redis database number |
+| `API_KEY` | `secret-api-key` | Legacy API key auth |
+| `JOB_RATE_LIMIT` | `0` | Worker throughput limit (jobs/sec) |
+| `TENANT_RATE_LIMIT` | `0` | Per-tenant API rate limit (req/sec) |
+| `LOG_LEVEL` | `info` | Log level |
+| `MAX_QUEUE_SIZE` | `10000` | Max pending jobs |
+| `STORE_BACKEND` | `redis` | Store backend (redis, postgres, dual) |
+| `POSTGRES_CONN_STR` | `` | PostgreSQL connection string |
+| `JWT_PUBLIC_KEY` | `` | JWT public key in PEM |
+| `JWT_PUBLIC_KEY_PATH` | `` | Path to JWT public key file |
+| `VAULT_ADDR` | `` | Vault address |
+| `VAULT_ROLE_ID` | `` | Vault AppRole role ID |
+| `VAULT_SECRET_ID` | `` | Vault AppRole secret ID |
+| `DRAIN_TIMEOUT` | `60` | Worker drain timeout (seconds) |
+| `WORKER_POOL_SIZE` | `50` | Worker goroutine count |
 
 Notes:
 

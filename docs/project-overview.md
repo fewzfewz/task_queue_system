@@ -143,24 +143,28 @@ The test suite also uses:
 
 ## Configuration summary
 
-Important environment variables:
-
-- `PORT`
-- `REDIS_HOST`
-- `REDIS_PASSWORD`
-- `REDIS_DB`
-- `API_KEY`
-- `JOB_RATE_LIMIT`
-- `LOG_LEVEL`
-- `MAX_QUEUE_SIZE`
-- `STORE_BACKEND`
-- `POSTGRES_CONN_STR`
-- `JWT_PUBLIC_KEY`
-- `JWT_PUBLIC_KEY_PATH`
-- `VAULT_ADDR`
-- `VAULT_ROLE_ID`
-- `VAULT_SECRET_ID`
-- `DRAIN_TIMEOUT`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | API HTTP port |
+| `WORKER_PORT` | `8081` | Worker metrics/health port |
+| `SCHEDULER_PORT` | `8082` | Scheduler metrics/health port |
+| `REDIS_HOST` | `localhost:6379` | Redis address |
+| `REDIS_PASSWORD` | `` | Redis password |
+| `REDIS_DB` | `0` | Redis database number |
+| `API_KEY` | `secret-api-key` | Legacy API key auth |
+| `JOB_RATE_LIMIT` | `0` | Worker throughput limit (jobs/sec, 0 = unlimited) |
+| `TENANT_RATE_LIMIT` | `0` | Per-tenant API rate limit (req/sec, 0 = unlimited) |
+| `LOG_LEVEL` | `info` | Log level (info, error, debug) |
+| `MAX_QUEUE_SIZE` | `10000` | Max pending jobs (0 = unlimited) |
+| `STORE_BACKEND` | `redis` | Store backend (redis, postgres, dual) |
+| `POSTGRES_CONN_STR` | `` | PostgreSQL connection string |
+| `JWT_PUBLIC_KEY` | `` | JWT public key in PEM format |
+| `JWT_PUBLIC_KEY_PATH` | `` | Path to JWT public key file |
+| `VAULT_ADDR` | `` | HashiCorp Vault address |
+| `VAULT_ROLE_ID` | `` | Vault AppRole role ID |
+| `VAULT_SECRET_ID` | `` | Vault AppRole secret ID |
+| `DRAIN_TIMEOUT` | `60` | Worker drain timeout (seconds) |
+| `WORKER_POOL_SIZE` | `50` | Number of concurrent worker goroutines |
 
 ## External systems
 

@@ -20,14 +20,27 @@ spec:
           imagePullPolicy: IfNotPresent
           command: ["./scheduler"]
           env:
+            - name: SCHEDULER_PORT
+              value: "8082"
             - name: REDIS_HOST
-              value: "redis.default.svc.cluster.local:6379"
+              value: "redis.task-queue.svc.cluster.local:6379"
             - name: REDIS_PASSWORD
               value: ""
             - name: REDIS_DB
               value: "0"
+          ports:
+            - containerPort: 8082
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8082
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
           livenessProbe:
-            exec:
-              command: ["/bin/sh", "-c", "test -n \"$(pgrep scheduler || true)\""]
+            httpGet:
+              path: /healthz
+              port: 8082
             initialDelaySeconds: 10
-            periodSeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 2
