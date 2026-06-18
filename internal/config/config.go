@@ -66,6 +66,17 @@ type Config struct {
 	// WorkerPoolSize is the number of goroutines the worker process starts.
 	// Default: 50.
 	WorkerPoolSize int
+
+	// WorkerPort is the HTTP port the worker's metrics/health server listens on.
+	// Default: "8081"
+	WorkerPort string
+
+	// SchedulerPort is the HTTP port the scheduler's health server listens on.
+	// Default: "8082"
+	SchedulerPort string
+
+	// TenantRateLimit is the max requests per second per tenant. Default: 0 (unlimited).
+	TenantRateLimit int64
 }
 
 
@@ -91,6 +102,9 @@ func Load() *Config {
 		VaultSecretID: getEnvOrDefault("VAULT_SECRET_ID", ""),
 		DrainTimeoutSeconds: getEnvAsInt("DRAIN_TIMEOUT", 60),
 		WorkerPoolSize:      getEnvAsInt("WORKER_POOL_SIZE", 50),
+		WorkerPort:          getEnvOrDefault("WORKER_PORT", "8081"),
+		SchedulerPort:       getEnvOrDefault("SCHEDULER_PORT", "8082"),
+		TenantRateLimit:     getEnvAsInt64("TENANT_RATE_LIMIT", 0),
 	}
 }
 

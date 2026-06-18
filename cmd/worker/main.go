@@ -64,7 +64,7 @@ func main() {
 	log.Info("connected to redis", "host", cfg.RedisHost)
 
 	// ── 4. Initialise Queue and Store ─────────────────────────────────────────
-	q := redisqueue.New(redisClient, "jobs")
+	q := redisqueue.NewWithRateLimit(redisClient, "jobs", cfg.TenantRateLimit)
 
 	// Initialise store based on configuration (Redis, Postgres, or Dual)
 	store, err := storage.InitStore(ctx, cfg, redisClient)
@@ -118,12 +118,12 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler())
 
 	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
+		Addr:    fmt.Sprintf(":%s", cfg.WorkerPort),
 		Handler: mux,
 	}
 
 	go func() {
-		log.Info("starting worker HTTP server", "port", cfg.ServerPort)
+		log.Info("starting worker HTTP server", "port", cfg.WorkerPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Error("worker HTTP server failed", "error", err)
 			os.Exit(1)

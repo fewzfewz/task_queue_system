@@ -119,16 +119,24 @@ type RedisQueue struct {
 	metricsFailed    string
 	heartbeatPrefix  string
 	processedKey     string
+
+	rateLimit int64 // per-tenant rate limit (req/s), 0 = unlimited
 }
 
 // New creates a new RedisQueue. The provided client must already be connected.
 // Pass an empty queueName to use the default key.
 func New(client *redis.Client, queueName string) *RedisQueue {
+	return NewWithRateLimit(client, queueName, 10)
+}
+
+// NewWithRateLimit creates a new RedisQueue with a configurable per-tenant rate limit.
+func NewWithRateLimit(client *redis.Client, queueName string, rateLimit int64) *RedisQueue {
 	baseKey := defaultQueueKey
 	if queueName != "" {
 		baseKey = "task_queue:" + queueName
 	}
 	return &RedisQueue{
+		rateLimit: rateLimit,
 		client:           client,
 		qHigh:            baseKey + ":high",
 		qMedium:          baseKey + ":medium",
@@ -535,14 +543,17 @@ func (q *RedisQueue) MarkProcessed(ctx context.Context, jobID string) error {
 
 
 // IsAllowed implements per-tenant rate limiting using a Redis-backed token bucket.
-// It allows up to 10 jobs per second per tenant for this demo.
 func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error) {
+	if q.rateLimit == 0 {
+		return true, nil // unlimited
+	}
+
 	if tenantID == "" {
 		return true, nil // anonymous tenant (global pool)
 	}
 
 	key := "task_queue:tenant:" + tenantID + ":rate"
-	limit := int64(10) // hardcoded limit for demo
+	limit := q.rateLimit
 
 	val, err := q.client.Incr(ctx, key).Result()
 	if err != nil {

@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
 	queue_redis "task-queue-system/internal/queue/redis"
 )
@@ -40,7 +44,27 @@ func main() {
 	// ── 4. Initialize Queue Backend ──────────────────────────────────────────
 	q := queue_redis.New(redisClient, "")
 
-	// ── 5. Setup Context & Shutdown ───────────────────────────────────────────
+	// ── 5. Start Health/Metrics HTTP Server ───────────────────────────────────
+	checker := health.NewChecker("scheduler", health.AdaptRedis(redisClient))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", checker.Live)
+	mux.HandleFunc("/readyz", checker.Ready)
+	mux.Handle("/metrics", promhttp.Handler())
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", cfg.SchedulerPort),
+		Handler: mux,
+	}
+
+	go func() {
+		log.Info("starting scheduler HTTP server", "port", cfg.SchedulerPort)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("scheduler HTTP server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// ── 6. Setup Context & Shutdown ───────────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -53,7 +77,7 @@ func main() {
 		cancel()
 	}()
 
-	// ── 6. Run Promotion Loop ─────────────────────────────────────────────────
+	// ── 7. Run Promotion Loop ─────────────────────────────────────────────────
 	ticker := time.NewTicker(1500 * time.Millisecond) // 1.5s interval
 	defer ticker.Stop()
 
@@ -63,6 +87,10 @@ func main() {
 		select {
 		case <-ctx.Done():
 			log.Info("scheduler shutting down gracefully")
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			_ = srv.Shutdown(shutdownCtx)
+			_ = redisClient.Close()
 			return
 		case <-ticker.C:
 			// 1. Promote scheduled jobs

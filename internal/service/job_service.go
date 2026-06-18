@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -125,10 +126,10 @@ func (s *JobService) Fail(ctx context.Context, jobID string, err error) error {
 func (s *JobService) GetJobStatus(ctx context.Context, jobID string) (*jobs.Job, error) {
 	j, err := s.store.GetByID(ctx, jobID)
 	if err != nil {
+		if errors.Is(err, models.ErrJobNotFound) {
+			return nil, apperr.NewNotFound("job", jobID)
+		}
 		return nil, apperr.NewInternal("database query failed", err)
-	}
-	if j == nil {
-		return nil, apperr.NewNotFound("job", jobID)
 	}
 	return j, nil
 }

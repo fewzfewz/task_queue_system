@@ -184,33 +184,34 @@ func (s *PostgresStore) UpdateResult(ctx context.Context, id string, status jobs
 	}
 
 	now := time.Now().UTC()
-	var errHistJSON []byte
+	var completedAt *time.Time
+	if status == jobs.StatusCompleted || status == jobs.StatusFailed {
+		completedAt = &now
+	}
+
+	// Atomically append to error_history using JSONB concatenation
+	var errHistParam interface{}
+
 	if status == jobs.StatusFailed || (status == jobs.StatusPending && result != nil) {
-		// Append to error history if it's a failure
-		histErr := jobs.AttemptError{
+		entry := []jobs.AttemptError{{
 			Error:     fmt.Sprintf("%v", result),
 			Timestamp: now,
-		}
-		
-		// We need the current history to append
-		// In a real high-perf system we'd use jsonb_set or similar
-		var existingHist []byte
-		_ = s.pool.QueryRow(ctx, "SELECT error_history FROM jobs WHERE id = $1", id).Scan(&existingHist)
-		var hist []jobs.AttemptError
-		if existingHist != nil {
-			_ = json.Unmarshal(existingHist, &hist)
-		}
-		histErr.Attempt = len(hist) + 1
-		hist = append(hist, histErr)
-		errHistJSON, _ = json.Marshal(hist)
+		}}
+		marshalled, _ := json.Marshal(entry)
+		errHistParam = marshalled
 	}
 
 	query := `
 		UPDATE jobs 
-		SET status = $1, processed_by = $2, result = $3, error = $4, updated_at = $5, completed_at = $6, error_history = $7
+		SET status = $1, processed_by = $2, result = $3, error = $4, 
+		    updated_at = $5, completed_at = $6, 
+		    error_history = CASE WHEN $7::jsonb IS NOT NULL 
+		        THEN COALESCE(error_history, '[]'::jsonb) || $7::jsonb 
+		        ELSE error_history 
+		    END
 		WHERE id = $8
 	`
-	ct, err := s.pool.Exec(ctx, query, string(status), workerID, resJSON, errorStr, now, now, errHistJSON, id)
+	ct, err := s.pool.Exec(ctx, query, string(status), workerID, resJSON, errorStr, now, completedAt, errHistParam, id)
 	if err != nil {
 		return err
 	}

@@ -55,7 +55,7 @@ func main() {
 	log.Info("connected to redis", "host", cfg.RedisHost)
 
 	// ── 4. Initialise Queue and Store ─────────────────────────────────────────
-	q := redisqueue.New(redisClient, "jobs")
+	q := redisqueue.NewWithRateLimit(redisClient, "jobs", cfg.TenantRateLimit)
 
 	// Initialise store based on configuration (Redis, Postgres, or Dual)
 	store, err := storage.InitStore(ctx, cfg, redisClient)
