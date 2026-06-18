@@ -67,6 +67,12 @@ var (
 		Name: "task_queue_webhook_delivery_failures_total",
 		Help: "Total number of failed webhook delivery attempts.",
 	}, []string{"tenant_id", "reason"})
+
+	// APIRequestTotal tracks the total number of API requests for autoscaling.
+	APIRequestTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "task_queue_api_request_total",
+		Help: "Total number of API requests received.",
+	})
 )
 
 

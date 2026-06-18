@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/tracing"
 )
 
@@ -26,7 +27,9 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			ctx, traceID := tracing.Start(r.Context())
 			r = r.WithContext(ctx)
 			start := time.Now()
-			
+
+			metrics.APIRequestTotal.Inc()
+
 			rw := &responseWriter{w, http.StatusOK}
 			
 			next.ServeHTTP(rw, r)

@@ -20,3 +20,10 @@ data:
           name:
             as: "task_queue_worker_busy_ratio"
           metricsQuery: 'avg(task_queue_worker_busy_ratio{<<.LabelMatchers>>})'
+
+        - seriesQuery: '{__name__="task_queue_api_request_rate"}'
+          resources:
+            template: <<.Resource>>
+          name:
+            as: "task_queue_api_request_rate"
+          metricsQuery: 'sum(rate(task_queue_api_request_total{<<.LabelMatchers>>}[5m]))'

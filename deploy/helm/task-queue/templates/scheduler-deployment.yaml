@@ -16,6 +16,13 @@ spec:
         app: task-queue-scheduler
     spec:
       serviceAccountName: task-queue-scheduler
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.scheduler.maxSkew }}
+          topologyKey: {{ .Values.topologySpreadConstraints.scheduler.topologyKey }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.scheduler.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: task-queue-scheduler
       containers:
         - name: scheduler
           image: {{ include "task-queue.scheduler.image" . }}

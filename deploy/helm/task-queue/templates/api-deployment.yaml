@@ -16,6 +16,13 @@ spec:
         app: task-queue-api
     spec:
       serviceAccountName: task-queue-api
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.api.maxSkew }}
+          topologyKey: {{ .Values.topologySpreadConstraints.api.topologyKey }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.api.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: task-queue-api
       containers:
         - name: api
           image: {{ include "task-queue.api.image" . }}

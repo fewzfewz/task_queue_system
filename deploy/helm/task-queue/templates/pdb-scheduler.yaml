@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: task-queue-scheduler-pdb
+  namespace: {{ include "task-queue.namespace" . }}
+  labels:
+    app: task-queue-scheduler
+spec:
+  minAvailable: {{ .Values.pdb.scheduler.minAvailable | default 1 }}
+  selector:
+    matchLabels:
+      app: task-queue-scheduler

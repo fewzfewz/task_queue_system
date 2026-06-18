@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: task-queue-worker-pdb
+  namespace: {{ include "task-queue.namespace" . }}
+  labels:
+    app: task-queue-worker
+spec:
+  minAvailable: {{ .Values.pdb.worker.minAvailable | default 1 }}
+  selector:
+    matchLabels:
+      app: task-queue-worker

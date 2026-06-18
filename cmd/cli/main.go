@@ -34,10 +34,13 @@ func main() {
 	batch := migrateCmd.Int("batch", 500, "Batch size for migration")
 
 	schemaCmd := flag.NewFlagSet("migrate-schema", flag.ExitOnError)
-	migrationsDir := schemaCmd.String("dir", "db/migrations", "Directory containing versioned SQL migrations")
+	schemaDir := schemaCmd.String("dir", "db/migrations", "Directory containing versioned SQL migrations")
+
+	downSchemaCmd := flag.NewFlagSet("migrate-down-schema", flag.ExitOnError)
+	downDir := downSchemaCmd.String("dir", "db/migrations", "Directory containing versioned SQL migrations")
 
 	if len(os.Args) < 2 {
-		fmt.Println("expected 'migrate-jobs' subcommand")
+		fmt.Println("expected 'migrate-jobs', 'migrate-schema', 'migrate-down', or 'migrate-down-schema' subcommand")
 		os.Exit(1)
 	}
 
@@ -51,14 +54,12 @@ func main() {
 
 		ctx := context.Background()
 
-		// 1. Connect to Redis
 		rdb := redis.NewClient(&redis.Options{
 			Addr:     cfg.RedisHost,
 			Password: cfg.RedisPassword,
 			DB:       cfg.RedisDB,
 		})
 
-		// 2. Connect to Postgres
 		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
 		if err != nil {
 			log.Error("failed to connect to postgres", "error", err)
@@ -80,7 +81,6 @@ func main() {
 				os.Exit(1)
 			}
 
-			// HScan returns [key1, val1, key2, val2, ...]
 			for i := 1; i < len(keys); i += 2 {
 				val := keys[i]
 				var job jobs.Job
@@ -124,11 +124,38 @@ func main() {
 		}
 		defer pgStore.Close()
 
-		if err := applyMigrations(ctx, cfg.PostgresConnStr, *migrationsDir, log); err != nil {
+		if err := applyMigrations(ctx, cfg.PostgresConnStr, *schemaDir, log); err != nil {
 			log.Error("schema migration failed", "error", err)
 			os.Exit(1)
 		}
 		log.Info("schema migration completed successfully")
+
+	case "migrate-down":
+		log.Warn("data migration (redis -> postgres) is one-way and cannot be rolled back automatically")
+		log.Warn("to revert, run the application with STORE_BACKEND=redis and keep Postgres as a standby")
+		log.Info("no action taken")
+
+	case "migrate-down-schema":
+		_ = downSchemaCmd.Parse(os.Args[2:])
+
+		if cfg.PostgresConnStr == "" {
+			log.Error("POSTGRES_CONN_STR is required for schema rollback")
+			os.Exit(1)
+		}
+
+		ctx := context.Background()
+		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
+		if err != nil {
+			log.Error("failed to connect to postgres", "error", err)
+			os.Exit(1)
+		}
+		defer pgStore.Close()
+
+		if err := rollbackLastMigration(ctx, cfg.PostgresConnStr, *downDir, log); err != nil {
+			log.Error("schema rollback failed", "error", err)
+			os.Exit(1)
+		}
+		log.Info("schema rollback completed successfully")
 
 	default:
 		fmt.Println("unknown command:", os.Args[1])
@@ -157,12 +184,12 @@ func applyMigrations(ctx context.Context, connStr, dir string, log *slog.Logger)
 		return err
 	}
 
-	files := make([]string, 0, len(entries))
+	var files []string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		if strings.HasSuffix(entry.Name(), ".sql") {
+		if strings.HasSuffix(entry.Name(), ".sql") && !strings.HasSuffix(entry.Name(), "_rollback.sql") {
 			files = append(files, entry.Name())
 		}
 	}
@@ -202,5 +229,61 @@ func applyMigrations(ctx context.Context, connStr, dir string, log *slog.Logger)
 		log.Info("applied migration", "version", version)
 	}
 
+	return nil
+}
+
+func rollbackLastMigration(ctx context.Context, connStr, dir string, log *slog.Logger) error {
+	pool, err := pgx.Connect(ctx, connStr)
+	if err != nil {
+		return err
+	}
+	defer pool.Close(ctx)
+
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return err
+	}
+
+	var lastVersion string
+	err = pool.QueryRow(ctx, `SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1`).Scan(&lastVersion)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			log.Info("no migrations applied; nothing to roll back")
+			return nil
+		}
+		return err
+	}
+
+	rollbackFile := filepath.Join(dir, lastVersion+"_rollback.sql")
+	if _, err := os.Stat(rollbackFile); os.IsNotExist(err) {
+		return fmt.Errorf("rollback file not found: %s", rollbackFile)
+	}
+
+	sqlBytes, err := os.ReadFile(rollbackFile)
+	if err != nil {
+		return err
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("rollback %s failed: %w", lastVersion, err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version = $1`, lastVersion); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	log.Info("rolled back migration", "version", lastVersion)
 	return nil
 }

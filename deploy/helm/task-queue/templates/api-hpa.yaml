@@ -24,6 +24,13 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.hpa.api.targetMemory }}
+    - type: External
+      external:
+        metric:
+          name: task_queue_api_request_rate
+        target:
+          type: AverageValue
+          averageValue: "{{ .Values.hpa.api.targetRequestRate }}"
   behavior:
     scaleDown:
       stabilizationWindowSeconds: 120

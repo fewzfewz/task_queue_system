@@ -94,6 +94,7 @@ type Job struct {
 	DedupKey      string                 `json:"dedup_key,omitempty"`
 	Dependencies  []string               `json:"dependencies,omitempty"`
 	ShardKey      string                 `json:"shard_key,omitempty"`
+	TraceID       string                 `json:"trace_id,omitempty"`
 	ErrorHistory  []AttemptError         `json:"error_history,omitempty"`
 }
 

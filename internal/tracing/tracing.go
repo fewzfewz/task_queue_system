@@ -49,6 +49,18 @@ func FromContext(ctx context.Context) (string, bool) {
 	return v, ok && v != ""
 }
 
+func Inject(ctx context.Context) string {
+	id, _ := FromContext(ctx)
+	return id
+}
+
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	if traceID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, traceIDKey, traceID)
+}
+
 type ShutdownFunc func(context.Context) error
 
 func Init(ctx context.Context, endpoint string) (ShutdownFunc, error) {

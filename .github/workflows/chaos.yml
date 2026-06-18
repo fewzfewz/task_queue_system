@@ -1,0 +1,62 @@
+name: Chaos Tests
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      timeout:
+        description: 'Test timeout in seconds'
+        required: false
+        default: '300'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  chaos:
+    name: Chaos Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install iptables
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq iptables
+
+      - name: Build worker binary
+        run: go build -o /tmp/worker ./cmd/worker
+
+      - name: Run chaos tests
+        run: sudo -E go test -tags=chaos -v ./chaos/ -timeout "${TIMEOUT:-300}s"
+        env:
+          REDIS_HOST: localhost:6379
+          TIMEOUT: ${{ github.event.inputs.timeout || '300' }}
+
+      - name: Upload chaos report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-report
+          path: chaos-report.json
+          retention-days: 14

@@ -12,6 +12,7 @@ import (
 
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
+	"task-queue-system/internal/tracing"
 )
 
 // Now allows injection of the current time for deterministic testing.
@@ -207,6 +208,8 @@ func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 	if job == nil {
 		return fmt.Errorf("queue: cannot enqueue a nil job")
 	}
+
+	job.TraceID = tracing.Inject(ctx)
 
 	payload, err := json.Marshal(job)
 	if err != nil {

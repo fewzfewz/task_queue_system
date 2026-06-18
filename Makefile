@@ -1,24 +1,26 @@
 APP_NAME=task-queue-system
 
-.PHONY: help deps test build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler swagger docker-build docker-up docker-down migrate migrate-schema chaos load-test benchmark
+.PHONY: help deps test build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
 
 help:
 	@echo "Targets:"
-	@echo "  deps            Download Go module dependencies"
-	@echo "  test            Run the test suite"
-	@echo "  build           Build all binaries"
-	@echo "  run-api         Run the API locally"
-	@echo "  run-worker      Run the worker locally"
-	@echo "  run-scheduler   Run the scheduler locally"
-	@echo "  swagger         Regenerate Swagger docs"
-	@echo "  docker-build    Build the Docker image"
-	@echo "  docker-up       Start the local Docker Compose stack"
-	@echo "  docker-down     Stop the local Docker Compose stack"
-	@echo "  migrate         Run the Redis -> Postgres migration CLI"
-	@echo "  migrate-schema  Apply versioned SQL migrations to Postgres"
-	@echo "  chaos           Run chaos tests and export JSON results"
-	@echo "  load-test       Run the load test script"
-	@echo "  benchmark       Run the benchmark script"
+	@echo "  deps               Download Go module dependencies"
+	@echo "  test               Run the test suite"
+	@echo "  build              Build all binaries"
+	@echo "  run-api            Run the API locally"
+	@echo "  run-worker         Run the worker locally"
+	@echo "  run-scheduler      Run the scheduler locally"
+	@echo "  swagger            Regenerate Swagger docs"
+	@echo "  docker-build       Build the Docker image"
+	@echo "  docker-up          Start the local Docker Compose stack"
+	@echo "  docker-down        Stop the local Docker Compose stack"
+	@echo "  migrate            Run the Redis -> Postgres migration CLI"
+	@echo "  migrate-schema     Apply versioned SQL migrations to Postgres"
+	@echo "  migrate-down       Rollback the last data migration (one-way, safe no-op)"
+	@echo "  migrate-down-schema  Rollback the last applied SQL migration"
+	@echo "  chaos              Run chaos tests and export JSON results"
+	@echo "  load-test          Run the load test script"
+	@echo "  benchmark          Run the benchmark script"
 
 deps:
 	go mod download
@@ -66,6 +68,12 @@ migrate:
 
 migrate-schema:
 	go run ./cmd/cli migrate-schema --dir db/migrations
+
+migrate-down:
+	go run ./cmd/cli migrate-down
+
+migrate-down-schema:
+	go run ./cmd/cli migrate-down-schema --dir db/migrations
 
 chaos:
 	./scripts/chaos.sh chaos-report.json

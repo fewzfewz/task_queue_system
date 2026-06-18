@@ -75,6 +75,7 @@ hpa:
     maxReplicas: 10
     targetCPU: 70
     targetMemory: 80
+    targetRequestRate: 100
 
 env:
   API_KEY: "secret-api-key"
@@ -129,3 +130,25 @@ networkPolicy:
 
 metrics:
   enabled: true
+
+pdb:
+  api:
+    minAvailable: 1
+  worker:
+    minAvailable: 1
+  scheduler:
+    minAvailable: 1
+
+topologySpreadConstraints:
+  api:
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  worker:
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+  scheduler:
+    maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway

@@ -16,6 +16,13 @@ spec:
         app: task-queue-worker
     spec:
       serviceAccountName: task-queue-worker
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.worker.maxSkew }}
+          topologyKey: {{ .Values.topologySpreadConstraints.worker.topologyKey }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.worker.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app: task-queue-worker
       terminationGracePeriodSeconds: 75
       containers:
         - name: worker

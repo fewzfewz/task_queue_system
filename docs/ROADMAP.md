@@ -13,17 +13,7 @@
 
 | # | Item | Location | Effort | Notes |
 |---|------|----------|--------|-------|
-| 1 | **Webhook dispatcher Start() untested** | `internal/webhooks/dispatcher.go` | Medium | `send()` and `sign()` tested, but `Start()` loops on Redis Streams — needs integration test |
-| 2 | **Chaos tests not CI-integrated** | `chaos/` | Medium | Requires Docker + root. CI pipeline step documented in `chaos/README.md` but not wired into any CI config |
-
-### Low Priority / Nice-to-Have
-
-| # | Item | Location | Effort | Notes |
-|---|------|----------|--------|-------|
-| 3 | **API HPA with custom metrics (request rate)** | `deploy/helm/task-queue/` | Medium | HPA currently uses CPU/memory only — could scale on request rate via Prometheus adapter |
-| 4 | **OpenTelemetry context propagation across queue boundaries** | `internal/tracing/` | Medium | OTel SDK + OTLP exporter wired in. Trace IDs flow through request logging but not yet propagated across Enqueue/Dequeue boundaries |
-| 5 | **Helm chart production hardening** | `deploy/helm/task-queue/` | Medium | Chart skeleton exists. Needs: CI-tested install/upgrade, pod disruption budgets, topology spread constraints |
-| 6 | **Postgres migration improvements** | `cmd/cli/` | Small | Migrations work but have no rollback or version tracking |
+None — all items completed.
 
 ---
 
@@ -74,3 +64,9 @@
 | ✅ | **DAG visualization** (`GET /api/v1/jobs/{id}/deps`) with upstream + downstream | — | `handler.go` |
 | ✅ | **Progress reporting** via `plugin.WithProgressCallback` / `plugin.ReportProgress` | — | `plugin/interface.go`, `worker_processor.go` |
 | ✅ | **Full HTML UI rewrite** with 7 tabs, pagination, toast notifications, circuit breaker controls | — | `ui_handler.go` |
+| ✅ | **Webhook dispatcher Start() integration test** | `TestDispatcherStartIntegration` | `dispatcher_integration_test.go` |
+| ✅ | **Chaos tests CI-integrated** (GitHub Actions workflow) | — | `.github/workflows/chaos.yml` |
+| ✅ | **API HPA request rate metric** (`task_queue_api_request_total`) | — | `metrics.go`, `api-hpa.yaml` |
+| ✅ | **OTel context propagation** (trace ID across Enqueue/Dequeue) | — | `tracing.go`, `redis.go`, `worker_processor.go` |
+| ✅ | **Helm chart hardening** (PDBs + topology spread constraints) | — | `helm/task-queue/templates/pdb-*.yaml`, deployment templates |
+| ✅ | **Postgres migration rollback** (rollback SQL + CLI commands) | — | `cmd/cli/main.go`, `db/migrations/*_rollback.sql` |

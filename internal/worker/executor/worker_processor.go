@@ -9,6 +9,7 @@ import (
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/metrics"
 	"task-queue-system/internal/service"
+	"task-queue-system/internal/tracing"
 	"task-queue-system/internal/worker/limiter"
 	"task-queue-system/internal/worker/plugin"
 )
@@ -121,6 +122,11 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	// Identify this worker on the job object.
 	job.ProcessedBy = wp.name
 
+	// Propagate trace context from the job for continued distributed tracing.
+	if job.TraceID != "" {
+		ctx = tracing.WithTraceID(ctx, job.TraceID)
+	}
+
 	log := wp.logger.With(
 		"job_id", job.ID,
 		"job_type", job.Type,
@@ -164,6 +170,9 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	// the worker will FINISH the job before exiting, rather than aborting
 	// the active task mid-flight.
 	execCtx := context.WithoutCancel(ctx)
+	if job.TraceID != "" {
+		execCtx = tracing.WithTraceID(execCtx, job.TraceID)
+	}
 
 	// ── Rate Limit Check ──────────────────────────────────────────────────────
 	// Wait logic consumes a token globally. We use the original 'ctx' here so 
