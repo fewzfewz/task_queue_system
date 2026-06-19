@@ -27,6 +27,21 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// cors wraps a handler with CORS headers so the UI (served on a different port) can
+// reach the worker's circuit-breaker endpoints from the browser.
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 
 func main() {
 	// ── 1. Setup structured logging ───────────────────────────────────────────
@@ -133,18 +148,27 @@ func main() {
 	mux.HandleFunc("/healthz/shutdown", shutdownCoordinator.Handler)
 	mux.Handle("/metrics", promhttp.Handler())
 
-	mux.HandleFunc("GET /circuit-breaker", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		status := jobExec.CircuitBreakerStatus()
-		b, _ := json.Marshal(status)
-		w.Write(b)
-	})
-	mux.HandleFunc("POST /circuit-breaker/reset/{type}", func(w http.ResponseWriter, r *http.Request) {
-		jobType := r.PathValue("type")
-		jobExec.ResetCircuitBreaker(jobType)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","type":%q}`, jobType)
-	})
+	cb := cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			status := jobExec.CircuitBreakerStatus()
+			b, _ := json.Marshal(status)
+			w.Write(b)
+			return
+		}
+		if r.Method == http.MethodPost {
+			jobType := r.PathValue("type")
+			jobExec.ResetCircuitBreaker(jobType)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"status":"ok","type":%q}`, jobType)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	mux.Handle("GET /circuit-breaker", cb)
+	mux.Handle("POST /circuit-breaker/reset/{type}", cb)
+	mux.Handle("OPTIONS /circuit-breaker", cb)
+	mux.Handle("OPTIONS /circuit-breaker/reset/{type}", cb)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.WorkerPort),
