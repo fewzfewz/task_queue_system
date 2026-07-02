@@ -37,7 +37,7 @@ services:
   scheduler:
     build:
       context: ../..
-      dockerfile: deploy/local/docker/worker.Dockerfile
+      dockerfile: deploy/local/docker/scheduler.Dockerfile
     command: ["./scheduler"]
     environment:
       REDIS_HOST: redis:6379

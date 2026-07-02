@@ -1,7 +1,74 @@
 basePath: /
 definitions:
+  dto.BatchJobError:
+    properties:
+      error:
+        type: string
+      index:
+        type: integer
+    type: object
+  dto.BatchJobRequest:
+    properties:
+      jobs:
+        items:
+          $ref: '#/definitions/dto.CreateJobRequest'
+        type: array
+    type: object
+  dto.BatchJobResponse:
+    properties:
+      failed:
+        items:
+          $ref: '#/definitions/dto.BatchJobError'
+        type: array
+      processed:
+        type: integer
+      successful:
+        items:
+          $ref: '#/definitions/dto.BatchJobResult'
+        type: array
+      total:
+        type: integer
+    type: object
+  dto.BatchJobResult:
+    properties:
+      index:
+        type: integer
+      job:
+        $ref: '#/definitions/dto.JobResponse'
+    type: object
   dto.CreateJobRequest:
     properties:
+      backoff_algorithm:
+        description: 'BackoffAlgorithm is the retry backoff strategy: "exponential",
+          "linear", or "fixed". Default: "exponential".'
+        type: string
+      backoff_jitter:
+        description: 'BackoffJitter adds randomness to the delay: "none", "full",
+          or "equal". Default: "none".'
+        type: string
+      correlation_id:
+        description: CorrelationID is optional. If provided, it will be used for tracing
+          logs.
+        type: string
+      cron_expr:
+        description: CronExpr is an optional cron expression for recurring jobs (e.g.
+          "*/5 * * * *").
+        type: string
+      dedup_key:
+        description: DedupKey is an optional idempotency key for exactly-once deduplication.
+        type: string
+      dependencies:
+        description: Dependencies is an optional list of job IDs that must complete
+          before this job runs.
+        items:
+          type: string
+        type: array
+      labels:
+        additionalProperties:
+          type: string
+        description: Labels is an optional arbitrary key/value metadata map for filtering
+          and grouping.
+        type: object
       max_retries:
         description: MaxRetries defaults to 3 if omitted (zero value).
         type: integer
@@ -13,37 +80,84 @@ definitions:
       priority:
         description: Priority is optional, defaults to "medium"
         type: string
+      run_at:
+        description: RunAt is optional. If provided and in the future, the job will
+          be scheduled.
+        type: string
+      shard_key:
+        description: ShardKey is an optional key for distributing jobs across queue
+          partitions.
+        type: string
+      tenant_id:
+        description: TenantID is for multi-tenancy.
+        type: string
+      timeout:
+        description: 'Timeout is optional (in seconds). Default: 60s'
+        type: integer
       type:
         description: Type must match one of the registered handler types (e.g. "email",
           "image").
         type: string
+      version:
+        description: 'Version is optional. Default: 1'
+        type: integer
+      webhook:
+        allOf:
+        - $ref: '#/definitions/dto.WebhookRequest'
+        description: Webhook is optional.
     type: object
   dto.ErrorResponse:
     properties:
+      code:
+        type: string
       error:
         type: string
     type: object
   dto.JobResponse:
     properties:
+      backoff_algorithm:
+        type: string
+      backoff_jitter:
+        type: string
       correlation_id:
         type: string
       created_at:
         type: string
+      cron_expr:
+        type: string
+      dedup_key:
+        type: string
+      dependencies:
+        items:
+          type: string
+        type: array
       error_history:
         items:
           $ref: '#/definitions/jobs.AttemptError'
         type: array
       id:
         type: string
+      labels:
+        additionalProperties:
+          type: string
+        type: object
       max_retries:
         type: integer
+      paused:
+        type: boolean
       payload:
         additionalProperties: true
         type: object
       priority:
         type: string
+      progress:
+        type: number
       retries:
         type: integer
+      run_at:
+        type: string
+      shard_key:
+        type: string
       status:
         type: string
       tenant_id:
@@ -54,10 +168,19 @@ definitions:
         type: string
       updated_at:
         type: string
-      run_at:
-        type: string
       version:
         type: integer
+    type: object
+  dto.WebhookRequest:
+    properties:
+      events:
+        items:
+          type: string
+        type: array
+      secret:
+        type: string
+      url:
+        type: string
     type: object
   jobs.AttemptError:
     properties:
@@ -78,6 +201,15 @@ definitions:
         type: integer
       total_jobs:
         type: integer
+      worker_count:
+        type: integer
+    type: object
+  queue.WorkerInfo:
+    properties:
+      id:
+        type: string
+      last_heartbeat:
+        type: string
     type: object
 host: localhost:8080
 info:
@@ -86,7 +218,481 @@ info:
   title: Task Queue API
   version: "1.0"
 paths:
+  /api/v1/dlq:
+    delete:
+      description: Deletes all failed jobs for a tenant/queue that are older than
+        the specified timestamp.
+      parameters:
+      - description: Queue type filter
+        in: query
+        name: queue
+        type: string
+      - description: ISO8601 Timestamp
+        in: query
+        name: older_than
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              format: int64
+              type: integer
+            type: object
+      summary: Bulk purge failed jobs
+      tags:
+      - dlq
+    get:
+      description: Returns a paginated list of jobs that have permanently failed for
+        the tenant.
+      parameters:
+      - description: Queue type filter
+        in: query
+        name: queue
+        type: string
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.JobResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: List failed jobs
+      tags:
+      - dlq
+  /api/v1/dlq/{id}:
+    delete:
+      description: Permanently deletes a single failed job record from the store.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Purge a failed job
+      tags:
+      - dlq
+    get:
+      description: Returns the full state of a failed job, including its error history.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.JobResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get failed job details
+      tags:
+      - dlq
+  /api/v1/dlq/{id}/replay:
+    post:
+      description: Resets a failed job to 'pending' state and enqueues it for immediate
+        retry.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.JobResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Re-enqueue a failed job
+      tags:
+      - dlq
+  /api/v1/events:
+    get:
+      description: Opens a server-sent event stream for real-time job status changes.
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE stream
+      summary: Stream job events (SSE)
+      tags:
+      - events
+  /api/v1/jobs/{id}/cancel:
+    post:
+      description: Cancels a pending or running job.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Cancel a job
+      tags:
+      - jobs
+  /api/v1/jobs/{id}/deps:
+    get:
+      description: Returns upstream dependencies and downstream dependents for a job.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get job dependency graph
+      tags:
+      - jobs
+  /api/v1/jobs/{id}/pause:
+    post:
+      description: Prevents a job from being processed until resumed.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Pause a job
+      tags:
+      - jobs
+  /api/v1/jobs/{id}/progress:
+    patch:
+      consumes:
+      - application/json
+      description: Sets the progress percentage for an in-flight job.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Progress payload
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Update job progress
+      tags:
+      - jobs
+  /api/v1/jobs/{id}/resume:
+    post:
+      description: Resumes processing for a previously paused job.
+      parameters:
+      - description: Job ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Resume a job
+      tags:
+      - jobs
+  /api/v1/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates with admin credentials and returns the API key.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            password:
+              type: string
+            username:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Login
+      tags:
+      - auth
+  /api/v1/stats:
+    get:
+      description: Returns queue lengths, worker count, and approximate job counts.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get system stats
+      tags:
+      - stats
+  /api/v1/webhooks:
+    get:
+      description: Returns all registered webhooks.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+      summary: List webhooks
+      tags:
+      - webhooks
+    post:
+      consumes:
+      - application/json
+      description: Creates a new webhook that will be called on specified events.
+      parameters:
+      - description: Webhook registration payload
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Register a webhook
+      tags:
+      - webhooks
+  /api/v1/webhooks/{id}:
+    delete:
+      description: Removes a webhook by ID.
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Delete a webhook
+      tags:
+      - webhooks
+    get:
+      description: Returns a single webhook configuration.
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get webhook by ID
+      tags:
+      - webhooks
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing webhook's URL, secret or event filters.
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated webhook fields
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Update a webhook
+      tags:
+      - webhooks
   /jobs:
+    get:
+      description: Returns a paginated, filtered list of jobs. Supports filtering
+        by status, type,
+      parameters:
+      - description: Filter by status (pending, processing, completed, failed)
+        in: query
+        name: status
+        type: string
+      - description: Filter by job type
+        in: query
+        name: type
+        type: string
+      - description: Filter by label key
+        in: query
+        name: label_key
+        type: string
+      - description: Filter by label value (requires label_key)
+        in: query
+        name: label_value
+        type: string
+      - description: ISO8601 timestamp
+        in: query
+        name: created_after
+        type: string
+      - description: ISO8601 timestamp
+        in: query
+        name: created_before
+        type: string
+      - description: Page size (default 20)
+        in: query
+        name: limit
+        type: integer
+      - description: Page offset (default 0)
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.JobResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: List/search jobs
+      tags:
+      - jobs
     post:
       consumes:
       - application/json
@@ -148,153 +754,36 @@ paths:
       summary: Get job status
       tags:
       - jobs
-  /workers:
-    get:
-      description: Retrieves a list of all currently active worker instances and their
-        last heartbeat timestamp.
-      produces:
+  /jobs/batch:
+    post:
+      consumes:
       - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: array
-            items:
-              $ref: '#/definitions/queue.WorkerInfo'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      summary: Get active workers
-      tags:
-      - metrics
-  /admin/dlq:
-    get:
-      description: Renders the HTML dead letter queue management console.
-      produces:
-      - text/html
-      responses:
-        "200":
-          description: OK
-      summary: Get DLQ admin console
-      tags:
-      - dlq
-  /api/v1/dlq:
-    get:
-      description: Returns a paginated list of jobs that have permanently failed for the tenant.
+      description: Submits up to 100 jobs in a single request.
       parameters:
-      - in: query
-        name: queue
-        type: string
-      - in: query
-        name: limit
-        type: integer
-      - in: query
-        name: page
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: array
-            items:
-              $ref: '#/definitions/dto.JobResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      summary: List failed jobs
-      tags:
-      - dlq
-    delete:
-      description: Deletes all failed jobs for a tenant/queue that are older than the specified timestamp.
-      parameters:
-      - in: query
-        name: queue
-        type: string
-      - in: query
-        name: older_than
-        type: string
+      - description: Batch Job Creation Request
+        in: body
+        name: request
         required: true
+        schema:
+          $ref: '#/definitions/dto.BatchJobRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            type: object
-            additionalProperties:
-              type: integer
+            $ref: '#/definitions/dto.BatchJobResponse'
         "400":
           description: Bad Request
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
-      summary: Bulk purge failed jobs
-      tags:
-      - dlq
-  /api/v1/dlq/{id}:
-    get:
-      description: Returns the full state of a failed job, including its error history.
-      parameters:
-      - in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.JobResponse'
-        "404":
-          description: Not Found
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
-      summary: Get failed job details
+      summary: Create multiple jobs
       tags:
-      - dlq
-    delete:
-      description: Permanently deletes a single failed job record from the store.
-      parameters:
-      - in: path
-        name: id
-        required: true
-        type: string
-      responses:
-        "204":
-          description: No Content
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      summary: Purge a failed job
-      tags:
-      - dlq
-  /api/v1/dlq/{id}/replay:
-    post:
-      description: Resets a failed job to pending state and enqueues it for immediate retry.
-      parameters:
-      - in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/dto.JobResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/dto.ErrorResponse'
-      summary: Re-enqueue a failed job
-      tags:
-      - dlq
+      - jobs
   /metrics:
     get:
       description: Retrieves system-wide execution statistics including totals, active
@@ -313,13 +802,24 @@ paths:
       summary: Get queue metrics
       tags:
       - metrics
-  /swagger/:
+  /workers:
     get:
-      description: Swagger UI for the API.
+      description: Retrieves a list of all currently active worker instances and their
+        last heartbeat timestamp.
+      produces:
+      - application/json
       responses:
         "200":
           description: OK
-      summary: Swagger UI
+          schema:
+            items:
+              $ref: '#/definitions/queue.WorkerInfo'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get active workers
       tags:
-      - docs
+      - metrics
 swagger: "2.0"

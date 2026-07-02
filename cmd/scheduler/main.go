@@ -21,22 +21,27 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		logger.Setup().Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// ── 1. Load Config ────────────────────────────────────────────────────────
 	cfg := config.Load()
 
 	// ── 2. Initialize Logger ──────────────────────────────────────────────────
 	log := logger.Setup()
 	if err := cfg.Validate(); err != nil {
-		log.Error("invalid configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	log.Info("starting scheduler service")
 
 	// ── 2b. Initialize OpenTelemetry ───────────────────────────────────────────
 	otelShutdown, err := tracing.Init(context.Background(), cfg.OTELExporterOTLPEndpoint)
 	if err != nil {
-		log.Error("failed to init tracing", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to init tracing: %w", err)
 	}
 	if cfg.OTELExporterOTLPEndpoint != "" {
 		log.Info("opentelemetry tracing enabled", "endpoint", cfg.OTELExporterOTLPEndpoint)
@@ -53,8 +58,7 @@ func main() {
 	})
 
 	if err := redisClient.Ping(context.Background()).Err(); err != nil {
-		log.Error("failed to connect to redis", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
 	// ── 4. Initialize Queue and Store ────────────────────────────────────────
@@ -65,8 +69,7 @@ func main() {
 
 	store, err := storage.InitStore(schedulerCtx, cfg, redisClient)
 	if err != nil {
-		log.Error("failed to initialise storage", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialise storage: %w", err)
 	}
 	svc := service.New(q, store, log, cfg.MaxQueueSize)
 
@@ -118,7 +121,7 @@ func main() {
 			defer shutdownCancel()
 			_ = srv.Shutdown(shutdownCtx)
 			_ = redisClient.Close()
-			return
+			return nil
 		case <-ticker.C:
 			// 1. Promote scheduled jobs
 			count, err := q.PromoteScheduledJobs(ctx)

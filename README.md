@@ -38,21 +38,35 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 
 ## Key Routes
 
-- `GET /` or `GET /ui`
-  - Browser-based operator UI with tabs for Create/Search Jobs, Workers/Health, and DLQ/Admin actions
-- `POST /jobs`
-- `GET /jobs/{id}`
-- `GET /metrics`
-- `GET /workers`
-- `GET /healthz`
-- `GET /readyz`
-- `GET /admin/dlq`
-- `GET /api/v1/dlq`
-- `GET /api/v1/dlq/{id}`
-- `POST /api/v1/dlq/{id}/replay`
-- `DELETE /api/v1/dlq/{id}`
-- `DELETE /api/v1/dlq`
-- `GET /swagger/`
+- `GET /` or `GET /ui` — browser-based operator UI (login required)
+- `POST /api/v1/login` — authenticate with username/password, returns api_key
+- `POST /jobs` — create a job
+- `POST /jobs/batch` — batch create up to 100 jobs
+- `GET /jobs` — list/search jobs
+- `GET /jobs/{id}` — get job status
+- `PATCH /jobs/{id}/progress` — update job progress
+- `POST /jobs/{id}/cancel` — cancel a job
+- `POST /jobs/{id}/pause` — pause a job
+- `POST /jobs/{id}/resume` — resume a job
+- `GET /api/v1/jobs/{id}/deps` — get dependency graph
+- `GET /api/v1/stats` — system statistics
+- `GET /metrics` — Prometheus metrics
+- `GET /workers` — active worker instances
+- `GET /events` — SSE job event stream
+- `GET /healthz` — liveness probe
+- `GET /readyz` — readiness probe
+- `GET /admin/dlq` — DLQ admin console
+- `GET /api/v1/dlq` — list failed jobs
+- `GET /api/v1/dlq/{id}` — failed job detail
+- `POST /api/v1/dlq/{id}/replay` — re-enqueue a failed job
+- `DELETE /api/v1/dlq/{id}` — purge a failed job
+- `DELETE /api/v1/dlq` — bulk purge failed jobs
+- `POST /api/v1/webhooks` — register webhook
+- `GET /api/v1/webhooks` — list webhooks
+- `GET /api/v1/webhooks/{id}` — get webhook
+- `PUT /api/v1/webhooks/{id}` — update webhook
+- `DELETE /api/v1/webhooks/{id}` — delete webhook
+- `GET /swagger/` — Swagger UI
 
 ## Configuration
 
@@ -73,8 +87,16 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 | `POSTGRES_CONN_STR` | `` | PostgreSQL connection string |
 | `DRAIN_TIMEOUT` | `60` | Worker drain timeout (seconds) |
 | `WORKER_POOL_SIZE` | `50` | Worker goroutine count |
+| `ADMIN_USERNAME` | `admin` | UI login username |
+| `ADMIN_PASSWORD` | `admin123` | UI login password |
+| `SLA_TARGET_SECONDS` | `300` | SLA target in seconds |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `` | OpenTelemetry gRPC endpoint |
+| `POSTGRES_MIGRATIONS_DIR` | `db/migrations` | Postgres SQL migrations directory |
 
-Auth: all protected endpoints require the `X-API-Key` header set to the value of `API_KEY`. The UI auto-sends this header using the key from the server config — no login page needed.
+Auth:
+- All protected endpoints require the `X-API-Key` header set to the value of `API_KEY`.
+- The `/api/v1/login` endpoint accepts `{"username":"...","password":"..."}` and returns the API key.
+- The UI prompts for credentials on first load, then stores the returned key in `localStorage`.
 
 ## Local Run
 
@@ -180,6 +202,12 @@ make build
 docker build -t task-queue-system .
 ```
 
+Per-component Dockerfiles are also available:
+
+- `deploy/local/docker/api.Dockerfile`
+- `deploy/local/docker/worker.Dockerfile`
+- `deploy/local/docker/scheduler.Dockerfile`
+
 Or:
 
 ```bash
@@ -188,19 +216,13 @@ make docker-build
 
 ## UI
 
-Open the browser UI at `http://localhost:8080/`. The API key is pre-configured — no login required.
+Open the browser UI at `http://localhost:8080/`. The UI prompts for credentials (defaults: `admin` / `admin123`), then stores the returned API key in `localStorage` for subsequent requests.
 
-Use the tabs for:
+Tabs:
 
 - Create / Search Jobs
 - Workers / Health
 - DLQ / Admin
-
-UI auth note:
-
-- The UI prompts for a username and password (defaults: `admin` / `admin123`).
-- On success the server returns an API key which the UI stores in `localStorage` and sends as `X-API-Key` on all subsequent requests.
-- Only the `/api/v1/login` endpoint is unauthenticated.
 
 ## Terminal Examples
 
@@ -303,15 +325,13 @@ Current migration files:
 
 - `db/migrations/001_create_jobs.sql`
 
-What exists today:
+How they run:
 
-- The Postgres schema is created from the SQL file above.
-- The CLI in `cmd/cli` is for moving job data from Redis to Postgres.
-- There is not yet a dedicated migration runner tool like `golang-migrate` or `goose` wired into the repo.
+- **Auto-migration**: `postgres.New()` runs all SQL files in `POSTGRES_MIGRATIONS_DIR` (default `db/migrations`) in sorted order on every connect.
+- **CLI**: `make migrate-schema` runs `go run ./cmd/cli migrate-schema -dir=db/migrations` to apply migrations independently.
+- **Migration tool**: `cmd/cli migrate-jobs` moves job data from Redis to Postgres.
 
-Practical note:
-
-- If you use Postgres locally, create the schema from `db/migrations/001_create_jobs.sql` before starting the API or worker with `STORE_BACKEND=postgres` or `STORE_BACKEND=dual`.
+If you use Postgres locally, ensure the migrations directory is accessible before starting the API or worker with `STORE_BACKEND=postgres` or `STORE_BACKEND=dual`.
 
 ## Chaos Engineering Tests
 
@@ -421,8 +441,18 @@ go test ./internal/webhooks -run DispatcherSendIntegration
 
 What exists:
 
-- Local Docker Compose and Dockerfiles under [deploy/local/](/home/fewzan/Projects/task-queue-system/deploy/local)
-- Kubernetes manifests under [deploy/k8s](/home/fewzan/Projects/task-queue-system/deploy/k8s)
+- Local Docker Compose and per-component Dockerfiles under [deploy/local/](/home/fewzan/Projects/task-queue-system/deploy/local)
+- Kubernetes manifests under [deploy/k8s](/home/fewzan/Projects/task-queue-system/deploy/k8s):
+  - `api-deployment.yaml` — API service
+  - `worker-deployment.yaml` — worker service
+  - `scheduler-deployment.yaml` — scheduler service
+  - `redis-statefulset.yaml` + `redis-service.yaml` — Redis cluster
+  - `postgres-statefulset.yaml` + `postgres-service.yaml` — optional PostgreSQL
+  - `secrets.yaml` — Opaque Secret for API key, admin password, postgres conn string
+  - `hpa.yaml` — worker horizontal pod autoscaler
+  - `ingress.yaml` — ingress rules
+  - `rbac.yaml` — service accounts and roles
+  - `prometheus-adapter-configmap.yaml` — external metrics adapter
 - A production-focused guide at [README-production.md](/home/fewzan/Projects/task-queue-system/README-production.md)
 
 What is not yet fully documented:
@@ -478,13 +508,13 @@ Then use the browser UI at `http://localhost:8080/` or the terminal commands abo
 
 ## Swagger
 
-Generate or refresh the Swagger docs with:
+The API is fully annotated with Swagger Go comments. Regenerate the spec with:
 
 ```bash
-swag init -g cmd/api/main.go
+swag init -g cmd/api/main.go --output docs
 ```
 
-The checked-in spec is [docs/swagger.yaml](/home/fewzan/Projects/task-queue-system/docs/swagger.yaml), and it now includes the runtime DLQ, workers, and admin console routes in addition to the core job endpoints.
+The checked-in spec files (`docs/swagger.yaml`, `docs/swagger.json`, `docs/docs.go`) cover all 30+ endpoints including DAG dependencies, batch operations, progress updates, pause/resume, webhooks CRUD, SSE, stats, and DLQ management.
 
 ## Notes
 

@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "task-queue-system/docs"
+
 	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/api/routes"
@@ -28,22 +30,27 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		logger.Setup().Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// ── 1. Setup structured logging ───────────────────────────────────────────
 	log := logger.Setup()
 
 	// ── 2. Load configuration ─────────────────────────────────────────────────
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
-		log.Error("invalid configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	log.Info("starting api service", "port", cfg.ServerPort)
 
 	// ── 2b. Initialize OpenTelemetry ───────────────────────────────────────────
 	otelShutdown, err := tracing.Init(context.Background(), cfg.OTELExporterOTLPEndpoint)
 	if err != nil {
-		log.Error("failed to init tracing", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to init tracing: %w", err)
 	}
 	if cfg.OTELExporterOTLPEndpoint != "" {
 		log.Info("opentelemetry tracing enabled", "endpoint", cfg.OTELExporterOTLPEndpoint)
@@ -63,8 +70,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Error("failed to connect to redis", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to redis: %w", err)
 	}
 	log.Info("connected to redis", "host", cfg.RedisHost)
 
@@ -74,8 +80,7 @@ func main() {
 	// Initialise store based on configuration (Redis, Postgres, or Dual)
 	store, err := storage.InitStore(ctx, cfg, redisClient)
 	if err != nil {
-		log.Error("failed to initialise storage", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to initialise storage: %w", err)
 	}
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
@@ -123,4 +128,5 @@ func main() {
 	_ = redisClient.Close()
 
 	log.Info("API service stopped")
+	return nil
 }

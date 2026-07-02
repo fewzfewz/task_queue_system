@@ -17,10 +17,16 @@ import (
 
 func main() {
 	log := logger.Setup()
+	if err := run(); err != nil {
+		log.Error("fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
-		log.Error("invalid configuration", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	migrateCmd := flag.NewFlagSet("migrate-jobs", flag.ExitOnError)
@@ -35,16 +41,16 @@ func main() {
 	downDir := downSchemaCmd.String("dir", "db/migrations", "Directory containing versioned SQL migrations")
 
 	if len(os.Args) < 2 {
-		fmt.Println("expected 'migrate-jobs', 'migrate-schema', 'migrate-down', or 'migrate-down-schema' subcommand")
-		os.Exit(1)
+		return fmt.Errorf("expected 'migrate-jobs', 'migrate-schema', 'migrate-down', or 'migrate-down-schema' subcommand")
 	}
+
+	log := logger.Setup()
 
 	switch os.Args[1] {
 	case "migrate-jobs":
 		_ = migrateCmd.Parse(os.Args[2:])
 		if *from != "redis" || *to != "postgres" {
-			log.Error("currently only redis -> postgres migration is supported")
-			os.Exit(1)
+			return fmt.Errorf("currently only redis -> postgres migration is supported")
 		}
 
 		ctx := context.Background()
@@ -57,8 +63,7 @@ func main() {
 
 		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
 		if err != nil {
-			log.Error("failed to connect to postgres", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}
 		defer pgStore.Close()
 
@@ -72,8 +77,7 @@ func main() {
 		for {
 			keys, nextCursor, err := rdb.HScan(ctx, jobStoreKey, cursor, "", int64(*batch)).Result()
 			if err != nil {
-				log.Error("failed to scan redis", "error", err)
-				os.Exit(1)
+				return fmt.Errorf("failed to scan redis: %w", err)
 			}
 
 			for i := 1; i < len(keys); i += 2 {
@@ -107,21 +111,18 @@ func main() {
 		_ = schemaCmd.Parse(os.Args[2:])
 
 		if cfg.PostgresConnStr == "" {
-			log.Error("POSTGRES_CONN_STR is required for schema migration")
-			os.Exit(1)
+			return fmt.Errorf("POSTGRES_CONN_STR is required for schema migration")
 		}
 
 		ctx := context.Background()
 		pool, err := postgres.CreatePool(ctx, cfg.PostgresConnStr)
 		if err != nil {
-			log.Error("failed to connect to postgres", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("failed to connect to postgres: %w", err)
 		}
 		defer pool.Close()
 
 		if err := postgres.RunMigrations(ctx, pool, *schemaDir, log); err != nil {
-			log.Error("schema migration failed", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("schema migration failed: %w", err)
 		}
 
 		log.Info("schema migration completed successfully")
@@ -135,19 +136,18 @@ func main() {
 		_ = downSchemaCmd.Parse(os.Args[2:])
 
 		if cfg.PostgresConnStr == "" {
-			log.Error("POSTGRES_CONN_STR is required for schema rollback")
-			os.Exit(1)
+			return fmt.Errorf("POSTGRES_CONN_STR is required for schema rollback")
 		}
 
 		ctx := context.Background()
 		if err := postgres.RollbackLastMigration(ctx, cfg.PostgresConnStr, *downDir, log); err != nil {
-			log.Error("schema rollback failed", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("schema rollback failed: %w", err)
 		}
 		log.Info("schema rollback completed successfully")
 
 	default:
-		fmt.Println("unknown command:", os.Args[1])
-		os.Exit(1)
+		return fmt.Errorf("unknown command: %s", os.Args[1])
 	}
+
+	return nil
 }
