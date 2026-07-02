@@ -6,13 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
-	"strings"
 	"time"
-	"log/slog"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/jobs"
@@ -104,8 +99,8 @@ func main() {
 			}
 		}
 
-		log.Info("migration completed successfully", 
-			"total", totalMigrated, 
+		log.Info("migration completed successfully",
+			"total", totalMigrated,
 			"duration", time.Since(start).String())
 
 	case "migrate-schema":
@@ -117,17 +112,18 @@ func main() {
 		}
 
 		ctx := context.Background()
-		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
+		pool, err := postgres.CreatePool(ctx, cfg.PostgresConnStr)
 		if err != nil {
 			log.Error("failed to connect to postgres", "error", err)
 			os.Exit(1)
 		}
-		defer pgStore.Close()
+		defer pool.Close()
 
-		if err := applyMigrations(ctx, cfg.PostgresConnStr, *schemaDir, log); err != nil {
+		if err := postgres.RunMigrations(ctx, pool, *schemaDir, log); err != nil {
 			log.Error("schema migration failed", "error", err)
 			os.Exit(1)
 		}
+
 		log.Info("schema migration completed successfully")
 
 	case "migrate-down":
@@ -144,14 +140,7 @@ func main() {
 		}
 
 		ctx := context.Background()
-		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
-		if err != nil {
-			log.Error("failed to connect to postgres", "error", err)
-			os.Exit(1)
-		}
-		defer pgStore.Close()
-
-		if err := rollbackLastMigration(ctx, cfg.PostgresConnStr, *downDir, log); err != nil {
+		if err := postgres.RollbackLastMigration(ctx, cfg.PostgresConnStr, *downDir, log); err != nil {
 			log.Error("schema rollback failed", "error", err)
 			os.Exit(1)
 		}
@@ -161,129 +150,4 @@ func main() {
 		fmt.Println("unknown command:", os.Args[1])
 		os.Exit(1)
 	}
-}
-
-func applyMigrations(ctx context.Context, connStr, dir string, log *slog.Logger) error {
-	pool, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		return err
-	}
-	defer pool.Close(ctx)
-
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`); err != nil {
-		return err
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-
-	var files []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if strings.HasSuffix(entry.Name(), ".sql") && !strings.HasSuffix(entry.Name(), "_rollback.sql") {
-			files = append(files, entry.Name())
-		}
-	}
-	sort.Strings(files)
-
-	for _, name := range files {
-		version := strings.TrimSuffix(filepath.Base(name), ".sql")
-		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, version).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			log.Info("migration already applied", "version", version)
-			continue
-		}
-
-		sqlBytes, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return err
-		}
-
-		tx, err := pool.Begin(ctx)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-			_ = tx.Rollback(ctx)
-			return fmt.Errorf("migration %s failed: %w", version, err)
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES ($1)`, version); err != nil {
-			_ = tx.Rollback(ctx)
-			return err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return err
-		}
-		log.Info("applied migration", "version", version)
-	}
-
-	return nil
-}
-
-func rollbackLastMigration(ctx context.Context, connStr, dir string, log *slog.Logger) error {
-	pool, err := pgx.Connect(ctx, connStr)
-	if err != nil {
-		return err
-	}
-	defer pool.Close(ctx)
-
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
-			version TEXT PRIMARY KEY,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`); err != nil {
-		return err
-	}
-
-	var lastVersion string
-	err = pool.QueryRow(ctx, `SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1`).Scan(&lastVersion)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			log.Info("no migrations applied; nothing to roll back")
-			return nil
-		}
-		return err
-	}
-
-	rollbackFile := filepath.Join(dir, lastVersion+"_rollback.sql")
-	if _, err := os.Stat(rollbackFile); os.IsNotExist(err) {
-		return fmt.Errorf("rollback file not found: %s", rollbackFile)
-	}
-
-	sqlBytes, err := os.ReadFile(rollbackFile)
-	if err != nil {
-		return err
-	}
-
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-		_ = tx.Rollback(ctx)
-		return fmt.Errorf("rollback %s failed: %w", lastVersion, err)
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version = $1`, lastVersion); err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-
-	log.Info("rolled back migration", "version", lastVersion)
-	return nil
 }

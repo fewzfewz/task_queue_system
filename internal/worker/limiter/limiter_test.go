@@ -34,20 +34,12 @@ func TestTokenBucketLimiter_Wait(t *testing.T) {
 }
 
 func TestTokenBucketLimiter_CancelledContext(t *testing.T) {
-	l := NewTokenBucketLimiter(100)
+	l := NewTokenBucketLimiter(1)
 
 	ctx, cancel := context.WithCancel(context.Background())
-
-	// Spawn a goroutine that blocks on Wait, will be unblocked by cancel
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- l.Wait(ctx)
-	}()
-
-	// Cancel while it's waiting
 	cancel()
 
-	err := <-errCh
+	err := l.Wait(ctx)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}

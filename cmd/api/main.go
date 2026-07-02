@@ -22,9 +22,9 @@ import (
 	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
-	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/storage"
 	"task-queue-system/internal/tracing"
+	"task-queue-system/internal/webhooks"
 )
 
 func main() {
@@ -78,23 +78,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ── 5. Initialise Secrets Provider ───────────────────────────────────────
-	var secretsProv secrets.SecretsProvider
-	if cfg.VaultAddress != "" {
-		v, err := secrets.NewVaultSecretsProvider(cfg.VaultAddress, cfg.VaultRoleID, cfg.VaultSecretID)
-		if err != nil {
-			log.Error("failed to initialise vault provider", "error", err)
-			os.Exit(1)
-		}
-		secretsProv = v
-		log.Info("using vault for secret management", "address", cfg.VaultAddress)
-	} else {
-		secretsProv = secrets.NewEnvSecretsProvider()
-		log.Info("using environment variables for secret management")
-	}
-
-	// ── 6. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, log, cfg, secretsProv, nil)
+	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
+	router := routes.NewRouter(q, store, log, cfg, webhooks.NewWebhookStore(redisClient))
 	checker := health.NewChecker("api", health.AdaptRedis(redisClient))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", checker.Live)

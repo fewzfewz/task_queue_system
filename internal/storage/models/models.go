@@ -560,22 +560,41 @@ func (s *RedisStore) Fail(ctx context.Context, jobID string, err error, requeue 
 }
 
 func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status string, typeStr string, limit, offset int) ([]*jobs.Job, error) {
-	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis_store: HVALS failed: %w", err)
+	var results []*jobs.Job
+	need := limit
+	skip := offset
+	if need <= 0 {
+		need = -1 // no limit
 	}
 
-	results := make([]*jobs.Job, 0, len(vals))
-	for _, v := range vals {
-		var j jobs.Job
-		if err := json.Unmarshal([]byte(v), &j); err != nil {
-			continue
+	var cursor uint64
+	for {
+		keys, nextCursor, err := s.client.HScan(ctx, jobStoreKey, cursor, "*", 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redis_store: HSCAN failed: %w", err)
 		}
-		if (tenantID == "" || j.TenantID == tenantID) &&
-			(status == "" || string(j.Status) == status) &&
-			(typeStr == "" || j.Type == typeStr) {
-			copy := j
-			results = append(results, &copy)
+		for i := 0; i+1 < len(keys); i += 2 {
+			var j jobs.Job
+			if err := json.Unmarshal([]byte(keys[i+1]), &j); err != nil {
+				continue
+			}
+			if (tenantID == "" || j.TenantID == tenantID) &&
+				(status == "" || string(j.Status) == status) &&
+				(typeStr == "" || j.Type == typeStr) {
+				if skip > 0 {
+					skip--
+					continue
+				}
+				copy := j
+				results = append(results, &copy)
+				if need > 0 && len(results) >= need {
+					break
+				}
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 || (need > 0 && len(results) >= need) {
+			break
 		}
 	}
 
@@ -583,22 +602,7 @@ func (s *RedisStore) ListJobs(ctx context.Context, tenantID string, status strin
 		return results[i].CreatedAt.After(results[j].CreatedAt)
 	})
 
-	if offset < 0 {
-		offset = 0
-	}
-	if limit <= 0 {
-		limit = len(results)
-	}
-	if offset >= len(results) {
-		return []*jobs.Job{}, nil
-	}
-
-	end := offset + limit
-	if end > len(results) {
-		end = len(results)
-	}
-
-	return results[offset:end], nil
+	return results, nil
 }
 
 func (s *RedisStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.Job, error) {
@@ -638,23 +642,33 @@ func (s *RedisStore) DeleteJob(ctx context.Context, jobID string) error {
 }
 
 func (s *RedisStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
-	// SCAN and delete. Performance will be O(N).
-	iter := s.client.HScan(ctx, jobStoreKey, 0, "*", 100).Iterator()
+	var cursor uint64
 	var count int64
-	for iter.Next(ctx) {
-		id := iter.Val() // HScan returns field, then value, so we need to be careful
-		if id == "" { continue }
-		
-		val, _ := s.client.HGet(ctx, jobStoreKey, id).Result()
-		var j jobs.Job
-		if err := json.Unmarshal([]byte(val), &j); err != nil { continue }
-		
-		if (tenantID == "" || j.TenantID == tenantID) &&
-			(status == "" || string(j.Status) == status) &&
-			(jobType == "" || j.Type == jobType) &&
-			j.CreatedAt.Before(before) {
-			s.client.HDel(ctx, jobStoreKey, id)
-			count++
+	for {
+		keys, nextCursor, err := s.client.HScan(ctx, jobStoreKey, cursor, "*", 100).Result()
+		if err != nil {
+			return count, err
+		}
+		for i := 0; i+1 < len(keys); i += 2 {
+			id := keys[i]
+			if id == "" {
+				continue
+			}
+			var j jobs.Job
+			if err := json.Unmarshal([]byte(keys[i+1]), &j); err != nil {
+				continue
+			}
+			if (tenantID == "" || j.TenantID == tenantID) &&
+				(status == "" || string(j.Status) == status) &&
+				(jobType == "" || j.Type == jobType) &&
+				j.CreatedAt.Before(before) {
+				s.client.HDel(ctx, jobStoreKey, id)
+				count++
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
 		}
 	}
 	return count, nil

@@ -1,0 +1,26 @@
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: task-queue-system
+  errcheck:
+    ignore: fmt:Fprintf,io:Write,net/http:Write

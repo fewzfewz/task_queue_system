@@ -133,11 +133,11 @@ Each priority level has 3 hash-based partitions for concurrency.
 ## Security Model
 
 - `/healthz`, `/readyz`: No auth (health checks)
-- `/`, `/ui`, `/admin/dlq`: No auth (UI pages, client-side auth in browser)
+- `/`, `/ui`, `/admin/dlq`: No auth (UI pages, API key injected from server)
 - `/metrics`: No auth (Prometheus scraping)
-- `POST /jobs`: Auth required (JWT or X-API-Key)
+- `POST /jobs`: Auth required (X-API-Key header)
 - `/api/v1/dlq/*`: Auth required
-- Tenant isolation via `tenant_id` field on jobs
+- `/api/v1/webhooks/*`: Auth required
 
 ## Observability
 

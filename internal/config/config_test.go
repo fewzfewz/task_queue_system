@@ -5,9 +5,11 @@ import "testing"
 func TestConfigValidate(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
 		cfg := &Config{
-			ServerPort: "8080",
-			RedisHost:  "localhost:6379",
-			ApiKey:     "secret",
+			ServerPort:   "8080",
+			RedisHost:    "localhost:6379",
+			ApiKey:       "secret",
+			StoreBackend: "redis",
+			LogLevel:     "info",
 		}
 
 		if err := cfg.Validate(); err != nil {

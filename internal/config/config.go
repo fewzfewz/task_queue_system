@@ -24,6 +24,12 @@ type Config struct {
 	// ApiKey is the required secret for protected endpoints.
 	ApiKey string
 
+	// AdminUsername is the login username for the web UI.
+	AdminUsername string
+
+	// AdminPassword is the login password for the web UI.
+	AdminPassword string
+
 	// JobRateLimit is the global throughput limit for worker tasks (JPS).
 	// Default: 0 (unlimited)
 	JobRateLimit float64
@@ -42,21 +48,6 @@ type Config struct {
 
 	// PostgresConnStr is the DSN for the Postgres database.
 	PostgresConnStr string
-
-	// JwtPublicKey is the RSA public key in PEM format for token validation.
-	JwtPublicKey string
-
-	// JwtPublicKeyPath is the path to the RSA public key file.
-	JwtPublicKeyPath string
-
-	// VaultAddress is the URL of the HashiCorp Vault server.
-	VaultAddress string
-
-	// VaultRoleID for AppRole authentication.
-	VaultRoleID string
-
-	// VaultSecretID for AppRole authentication.
-	VaultSecretID string
 
 	// DrainTimeoutSeconds is the maximum time to wait for a worker to finish
 	// in-flight jobs before force exiting during a graceful shutdown.
@@ -96,17 +87,14 @@ func Load() *Config {
 		RedisHost:     getEnvOrDefault("REDIS_HOST", "localhost:6379"),
 		RedisPassword: getEnvOrDefault("REDIS_PASSWORD", ""),
 		RedisDB:       getEnvAsInt("REDIS_DB", 0),
-		ApiKey:        getEnvOrDefault("API_KEY", "secret-api-key"),
+		ApiKey:          getEnvOrDefault("API_KEY", "secret-api-key"),
+		AdminUsername:   getEnvOrDefault("ADMIN_USERNAME", "admin"),
+		AdminPassword:   getEnvOrDefault("ADMIN_PASSWORD", "admin123"),
 		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
 		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
 		MaxQueueSize:  getEnvAsInt64("MAX_QUEUE_SIZE", 10000),
 		StoreBackend:  getEnvOrDefault("STORE_BACKEND", "redis"),
 		PostgresConnStr: getEnvOrDefault("POSTGRES_CONN_STR", ""),
-		JwtPublicKey:  getEnvOrDefault("JWT_PUBLIC_KEY", ""),
-		JwtPublicKeyPath: getEnvOrDefault("JWT_PUBLIC_KEY_PATH", ""),
-		VaultAddress:  getEnvOrDefault("VAULT_ADDR", ""),
-		VaultRoleID:   getEnvOrDefault("VAULT_ROLE_ID", ""),
-		VaultSecretID: getEnvOrDefault("VAULT_SECRET_ID", ""),
 		DrainTimeoutSeconds: getEnvAsInt("DRAIN_TIMEOUT", 60),
 		WorkerPoolSize:      getEnvAsInt("WORKER_POOL_SIZE", 50),
 		WorkerPort:          getEnvOrDefault("WORKER_PORT", "8081"),
@@ -127,6 +115,19 @@ func (c *Config) Validate() error {
 	}
 	if c.ApiKey == "" {
 		return fmt.Errorf("API_KEY is required")
+	}
+	switch c.StoreBackend {
+	case "redis", "postgres", "dual":
+	default:
+		return fmt.Errorf("STORE_BACKEND must be one of: redis, postgres, dual (got %q)", c.StoreBackend)
+	}
+	if (c.StoreBackend == "postgres" || c.StoreBackend == "dual") && c.PostgresConnStr == "" {
+		return fmt.Errorf("POSTGRES_CONN_STR is required when STORE_BACKEND is %s", c.StoreBackend)
+	}
+	switch c.LogLevel {
+	case "info", "error", "debug":
+	default:
+		return fmt.Errorf("LOG_LEVEL must be one of: info, error, debug (got %q)", c.LogLevel)
 	}
 	return nil
 }

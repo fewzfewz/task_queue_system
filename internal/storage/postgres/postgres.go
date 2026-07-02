@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -22,6 +24,26 @@ type PostgresStore struct {
 
 // Ensure PostgresStore satisfies the Store interface.
 var _ models.Store = (*PostgresStore)(nil)
+
+// CreatePool creates a pgxpool.Pool from a connection string without running migrations.
+func CreatePool(ctx context.Context, connStr string) (*pgxpool.Pool, error) {
+	config, err := pgxpool.ParseConfig(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: failed to parse config: %w", err)
+	}
+	config.MaxConns = 25
+	config.MinConns = 5
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: failed to create pool: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("postgres: health check failed: %w", err)
+	}
+	return pool, nil
+}
 
 // New creates a new PostgresStore with connection retry and backoff.
 // It retries up to maxRetries times with exponential backoff (1s, 2s, 4s, ...)
@@ -63,6 +85,16 @@ func NewWithRetry(ctx context.Context, connStr string, maxRetries int) (*Postgre
 		if err := pool.Ping(ctx); err != nil {
 			pool.Close()
 			lastErr = fmt.Errorf("postgres: health check failed (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
+			continue
+		}
+
+		migrationsDir := os.Getenv("POSTGRES_MIGRATIONS_DIR")
+		if migrationsDir == "" {
+			migrationsDir = "db/migrations"
+		}
+		if err := RunMigrations(ctx, pool, migrationsDir, slog.Default()); err != nil {
+			pool.Close()
+			lastErr = fmt.Errorf("postgres: auto-migration failed (attempt %d/%d): %w", attempt+1, maxRetries+1, err)
 			continue
 		}
 

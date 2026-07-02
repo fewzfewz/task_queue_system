@@ -3,12 +3,13 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // ServeAppUI renders the general operator UI for the queue system.
 func (h *JobHandler) ServeAppUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, appHTML)
+	fmt.Fprint(w, strings.ReplaceAll(appHTML, "__API_KEY__", h.apiKey))
 }
 
 const appHTML = `
@@ -65,28 +66,46 @@ const appHTML = `
     .badge.yellow { background:var(--warn); }
     .toast { position:fixed; bottom:24px; right:24px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:12px 18px; font-size:14px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:99; }
     .toast.show { opacity:1; }
+    #login-overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:var(--bg); z-index:100; }
+    #login-overlay.hidden { display:none; }
+    .login-card { background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:40px; width:360px; max-width:90vw; }
+    .login-card h2 { margin:0 0 8px; }
+    .login-card .muted { margin-bottom:24px; }
+    .login-card .error { color:var(--bad); font-size:13px; margin-top:8px; display:none; }
   </style>
 </head>
 <body>
   <div id="toast" class="toast"></div>
+
+  <!-- Login -->
+  <div id="login-overlay">
+    <div class="login-card">
+      <h2>Task Queue</h2>
+      <div class="muted">Sign in to manage jobs and workers</div>
+      <div class="row">
+        <input id="login-user" placeholder="Username" value="admin" />
+        <input id="login-pass" type="password" placeholder="Password" value="admin123" />
+        <button onclick="login()">Sign in</button>
+        <div id="login-error" class="error">Invalid credentials</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="app" style="display:none;">
   <header>
     <div>
       <h1>Task Queue System</h1>
       <div class="muted">Operator dashboard — jobs, workers, stats, DAG, circuit breaker, webhooks</div>
     </div>
     <div class="toolbar" style="max-width:720px;">
-      <select id="auth-mode" onchange="saveAuthMode()">
-        <option value="api-key">API Key</option>
-        <option value="bearer">Bearer Token</option>
-      </select>
-      <input id="token" placeholder="Paste API key or JWT" />
-      <button class="secondary" onclick="saveToken()">Save token</button>
       <button class="secondary" onclick="loadEverything()">Refresh all</button>
+      <button class="secondary" onclick="logout()" style="flex:0;padding:12px 18px;">Logout</button>
     </div>
   </header>
 
   <main>
-    <!-- ── Stats Cards ── -->
+    <!-- Stats Cards -->
     <section class="grid cards">
       <div class="card"><div class="label">Status</div><div id="stat-status" class="value">-</div><div class="muted">API reachable</div></div>
       <div class="card"><div class="label">Pending Jobs</div><div id="stat-pending" class="value">-</div><div class="muted">Total queued work</div></div>
@@ -95,7 +114,7 @@ const appHTML = `
       <div class="card"><div class="label">Circuit Breakers</div><div id="stat-cb" class="value">0</div><div class="muted">Open / monitored</div></div>
     </section>
 
-    <!-- ── Action Bar ── -->
+    <!-- Action Bar -->
     <section class="card">
       <div class="toolbar">
         <button onclick="fillExample()">Example email job</button>
@@ -107,7 +126,7 @@ const appHTML = `
       </div>
     </section>
 
-    <!-- ── Tabs ── -->
+    <!-- Tabs -->
     <section class="card">
       <div class="tabs">
         <button class="tab active" data-tab="jobs" onclick="showTab('jobs')">Jobs</button>
@@ -115,217 +134,186 @@ const appHTML = `
         <button class="tab" data-tab="dag" onclick="showTab('dag')">DAG</button>
         <button class="tab" data-tab="ops" onclick="showTab('ops')">Workers / Health</button>
         <button class="tab" data-tab="cb" onclick="showTab('cb');loadCircuitBreakers()">Circuit Breaker</button>
-        <button class="tab" data-tab="dlq" onclick="showTab('dlq')">DLQ</button>
-        <button class="tab" data-tab="webhooks" onclick="showTab('webhooks');loadWebhooks()">Webhooks</button>
+        <button class="tab" data-tab="dlq" onclick="showTab('dlq');loadDLQ()">DLQ</button>
+        <button class="tab" data-tab="wh" onclick="showTab('wh');loadWebhooks()">Webhooks</button>
       </div>
-    </section>
 
-    <!-- ── Panel: Jobs ── -->
-    <section id="panel-jobs" class="panel active">
-      <div class="split">
-        <div class="card">
-          <h2>Create Job</h2>
-          <div class="row cols2">
-            <input id="create-type" placeholder="type e.g. email" value="email" />
-            <input id="create-priority" placeholder="priority" value="medium" />
-          </div>
-          <div class="row cols2">
-            <input id="create-tenant" placeholder="tenant_id" />
-            <input id="create-dedup" placeholder="dedup_key (optional)" />
-          </div>
-          <div class="row cols2">
-            <input id="create-corr" placeholder="correlation_id" />
-            <input id="create-shard" placeholder="shard_key (optional)" />
-          </div>
-          <div class="row cols2">
-            <input id="create-retries" placeholder="max_retries" value="3" />
-            <input id="create-timeout" placeholder="timeout seconds" value="60" />
-          </div>
-          <div class="row cols2">
-            <input id="create-runat" placeholder="run_at RFC3339" />
-            <input id="create-cron" placeholder="cron expr (e.g. */5 * * * *)" />
-          </div>
-          <textarea id="create-payload">{ "to": "user@example.com", "subject": "hello" }</textarea>
-          <div class="row cols2">
-            <button onclick="createJob()">Create job</button>
-            <button class="secondary" onclick="fillExample()">Fill email example</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>Search / List Jobs</h2>
-          <div class="row cols2">
-            <input id="job-search-status" placeholder="status filter" />
-            <input id="job-search-type" placeholder="type filter" />
-          </div>
-          <div class="row cols2">
-            <input id="job-search-tenant" placeholder="tenant_id" />
-            <input id="job-search-limit" placeholder="limit" value="10" />
-          </div>
-          <div class="row cols2">
-            <button onclick="searchJobs(1)">Search</button>
-            <button onclick="getJobByID()">Get by ID</button>
-          </div>
-          <input id="job-search-id" placeholder="or enter job ID directly" />
-          <div class="pagination" id="job-pagination"></div>
-          <pre id="job-output">No results yet.</pre>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Panel: Stats ── -->
-    <section id="panel-stats" class="panel">
-      <div class="split">
-        <div class="card">
-          <h2>Queue Breakdown</h2>
-          <pre id="stats-queue">Loading…</pre>
-        </div>
-        <div class="card">
-          <h2>Overview</h2>
-          <pre id="stats-overview">Loading…</pre>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Panel: DAG ── -->
-    <section id="panel-dag" class="panel">
-      <div class="card">
-        <h2>DAG Dependency Inspector</h2>
+      <!-- Tab: Jobs -->
+      <div id="panel-jobs" class="panel active">
         <div class="row cols2">
-          <input id="dag-job-id" placeholder="Job ID" />
-          <button onclick="loadDAG()">Inspect</button>
+          <div class="card">
+            <div class="label">Create Job</div>
+            <div class="row">
+              <input id="create-type" placeholder="Job type (e.g. email)" value="email" />
+              <input id="create-priority" placeholder="Priority (high/medium/low)" value="medium" />
+              <input id="create-tenant" placeholder="Tenant ID (optional)" value="tenant-a" />
+              <input id="create-corr" placeholder="Correlation ID (optional)" value="corr-001" />
+              <input id="create-dedup" placeholder="Dedup key (optional)" value="dedup-email-001" />
+              <input id="create-shard" placeholder="Shard key (optional)" value="shard-1" />
+              <textarea id="create-payload" placeholder='Payload JSON'>{"to":"user@example.com","body":"Welcome!"}</textarea>
+              <input id="create-runat" placeholder="Run at (ISO8601, optional)" />
+              <button onclick="createJob()">Create Job</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="label">Search Jobs</div>
+            <div class="row">
+              <input id="search-type" placeholder="Filter by type (e.g. email)" value="email" />
+              <input id="search-status" placeholder="Filter by status (pending/running/completed/failed)" value="pending" />
+              <input id="search-tenant" placeholder="Tenant ID filter" />
+              <div class="row cols2" style="margin:0;">
+                <input id="search-page" type="number" placeholder="Page" value="1" />
+                <input id="search-limit" type="number" placeholder="Limit" value="20" />
+              </div>
+              <button onclick="searchJobs()">Search</button>
+            </div>
+            <pre id="search-output">Results will appear here</pre>
+            <div class="pagination">
+              <button class="secondary" onclick="prevPage()">Prev</button>
+              <span id="page-info" class="muted">Page 1</span>
+              <button class="secondary" onclick="nextPage()">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab: Stats -->
+      <div id="panel-stats" class="panel">
+        <pre id="stats-output">Click "Stats" tab or button to load</pre>
+      </div>
+
+      <!-- Tab: DAG -->
+      <div id="panel-dag" class="panel">
+        <div class="row cols2">
+          <input id="dag-job-id" placeholder="Job ID" value="job-123" />
+          <button onclick="loadDAG()">Lookup dependencies</button>
         </div>
         <div class="split">
+          <div><div class="label">Upstream (depends on)</div><pre id="dag-upstream">Enter a job ID and click Lookup</pre></div>
+          <div><div class="label">Downstream (depended by)</div><pre id="dag-downstream"></pre></div>
+        </div>
+      </div>
+
+      <!-- Tab: Workers / Health -->
+      <div id="panel-ops" class="panel">
+        <div class="split">
           <div>
-            <div class="label">Depends On (upstream)</div>
-            <pre id="dag-upstream">Enter a job ID above.</pre>
+            <div class="label">Workers</div>
+            <pre id="workers-output">Click "Workers" to load</pre>
+            <div class="label" style="margin-top:12px;">Metrics</div>
+            <pre id="metrics-output">Click "Metrics" to load</pre>
           </div>
           <div>
-            <div class="label">Dependents (downstream)</div>
-            <pre id="dag-downstream">Jobs that list this ID as a dependency appear here.</pre>
+            <div class="label">Health Checks</div>
+            <div id="health-status"></div>
           </div>
         </div>
       </div>
-    </section>
 
-    <!-- ── Panel: Ops ── -->
-    <section id="panel-ops" class="panel">
-      <div class="split">
-        <div class="card">
-          <h2>Workers</h2>
-          <button onclick="loadWorkers()">Refresh workers</button>
-          <table><thead><tr><th>ID</th><th>Last Heartbeat</th></tr></thead><tbody id="workers-body"><tr><td colspan="2" class="muted">No workers loaded.</td></tr></tbody></table>
-        </div>
-        <div class="card">
-          <h2>Health & Metrics</h2>
-          <div class="row cols2">
-            <button onclick="checkHealth('/healthz')">/healthz</button>
-            <button onclick="checkHealth('/readyz')">/readyz</button>
-          </div>
-          <button onclick="loadMetrics()">Load Prometheus metrics</button>
-          <div class="row cols2">
-            <div><div class="label">Health</div><pre id="health-output">Click a health check.</pre></div>
-            <div><div class="label">Metrics</div><pre id="metrics-output">Prometheus metrics appear here.</pre></div>
-          </div>
-        </div>
+      <!-- Tab: Circuit Breaker -->
+      <div id="panel-cb" class="panel">
+        <table><thead><tr><th>Type</th><th>State</th><th>Action</th></tr></thead><tbody id="cb-body"><tr><td colspan="3" class="muted">No data</td></tr></tbody></table>
       </div>
-    </section>
 
-    <!-- ── Panel: Circuit Breaker ── -->
-    <section id="panel-cb" class="panel">
-      <div class="card">
-        <h2>Circuit Breaker Status</h2>
-        <p class="muted">Monitored by the worker process (port 8081). Open breakers block execution.</p>
-        <button onclick="loadCircuitBreakers()">Refresh</button>
-        <table><thead><tr><th>Plugin Type</th><th>Status</th><th>Actions</th></tr></thead><tbody id="cb-body"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody></table>
-      </div>
-    </section>
-
-    <!-- ── Panel: DLQ ── -->
-    <section id="panel-dlq" class="panel">
-      <div class="card">
-        <h2>Dead Letter Queue</h2>
+      <!-- Tab: DLQ -->
+      <div id="panel-dlq" class="panel">
+        <div class="row cols3">
+          <input id="dlq-search" placeholder="Search in results" />
+          <input id="dlq-queue" placeholder="Queue filter" value="email" />
+          <input id="dlq-tenant" placeholder="Tenant filter" value="tenant-a" />
+        </div>
         <div class="toolbar">
-          <input id="dlq-queue" placeholder="queue filter" />
-          <input id="dlq-tenant" placeholder="tenant filter" />
           <button onclick="loadDLQ()">Load DLQ</button>
-        </div>
-        <div class="row cols2">
-          <input id="dlq-search" placeholder="search text" />
-          <button class="secondary" onclick="searchDLQ()">Search</button>
-        </div>
-        <div class="row cols2">
-          <input id="dlq-replay-id" placeholder="job id to replay" />
-          <button class="secondary" onclick="replayDLQ()">Replay</button>
-        </div>
-        <div class="row cols2">
-          <input id="dlq-purge-id" placeholder="job id to delete" />
-          <button class="danger" onclick="deleteDLQ()">Delete</button>
-        </div>
-        <div class="row cols2">
-          <input id="dlq-older" placeholder="older than RFC3339" />
-          <button class="danger" onclick="bulkPurgeDLQ()">Bulk purge</button>
-        </div>
-        <div class="row cols2">
+          <button class="secondary" onclick="searchDLQ()">Filter results</button>
           <button class="secondary" onclick="exportDLQ()">Export JSON</button>
-          <button class="secondary" onclick="loadDLQ()">Reload</button>
         </div>
-        <pre id="dlq-output">No DLQ items loaded yet.</pre>
+        <pre id="dlq-output">Load DLQ to see failed jobs</pre>
+        <div class="row cols4">
+          <input id="dlq-replay-id" placeholder="Job ID to replay" value="job-123" />
+          <button onclick="replayDLQ()">Replay</button>
+          <input id="dlq-purge-id" placeholder="Job ID to purge" value="job-123" />
+          <button onclick="deleteDLQ()">Purge</button>
+        </div>
+        <div class="row cols2">
+          <input id="dlq-older" placeholder="Older than (ISO8601)" value="2025-01-01T00:00:00Z" />
+          <button class="danger" onclick="bulkPurgeDLQ()">Bulk purge older</button>
+        </div>
       </div>
-    </section>
 
-    <!-- ── Panel: Webhooks ── -->
-    <section id="panel-webhooks" class="panel">
-      <div class="split">
-        <div class="card">
-          <h2>Register Webhook</h2>
-          <input id="wh-url" placeholder="https://example.com/hook" />
-          <input id="wh-secret" placeholder="signing secret" />
-          <input id="wh-events" placeholder="events (comma-sep: completed,failed)" />
-          <button onclick="registerWebhook()">Register</button>
+      <!-- Tab: Webhooks -->
+      <div id="panel-wh" class="panel">
+        <div class="row cols3">
+          <input id="wh-url" placeholder="Webhook URL" value="http://localhost:9090/hook" />
+          <input id="wh-secret" placeholder="Secret" value="wh-secret-123" />
+          <input id="wh-events" placeholder="Events (comma-separated)" value="completed,failed" />
         </div>
-        <div class="card">
-          <h2>Your Webhooks</h2>
-          <button class="secondary" onclick="loadWebhooks()">Refresh</button>
-          <pre id="wh-output">No webhooks loaded.</pre>
-        </div>
+        <button onclick="registerWebhook()">Register Webhook</button>
+        <pre id="wh-output">Click "Webhooks" to load</pre>
       </div>
     </section>
   </main>
+  </div>
 
   <script>
     const API_BASE = '/api/v1';
-    const TOKEN_KEY = 'task_queue_token';
     const WORKER_PORT = '8081';
+    const TOKEN_KEY = 'task_queue_api_key';
 
     function toast(msg) { const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
 
-    function saveToken() {
-      localStorage.setItem(TOKEN_KEY, document.getElementById('token').value.trim());
-      toast('Token saved');
-    }
-    function saveAuthMode() {
-      localStorage.setItem('task_queue_auth_mode', document.getElementById('auth-mode').value);
-      toast('Auth mode saved');
-    }
-    function getToken() {
-      const t = localStorage.getItem(TOKEN_KEY) || '';
-      document.getElementById('token').value = t;
-      document.getElementById('auth-mode').value = localStorage.getItem('task_queue_auth_mode') || 'api-key';
-      return t;
-    }
+    function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+
     function headers() {
-      const token = (localStorage.getItem(TOKEN_KEY) || '').trim();
-      const mode = localStorage.getItem('task_queue_auth_mode') || 'api-key';
-      const hdr = { 'Content-Type': 'application/json' };
-      if (token) {
-        if (mode === 'bearer') hdr['Authorization'] = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
-        else if (token.startsWith('Bearer ')) hdr['Authorization'] = token;
-        else if (token.includes('.') && token.split('.').length === 3) hdr['Authorization'] = 'Bearer ' + token;
-        else hdr['X-API-Key'] = token;
-      }
-      return hdr;
+      const t = getToken();
+      return t ? { 'Content-Type': 'application/json', 'X-API-Key': t } : { 'Content-Type': 'application/json' };
     }
+
+    async function api(path, options = {}) {
+      try {
+        const res = await fetch(path, { ...options, headers: { ...headers(), ...(options.headers || {}) } });
+        if (res.status === 204) return null;
+        const text = await res.text();
+        try { return JSON.parse(text); } catch (_) { return text; }
+      } catch (_) { return null; }
+    }
+
+    async function login() {
+      const user = document.getElementById('login-user').value.trim();
+      const pass = document.getElementById('login-pass').value.trim();
+      if (!user || !pass) { document.getElementById('login-error').style.display='block'; return; }
+      const res = await api('/api/v1/login', {
+        method: 'POST',
+        body: JSON.stringify({username: user, password: pass}),
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (res && res.api_key) {
+        localStorage.setItem(TOKEN_KEY, res.api_key);
+        document.getElementById('login-overlay').classList.add('hidden');
+        document.getElementById('app').style.display = 'block';
+        loadEverything();
+        toast('Logged in');
+      } else {
+        document.getElementById('login-error').style.display = 'block';
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem(TOKEN_KEY);
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('login-overlay').classList.remove('hidden');
+    }
+
+    // Auto-login if token exists
+    if (getToken()) {
+      document.getElementById('login-overlay').classList.add('hidden');
+      document.getElementById('app').style.display = 'block';
+    }
+
+    // Enter key logs in
+    document.getElementById('login-pass').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') login();
+    });
+
     function flash(msg) { document.getElementById('stat-status').innerText = msg; }
     function showTab(name) {
       document.querySelectorAll('.tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === name));
@@ -334,17 +322,17 @@ const appHTML = `
       if (p) p.classList.add('active');
       localStorage.setItem('task_queue_tab', name);
     }
-    async function api(path, options = {}) {
-      const res = await fetch(path, { ...options, headers: { ...headers(), ...(options.headers || {}) } });
-      if (res.status === 204) return null;
-      const text = await res.text();
-      try { return JSON.parse(text); } catch (_) { return text; }
-    }
 
     // ── Create Job ──
     function fillExample() {
       document.getElementById('create-type').value = 'email';
       document.getElementById('create-payload').value = JSON.stringify({to:'user@example.com', subject:'hello'}, null, 2);
+      document.getElementById('create-priority').value = 'medium';
+      document.getElementById('create-tenant').value = 'tenant-a';
+      document.getElementById('create-corr').value = 'corr-' + Date.now();
+      document.getElementById('create-dedup').value = 'dedup-' + Date.now();
+      document.getElementById('create-shard').value = 'shard-1';
+      toast('Example job filled');
     }
     async function createJob() {
       const body = {
@@ -354,92 +342,73 @@ const appHTML = `
         correlation_id: document.getElementById('create-corr').value.trim(),
         dedup_key: document.getElementById('create-dedup').value.trim(),
         shard_key: document.getElementById('create-shard').value.trim(),
-        run_at: document.getElementById('create-runat').value.trim(),
-        cron_expr: document.getElementById('create-cron').value.trim(),
-        timeout: parseInt(document.getElementById('create-timeout').value || '60', 10),
-        max_retries: parseInt(document.getElementById('create-retries').value || '3', 10),
-        payload: JSON.parse(document.getElementById('create-payload').value || '{}')
+        run_at: document.getElementById('create-runat').value.trim() || undefined,
+        payload: {}
       };
+      try { body.payload = JSON.parse(document.getElementById('create-payload').value.trim() || '{}'); } catch(_) { body.payload = {}; }
       const out = await api('/jobs', { method: 'POST', body: JSON.stringify(body) });
-      document.getElementById('job-output').innerText = JSON.stringify(out, null, 2);
-      if (out && out.id) document.getElementById('job-search-id').value = out.id;
-      flash('Job created');
+      document.getElementById('search-output').innerText = JSON.stringify(out, null, 2);
+      flash(out && out.id ? 'Job created: ' + out.id : 'Create failed');
     }
 
-    // ── Search / List Jobs ──
-    let currentPage = 1;
-    async function searchJobs(page) {
-      currentPage = page || 1;
-      const status = document.getElementById('job-search-status').value.trim();
-      const type = document.getElementById('job-search-type').value.trim();
-      const tenant = document.getElementById('job-search-tenant').value.trim();
-      const limit = parseInt(document.getElementById('job-search-limit').value || '10', 10);
-      const params = new URLSearchParams();
-      if (status) params.set('status', status);
+    // ── Search Jobs ──
+    let searchState = { page: 1, limit: 20 };
+    async function searchJobs() {
+      const type = document.getElementById('search-type').value.trim();
+      const status = document.getElementById('search-status').value.trim();
+      const tenant = document.getElementById('search-tenant').value.trim();
+      searchState.page = parseInt(document.getElementById('search-page').value) || 1;
+      searchState.limit = parseInt(document.getElementById('search-limit').value) || 20;
+      const params = new URLSearchParams({ page: searchState.page, limit: searchState.limit });
       if (type) params.set('type', type);
+      if (status) params.set('status', status);
       if (tenant) params.set('tenant_id', tenant);
-      params.set('limit', String(limit));
-      params.set('page', String(currentPage));
       const out = await api('/jobs?' + params.toString());
-      document.getElementById('job-output').innerText = JSON.stringify(out, null, 2);
-      // Pagination controls
-      const total = out && out.total ? out.total : 0;
-      const pages = Math.ceil(total / limit) || 1;
-      const pg = document.getElementById('job-pagination');
-      let html = '<span class="muted">Page ' + currentPage + ' of ' + pages + ' (' + total + ' total)</span>';
-      if (currentPage > 1) html += '<button class="secondary" onclick="searchJobs(' + (currentPage-1) + ')">Prev</button>';
-      if (currentPage < pages) html += '<button class="secondary" onclick="searchJobs(' + (currentPage+1) + ')">Next</button>';
-      pg.innerHTML = html;
+      document.getElementById('search-output').innerText = JSON.stringify(out, null, 2);
+      document.getElementById('page-info').innerText = 'Page ' + searchState.page;
     }
-    async function getJobByID() {
-      const id = document.getElementById('job-search-id').value.trim();
-      if (!id) return;
-      const out = await api('/jobs/' + encodeURIComponent(id));
-      document.getElementById('job-output').innerText = JSON.stringify(out, null, 2);
-    }
+    function prevPage() { if (searchState.page > 1) { searchState.page--; document.getElementById('search-page').value = searchState.page; searchJobs(); } }
+    function nextPage() { searchState.page++; document.getElementById('search-page').value = searchState.page; searchJobs(); }
 
-    // ── Metrics & Health ──
-    async function loadMetrics() {
-      const out = await api('/metrics');
-      document.getElementById('metrics-output').innerText = typeof out === 'string' ? out : JSON.stringify(out, null, 2);
-    }
-    async function checkHealth(path) {
-      const out = await api(path);
-      document.getElementById('health-output').innerText = JSON.stringify(out, null, 2);
-      document.getElementById('stat-status').innerText = out && out.status ? out.status : 'ok';
+    // ── Stats ──
+    async function loadStats() {
+      const out = await api(API_BASE + '/stats');
+      document.getElementById('stats-output').innerText = JSON.stringify(out, null, 2);
+      if (out) {
+        document.getElementById('stat-pending').innerText = String(out.total_pending || 0);
+        document.getElementById('stat-workers').innerText = String(out.worker_count || 0);
+      }
     }
 
     // ── Workers ──
     async function loadWorkers() {
       const out = await api('/workers');
-      const rows = (out || []).map(w => '<tr><td>' + w.id + '</td><td>' + new Date(w.last_heartbeat).toLocaleString() + '</td></tr>').join('');
-      document.getElementById('workers-body').innerHTML = rows || '<tr><td colspan="2" class="muted">No workers found.</td></tr>';
-      document.getElementById('stat-workers').innerText = String((out || []).length);
+      document.getElementById('workers-output').innerText = JSON.stringify(out, null, 2);
     }
 
-    // ── Stats ──
-    async function loadStats() {
-      try {
-        const stats = await api('/api/v1/stats');
-        document.getElementById('stats-queue').innerText = JSON.stringify(stats.queue_breakdown || {}, null, 2);
-        document.getElementById('stats-overview').innerText = JSON.stringify({
-          total_pending: stats.total_pending,
-          worker_count: stats.worker_count,
-          workers: stats.workers,
-          approx_completed: stats.approx_completed,
-          approx_failed: stats.approx_failed
-        }, null, 2);
-        if (stats.total_pending !== undefined) document.getElementById('stat-pending').innerText = String(stats.total_pending);
-      } catch(e) {
-        document.getElementById('stats-queue').innerText = 'Failed to load stats: ' + e;
+    // ── Metrics ──
+    async function loadMetrics() {
+      const out = await api('/metrics');
+      document.getElementById('metrics-output').innerText = typeof out === 'string' ? out.substring(0, 2000) : JSON.stringify(out, null, 2);
+    }
+
+    // ── Health ──
+    async function checkHealth(path) {
+      const out = await api(path);
+      const el = document.getElementById('health-status');
+      if (el) {
+        const p = document.createElement('p');
+        p.innerHTML = '<span class="badge ' + (out ? 'green' : 'red') + '"></span> ' + path + (out ? ' OK' : ' FAIL');
+        el.appendChild(p);
       }
+      return out;
     }
 
     // ── DAG ──
     async function loadDAG() {
       const id = document.getElementById('dag-job-id').value.trim();
       if (!id) { toast('Enter a job ID'); return; }
-      const out = await api('/api/v1/jobs/' + encodeURIComponent(id) + '/deps');
+      const out = await api(API_BASE + '/jobs/' + encodeURIComponent(id) + '/deps');
       if (!out) { document.getElementById('dag-upstream').innerText = 'No response'; return; }
       document.getElementById('dag-upstream').innerText = JSON.stringify(out.depends_on || [], null, 2);
       document.getElementById('dag-downstream').innerText = JSON.stringify(out.dependents || [], null, 2);
@@ -515,7 +484,7 @@ const appHTML = `
         const out = await api(API_BASE + '/webhooks');
         document.getElementById('wh-output').innerText = JSON.stringify(out || [], null, 2);
       } catch(e) {
-        document.getElementById('wh-output').innerText = 'Failed to load webhooks. Auth required.';
+        document.getElementById('wh-output').innerText = 'Failed to load webhooks.';
       }
     }
     async function registerWebhook() {
@@ -532,18 +501,20 @@ const appHTML = `
 
     // ── Init ──
     async function loadEverything() {
-      getToken();
       const tab = localStorage.getItem('task_queue_tab') || 'jobs';
       showTab(tab);
       await Promise.all([
-        loadDLQ(), loadWorkers(), loadMetrics(),
-        checkHealth('/healthz'), checkHealth('/readyz'),
-        loadStats(), loadCircuitBreakers()
+        loadDLQ().catch(function(){}),
+        loadWorkers().catch(function(){}),
+        loadMetrics().catch(function(){}),
+        checkHealth('/healthz').catch(function(){}),
+        checkHealth('/readyz').catch(function(){}),
+        loadStats().catch(function(){}),
+        loadCircuitBreakers().catch(function(){})
       ]);
     }
 
-    getToken();
-    loadEverything();
+    if (getToken()) loadEverything();
   </script>
 </body>
 </html>

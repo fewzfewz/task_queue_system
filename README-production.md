@@ -58,15 +58,7 @@ kubectl -n task-queue create secret generic task-queue-postgres \
 
 Then inject it as `POSTGRES_CONN_STR` for the API, worker, or any pod using Postgres.
 
-### Vault
 
-If you use Vault, store the AppRole values in Kubernetes Secrets and inject:
-
-- `VAULT_ADDR`
-- `VAULT_ROLE_ID`
-- `VAULT_SECRET_ID`
-
-The code reads tenant secrets from `secret/data/taskqueue/<tenant_id>`.
 
 ## Storage Initialization
 

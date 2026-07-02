@@ -11,18 +11,17 @@ import (
 	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/queue"
-	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 	"task-queue-system/internal/webhooks"
 )
 
-func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, secrets secrets.SecretsProvider, webhookStore *webhooks.WebhookStore) http.Handler {
+func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, webhookStore *webhooks.WebhookStore) http.Handler {
 	svc := service.New(q, store, logger, cfg.MaxQueueSize)
 	if webhookStore != nil {
 		svc.SetWebhookStore(webhookStore)
 	}
-	h := handler.New(svc, logger)
+	h := handler.New(svc, logger, cfg.ApiKey, cfg.AdminUsername, cfg.AdminPassword)
 	svc.SetSSEBroker(h.SSEBroker())
 	if webhookStore != nil {
 		h.SetWebhookStore(webhookStore)
@@ -30,13 +29,15 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("POST /api/v1/login", h.Login)
+
 	mux.HandleFunc("GET /", h.ServeAppUI)
 	mux.HandleFunc("GET /ui", h.ServeAppUI)
 
-	mux.Handle("POST /jobs", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.CreateJob)))
-	mux.Handle("POST /jobs/batch", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.CreateJobBatch)))
+	mux.Handle("POST /jobs", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJob)))
+	mux.Handle("POST /jobs/batch", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJobBatch)))
 
-	mux.Handle("GET /jobs", middleware.AuthRequired(cfg, secrets)(http.HandlerFunc(h.ListJobs)))
+	mux.Handle("GET /jobs", middleware.AuthRequired(cfg)(http.HandlerFunc(h.ListJobs)))
 	mux.HandleFunc("GET /jobs/{id}", h.GetJobStatus)
 	mux.HandleFunc("PATCH /jobs/{id}/progress", h.UpdateJobProgress)
 	mux.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
@@ -51,7 +52,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	mux.HandleFunc("GET /api/v1/stats", h.GetStats)
 	mux.HandleFunc("GET /api/v1/jobs/{id}/deps", h.GetJobDeps)
 
-	auth := middleware.AuthRequired(cfg, secrets)
+	auth := middleware.AuthRequired(cfg)
 
 	mux.Handle("GET /api/v1/dlq", auth(http.HandlerFunc(h.ListFailedJobs)))
 	mux.Handle("GET /api/v1/dlq/{id}", auth(http.HandlerFunc(h.GetFailedJobDetail)))
@@ -60,7 +61,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	mux.Handle("DELETE /api/v1/dlq", auth(http.HandlerFunc(h.BulkPurgeDLQ)))
 
 	if webhookStore != nil {
-		ws := middleware.AuthRequired(cfg, secrets)
+		ws := middleware.AuthRequired(cfg)
 		mux.Handle("POST /api/v1/webhooks", ws(http.HandlerFunc(h.RegisterWebhook)))
 		mux.Handle("GET /api/v1/webhooks", ws(http.HandlerFunc(h.ListWebhooks)))
 		mux.Handle("GET /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.GetWebhook)))

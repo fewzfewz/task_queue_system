@@ -26,8 +26,7 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 - Redis via `github.com/redis/go-redis/v9`
 - PostgreSQL via `github.com/jackc/pgx/v5`
 - Prometheus metrics via `github.com/prometheus/client_golang`
-- JWT auth via `github.com/golang-jwt/jwt/v5`
-- Vault integration via `github.com/hashicorp/vault/api`
+- API key auth via `X-API-Key` header
 - Swagger UI via `github.com/swaggo/swag` and `github.com/swaggo/http-swagger/v2`
 
 ## Main Entry Points
@@ -65,26 +64,17 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 | `REDIS_HOST` | `localhost:6379` | Redis address |
 | `REDIS_PASSWORD` | `` | Redis password |
 | `REDIS_DB` | `0` | Redis database number |
-| `API_KEY` | `secret-api-key` | Legacy API key auth |
+| `API_KEY` | `secret-api-key` | API key for protected endpoints (X-API-Key header) |
 | `JOB_RATE_LIMIT` | `0` | Worker throughput limit (jobs/sec) |
 | `TENANT_RATE_LIMIT` | `0` | Per-tenant API rate limit (req/sec) |
 | `LOG_LEVEL` | `info` | Log level |
 | `MAX_QUEUE_SIZE` | `10000` | Max pending jobs |
 | `STORE_BACKEND` | `redis` | Store backend (redis, postgres, dual) |
 | `POSTGRES_CONN_STR` | `` | PostgreSQL connection string |
-| `JWT_PUBLIC_KEY` | `` | JWT public key in PEM |
-| `JWT_PUBLIC_KEY_PATH` | `` | Path to JWT public key file |
-| `VAULT_ADDR` | `` | Vault address |
-| `VAULT_ROLE_ID` | `` | Vault AppRole role ID |
-| `VAULT_SECRET_ID` | `` | Vault AppRole secret ID |
 | `DRAIN_TIMEOUT` | `60` | Worker drain timeout (seconds) |
 | `WORKER_POOL_SIZE` | `50` | Worker goroutine count |
 
-Notes:
-
-- `API_KEY` is used for legacy X-API-Key auth.
-- If `JWT_PUBLIC_KEY` or `JWT_PUBLIC_KEY_PATH` is set, Bearer-token auth is enabled.
-- If `VAULT_ADDR` is set, the API will try Vault-backed tenant secrets before falling back to `API_KEY`.
+Auth: all protected endpoints require the `X-API-Key` header set to the value of `API_KEY`. The UI auto-sends this header using the key from the server config — no login page needed.
 
 ## Local Run
 
@@ -135,7 +125,13 @@ An example file is also provided at [`.env.example`](/home/fewzan/Projects/task-
 
 ### 4. Run in development
 
-Run each binary separately:
+All-in-one (starts Redis + all 3 services):
+
+```bash
+make dev
+```
+
+Or run each binary separately:
 
 ```bash
 go run ./cmd/api
@@ -192,10 +188,7 @@ make docker-build
 
 ## UI
 
-Open the browser UI at:
-
-- `http://localhost:8080/`
-- `http://localhost:8080/ui`
+Open the browser UI at `http://localhost:8080/`. The API key is pre-configured — no login required.
 
 Use the tabs for:
 
@@ -205,8 +198,9 @@ Use the tabs for:
 
 UI auth note:
 
-- Paste the plain API key to use legacy `X-API-Key` auth.
-- Paste a JWT or a value starting with `Bearer ` to use Bearer auth.
+- The UI prompts for a username and password (defaults: `admin` / `admin123`).
+- On success the server returns an API key which the UI stores in `localStorage` and sends as `X-API-Key` on all subsequent requests.
+- Only the `/api/v1/login` endpoint is unauthenticated.
 
 ## Terminal Examples
 
@@ -399,12 +393,6 @@ What exists:
 - RBAC:
   - [deploy/k8s/rbac.yaml](/home/fewzan/Projects/task-queue-system/deploy/k8s/rbac.yaml)
 
-What is still missing from the repo:
-
-- Distributed tracing export such as OpenTelemetry / Jaeger
-- Alerting rules files for Prometheus / Alertmanager
-- A Grafana dashboard definition
-
 ## Test Coverage
 
 The repo includes:
@@ -420,7 +408,6 @@ Known gaps:
 - The Postgres store integration workflow is opt-in and only runs when `POSTGRES_CONN_STR` is set
 - The webhook delivery integration test is opt-in and uses a mock HTTP server
 - Chaos tests are present, but they are opt-in via build tags and Docker
-- OpenTelemetry / Jaeger exporter support is not wired because the repo does not currently include OTEL dependencies
 
 Optional integration workflows:
 

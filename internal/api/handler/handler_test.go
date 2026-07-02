@@ -132,7 +132,7 @@ func newTestHandler() (*JobHandler, *models.InMemoryStore) {
 	store := models.NewInMemoryStore()
 	q := &mockQueue{}
 	svc := service.New(q, store, slog.Default(), 0)
-	return New(svc, slog.Default()), store
+	return New(svc, slog.Default(), "test-api-key", "admin", "admin123"), store
 }
 
 func TestCreateJob_Success(t *testing.T) {
@@ -214,7 +214,7 @@ func TestCreateJob_RateLimited(t *testing.T) {
 		},
 	}
 	svc := service.New(q, store, slog.Default(), 0)
-	h := New(svc, slog.Default())
+	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123")
 
 	body := `{"type":"email","payload":{"to":"a@b.com"},"priority":"medium","tenant_id":"tenant-a"}`
 	req := httptest.NewRequest("POST", "/jobs", bytes.NewReader([]byte(body)))

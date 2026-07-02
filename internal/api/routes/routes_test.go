@@ -8,7 +8,6 @@ import (
 
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/queue"
-	"task-queue-system/internal/secrets"
 	"task-queue-system/internal/storage/models"
 )
 
@@ -16,9 +15,7 @@ func TestNewRouter_RegistersRoutes(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	secretsProv := secrets.NewEnvSecretsProvider()
-
-	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
 	if handler == nil {
 		t.Fatal("expected non-nil handler")
 	}
@@ -53,9 +50,7 @@ func TestNewRouter_DLQEndpointsRequireAuth(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	secretsProv := secrets.NewEnvSecretsProvider()
-
-	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
 
 	dlqTests := []struct {
 		method string
@@ -85,9 +80,7 @@ func TestNewRouter_SwaggerUI(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	secretsProv := secrets.NewEnvSecretsProvider()
-
-	handler := NewRouter(mq, store, slog.Default(), cfg, secretsProv, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
 
 	req := httptest.NewRequest("GET", "/swagger/", nil)
 	rec := httptest.NewRecorder()

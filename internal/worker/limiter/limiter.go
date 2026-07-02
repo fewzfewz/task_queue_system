@@ -59,9 +59,13 @@ func NewTokenBucketLimiter(rate float64) *TokenBucketLimiter {
 }
 
 // Wait blocks until a token is available or context is cancelled.
+// Context cancellation takes priority over available tokens.
 func (l *TokenBucketLimiter) Wait(ctx context.Context) error {
-	// If rate limit is disabled (nil limiter), this wouldn't be called.
-	// But we protect the channel read with context for safety.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

@@ -25,18 +25,24 @@ import (
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
 type JobHandler struct {
-	service      *service.JobService
-	webhookStore *webhooks.WebhookStore
-	sseBroker    *sse.Broker
-	logger       *slog.Logger
+	service       *service.JobService
+	webhookStore  *webhooks.WebhookStore
+	sseBroker     *sse.Broker
+	logger        *slog.Logger
+	apiKey        string
+	adminUsername string
+	adminPassword string
 }
 
 // New creates a JobHandler.
-func New(svc *service.JobService, logger *slog.Logger) *JobHandler {
+func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string) *JobHandler {
 	return &JobHandler{
-		service:   svc,
-		sseBroker: sse.NewBroker(logger.With("component", "sse")),
-		logger:    logger,
+		service:       svc,
+		sseBroker:     sse.NewBroker(logger.With("component", "sse")),
+		logger:        logger,
+		apiKey:        apiKey,
+		adminUsername: adminUsername,
+		adminPassword: adminPassword,
 	}
 }
 
@@ -46,6 +52,41 @@ func (h *JobHandler) SSEBroker() *sse.Broker { return h.sseBroker }
 // SetWebhookStore attaches the persistent webhook store for CRUD endpoints.
 func (h *JobHandler) SetWebhookStore(ws *webhooks.WebhookStore) {
 	h.webhookStore = ws
+}
+
+// Login handles POST /api/v1/login.
+//
+// @Summary      Login
+// @Description  Authenticates with admin credentials and returns the API key.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        body  body      object{username=string,password=string}  true  "Login credentials"
+// @Success      200   {object}  map[string]string
+// @Failure      401   {object}  dto.ErrorResponse
+// @Router       /api/v1/login [post]
+func (h *JobHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body")
+		return
+	}
+	defer r.Body.Close()
+
+	if req.Username == "" || req.Password == "" {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "username and password required")
+		return
+	}
+
+	if req.Username != h.adminUsername || req.Password != h.adminPassword {
+		h.writeError(w, http.StatusUnauthorized, apperr.CodeUnauthorized, "invalid credentials")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"api_key": h.apiKey})
 }
 
 // CreateJob handles POST /jobs.
@@ -282,6 +323,13 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetStats handles GET /api/v1/stats.
+//
+// @Summary      Get system stats
+// @Description  Returns queue lengths, worker count, and approximate job counts.
+// @Tags         stats
+// @Produce      json
+// @Success      200 {object} map[string]interface{}
+// @Router       /api/v1/stats [get]
 func (h *JobHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	queueLengths, err := h.service.QueueLengths(r.Context())
 	if err != nil {
@@ -294,10 +342,12 @@ func (h *JobHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	totalPending := int64(0)
 	byQueue := make(map[string]int64)
 	for qtype, tenants := range queueLengths {
+		var queueTotal int64
 		for _, count := range tenants {
-			totalPending += count
+			queueTotal += count
 		}
-		byQueue[qtype] = totalPending
+		byQueue[qtype] = queueTotal
+		totalPending += queueTotal
 	}
 
 	// Count by status via search
@@ -316,6 +366,15 @@ func (h *JobHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetJobDeps returns the DAG dependency chain for a job.
+//
+// @Summary      Get job dependency graph
+// @Description  Returns upstream dependencies and downstream dependents for a job.
+// @Tags         jobs
+// @Produce      json
+// @Param        id   path      string  true  "Job ID"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      404  {object}  dto.ErrorResponse
+// @Router       /api/v1/jobs/{id}/deps [get]
 func (h *JobHandler) GetJobDeps(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
@@ -396,6 +455,16 @@ func (h *JobHandler) GetWorkers(w http.ResponseWriter, r *http.Request) {
 // ── Webhook CRUD ──────────────────────────────────────────────────────────────
 
 // RegisterWebhook handles POST /api/v1/webhooks.
+//
+// @Summary      Register a webhook
+// @Description  Creates a new webhook that will be called on specified events.
+// @Tags         webhooks
+// @Accept       json
+// @Produce      json
+// @Param        body  body      object  true  "Webhook registration payload"
+// @Success      201   {object}  object
+// @Failure      400   {object}  dto.ErrorResponse
+// @Router       /api/v1/webhooks [post]
 func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		URL    string   `json:"url"`
@@ -421,6 +490,13 @@ func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListWebhooks handles GET /api/v1/webhooks.
+//
+// @Summary      List webhooks
+// @Description  Returns all registered webhooks.
+// @Tags         webhooks
+// @Produce      json
+// @Success      200  {array}   object
+// @Router       /api/v1/webhooks [get]
 func (h *JobHandler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
 	list, err := h.webhookStore.List(r.Context(), tenantID)
@@ -432,6 +508,15 @@ func (h *JobHandler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetWebhook handles GET /api/v1/webhooks/{id}.
+//
+// @Summary      Get webhook by ID
+// @Description  Returns a single webhook configuration.
+// @Tags         webhooks
+// @Produce      json
+// @Param        id   path      string  true  "Webhook ID"
+// @Success      200  {object}  object
+// @Failure      404  {object}  dto.ErrorResponse
+// @Router       /api/v1/webhooks/{id} [get]
 func (h *JobHandler) GetWebhook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	wh, err := h.webhookStore.GetByID(r.Context(), id)
@@ -443,6 +528,17 @@ func (h *JobHandler) GetWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateWebhook handles PUT /api/v1/webhooks/{id}.
+//
+// @Summary      Update a webhook
+// @Description  Updates an existing webhook's URL, secret or event filters.
+// @Tags         webhooks
+// @Accept       json
+// @Produce      json
+// @Param        id    path    string  true  "Webhook ID"
+// @Param        body  body    object  true  "Updated webhook fields"
+// @Success      200   {object}  object
+// @Failure      404   {object}  dto.ErrorResponse
+// @Router       /api/v1/webhooks/{id} [put]
 func (h *JobHandler) UpdateWebhook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req struct {
@@ -464,6 +560,14 @@ func (h *JobHandler) UpdateWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteWebhook handles DELETE /api/v1/webhooks/{id}.
+//
+// @Summary      Delete a webhook
+// @Description  Removes a webhook by ID.
+// @Tags         webhooks
+// @Param        id   path      string  true  "Webhook ID"
+// @Success      204  "No Content"
+// @Failure      404  {object}  dto.ErrorResponse
+// @Router       /api/v1/webhooks/{id} [delete]
 func (h *JobHandler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := h.webhookStore.Delete(r.Context(), id); err != nil {
@@ -474,6 +578,15 @@ func (h *JobHandler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // PauseJob handles POST /jobs/{id}/pause.
+//
+// @Summary      Pause a job
+// @Description  Prevents a job from being processed until resumed.
+// @Tags         jobs
+// @Produce      json
+// @Param        id   path      string  true  "Job ID"
+// @Success      200  {object}  map[string]string
+// @Failure      400  {object}  dto.ErrorResponse
+// @Router       /api/v1/jobs/{id}/pause [post]
 func (h *JobHandler) PauseJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
@@ -488,6 +601,15 @@ func (h *JobHandler) PauseJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // ResumeJob handles POST /jobs/{id}/resume.
+//
+// @Summary      Resume a job
+// @Description  Resumes processing for a previously paused job.
+// @Tags         jobs
+// @Produce      json
+// @Param        id   path      string  true  "Job ID"
+// @Success      200  {object}  map[string]string
+// @Failure      400  {object}  dto.ErrorResponse
+// @Router       /api/v1/jobs/{id}/resume [post]
 func (h *JobHandler) ResumeJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
@@ -502,6 +624,13 @@ func (h *JobHandler) ResumeJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // JobEventsSSE handles GET /events — SSE stream of job status changes.
+//
+// @Summary      Stream job events (SSE)
+// @Description  Opens a server-sent event stream for real-time job status changes.
+// @Tags         events
+// @Produce      text/event-stream
+// @Success      200  "SSE stream"
+// @Router       /api/v1/events [get]
 func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -536,6 +665,15 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 // CancelJob handles POST /jobs/{id}/cancel.
+//
+// @Summary      Cancel a job
+// @Description  Cancels a pending or running job.
+// @Tags         jobs
+// @Produce      json
+// @Param        id   path      string  true  "Job ID"
+// @Success      200  {object}  map[string]string
+// @Failure      400  {object}  dto.ErrorResponse
+// @Router       /api/v1/jobs/{id}/cancel [post]
 func (h *JobHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
@@ -550,6 +688,17 @@ func (h *JobHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateJobProgress handles PATCH /jobs/{id}/progress.
+//
+// @Summary      Update job progress
+// @Description  Sets the progress percentage for an in-flight job.
+// @Tags         jobs
+// @Accept       json
+// @Produce      json
+// @Param        id    path    string  true  "Job ID"
+// @Param        body  body    object  true  "Progress payload"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  dto.ErrorResponse
+// @Router       /api/v1/jobs/{id}/progress [patch]
 func (h *JobHandler) UpdateJobProgress(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {

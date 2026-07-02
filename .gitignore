@@ -1,8 +1,12 @@
 # Binaries
 /bin/
+/tq
 *.exe
 *.test
 *.out
+
+# Logs
+/logs/
 
 # Environment
 .env
