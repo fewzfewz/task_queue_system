@@ -156,12 +156,12 @@ kubectl apply -f deploy/k8s/namespace.yaml
 
 ### 3.2 Secrets
 
-`deploy/k8s/secrets.yaml` ships with **placeholder credentials** (`api-key:
-secret-api-key`, `admin-password: admin123`, empty DSN). Do not apply it to
-production — create the secrets imperatively instead. The manifests read from
-`task-queue-secrets` (`api-key`, `admin-password`, `postgres-conn-str`); the
-RBAC roles also grant read access to a legacy `task-queue-postgres` secret, so
-create both.
+`deploy/k8s/secrets.yaml` ships with **empty values** so it fails closed: if you
+apply it, the pods start with empty credentials instead of known defaults. It
+is a template only — create the real secrets imperatively instead. The
+manifests read from `task-queue-secrets` (`api-key`, `admin-password`,
+`postgres-conn-str`) and `task-queue-postgres` (`password`, `conn-str`); create
+both.
 
 Choose a Postgres password, then generate the API key and admin password:
 
@@ -185,21 +185,18 @@ kubectl -n task-queue create secret generic task-queue-secrets \
   --from-literal=postgres-conn-str="${TQ_POSTGRES_CONN_STR}"
 
 kubectl -n task-queue create secret generic task-queue-postgres \
+  --from-literal=password="${TQ_POSTGRES_PASSWORD}" \
   --from-literal=conn-str="${TQ_POSTGRES_CONN_STR}"
 ```
 
-The Postgres StatefulSet hardcodes `POSTGRES_USER=taskqueue` / `POSTGRES_DB=
-taskqueue` / `POSTGRES_PASSWORD=taskqueue`. Set the password to match the
-secret before the first apply (this edits only the `POSTGRES_PASSWORD` value):
-
-```bash
-sed -i -e '/POSTGRES_PASSWORD:/{n;s|value: "taskqueue"|value: "'"${TQ_POSTGRES_PASSWORD}"'"|}' \
-  deploy/k8s/postgres-statefulset.yaml
-```
+The Postgres StatefulSet reads `POSTGRES_PASSWORD` from the
+`task-queue-postgres` secret (key `password`), so the password lives only in
+the secret, never in a committed manifest. It takes effect the first time the
+StatefulSet initializes `PGDATA`; rotating the password on a running cluster
+requires `ALTER USER` (see §11.3).
 
 > The generated values live only in your shell and in the cluster. Do not
-> commit `deploy/k8s/postgres-statefulset.yaml` or `deploy/k8s/secrets.yaml`
-> after this step.
+> commit `deploy/k8s/secrets.yaml` after this step.
 
 Verify:
 

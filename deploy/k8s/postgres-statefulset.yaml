@@ -21,7 +21,10 @@ spec:
             - name: POSTGRES_USER
               value: "taskqueue"
             - name: POSTGRES_PASSWORD
-              value: "taskqueue"
+              valueFrom:
+                secretKeyRef:
+                  name: task-queue-postgres
+                  key: password
             - name: POSTGRES_DB
               value: "taskqueue"
             - name: PGDATA
