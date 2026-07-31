@@ -19,16 +19,30 @@ metadata:
   namespace: task-queue
 automountServiceAccountToken: false
 ---
+# API: reads the API-key credentials (task-queue-secrets) and the Postgres
+# connection string (task-queue-postgres).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: task-queue-secret-reader
+  name: task-queue-api-secrets
   namespace: task-queue
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["task-queue-secrets", "task-queue-postgres"]
-    verbs: ["get", "list"]
+    verbs: ["get"]
+---
+# Worker/scheduler: read only the Postgres connection string.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: task-queue-postgres-secrets
+  namespace: task-queue
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["task-queue-postgres"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -43,7 +57,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: task-queue-api-secret-reader
+  name: task-queue-api-api-secrets
   namespace: task-queue
 subjects:
   - kind: ServiceAccount
@@ -52,12 +66,12 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: task-queue-secret-reader
+  name: task-queue-api-secrets
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: task-queue-worker-secret-reader
+  name: task-queue-worker-postgres-secrets
   namespace: task-queue
 subjects:
   - kind: ServiceAccount
@@ -66,12 +80,12 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: task-queue-secret-reader
+  name: task-queue-postgres-secrets
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: task-queue-scheduler-secret-reader
+  name: task-queue-scheduler-postgres-secrets
   namespace: task-queue
 subjects:
   - kind: ServiceAccount
@@ -80,7 +94,7 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: task-queue-secret-reader
+  name: task-queue-postgres-secrets
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

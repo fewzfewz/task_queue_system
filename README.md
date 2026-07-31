@@ -527,7 +527,7 @@ What exists:
   - `scheduler-deployment.yaml` — scheduler service
   - `redis-statefulset.yaml` + `redis-service.yaml` — Redis cluster
   - `postgres-statefulset.yaml` + `postgres-service.yaml` — optional PostgreSQL
-  - `secrets.yaml` — Opaque Secret for API key, admin password, postgres conn string
+  - `secrets.yaml` — Opaque Secret template for API key + admin password (empty values, fails closed)
   - `hpa.yaml` — worker horizontal pod autoscaler
   - `ingress.yaml` — ingress rules
   - `rbac.yaml` — service accounts and roles

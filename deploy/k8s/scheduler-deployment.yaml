@@ -31,8 +31,8 @@ spec:
             - name: POSTGRES_CONN_STR
               valueFrom:
                 secretKeyRef:
-                  name: task-queue-secrets
-                  key: postgres-conn-str
+                  name: task-queue-postgres
+                  key: conn-str
           ports:
             - containerPort: 8082
               name: http

@@ -43,8 +43,8 @@ spec:
             - name: POSTGRES_CONN_STR
               valueFrom:
                 secretKeyRef:
-                  name: task-queue-secrets
-                  key: postgres-conn-str
+                  name: task-queue-postgres
+                  key: conn-str
             - name: WORKER_POOL_SIZE
               value: "50"
           ports:

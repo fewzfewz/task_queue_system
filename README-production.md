@@ -159,9 +159,8 @@ kubectl apply -f deploy/k8s/namespace.yaml
 `deploy/k8s/secrets.yaml` ships with **empty values** so it fails closed: if you
 apply it, the pods start with empty credentials instead of known defaults. It
 is a template only — create the real secrets imperatively instead. The
-manifests read from `task-queue-secrets` (`api-key`, `admin-password`,
-`postgres-conn-str`) and `task-queue-postgres` (`password`, `conn-str`); create
-both.
+manifests read from `task-queue-secrets` (`api-key`, `admin-password`) and
+`task-queue-postgres` (`password`, `conn-str`); create both.
 
 Choose a Postgres password, then generate the API key and admin password:
 
@@ -181,8 +180,7 @@ Create the secrets:
 ```bash
 kubectl -n task-queue create secret generic task-queue-secrets \
   --from-literal=api-key="${TQ_API_KEY}" \
-  --from-literal=admin-password="${TQ_ADMIN_PASSWORD}" \
-  --from-literal=postgres-conn-str="${TQ_POSTGRES_CONN_STR}"
+  --from-literal=admin-password="${TQ_ADMIN_PASSWORD}"
 
 kubectl -n task-queue create secret generic task-queue-postgres \
   --from-literal=password="${TQ_POSTGRES_PASSWORD}" \
@@ -227,7 +225,10 @@ kubectl apply -f deploy/k8s/network-policy.yaml
 ```
 
 `rbac.yaml` creates one ServiceAccount per workload (`automountServiceAccountToken:
-false`) plus minimal Roles/RoleBindings. `network-policy.yaml` implements
+false`) plus minimal Roles/RoleBindings, scoped per binary: the API may `get`
+`task-queue-secrets` (API key, admin password) and `task-queue-postgres`;
+worker/scheduler may `get` only `task-queue-postgres` (connection string); no
+role grants `list`. `network-policy.yaml` implements
 default-deny (ingress+egress) for the namespace and then allows exactly:
 
 - kube-dns egress (UDP/TCP 53) for all pods in the namespace
@@ -312,8 +313,9 @@ kubectl -n task-queue set image deployment/task-queue-scheduler scheduler=${REGI
 kubectl -n task-queue rollout status deployment/task-queue-api --timeout=180s
 ```
 
-The deployments read `API_KEY`, `ADMIN_PASSWORD`, and `POSTGRES_CONN_STR` from
-the `task-queue-secrets` secret, talk to Redis at
+The deployments read `API_KEY` and `ADMIN_PASSWORD` from the
+`task-queue-secrets` secret, `POSTGRES_CONN_STR` from `task-queue-postgres`,
+talk to Redis at
 `redis.task-queue.svc.cluster.local:6379`, and ship with resource requests so
 the HPA resource metrics work. The worker drains in-flight jobs on termination
 (`terminationGracePeriodSeconds: 75` ≥ `DRAIN_TIMEOUT` 60 + preStop 5).
@@ -642,7 +644,6 @@ export TQ_API_KEY="$(openssl rand -hex 32)"
 kubectl -n task-queue create secret generic task-queue-secrets \
   --from-literal=api-key="${TQ_API_KEY}" \
   --from-literal=admin-password="${TQ_ADMIN_PASSWORD}" \
-  --from-literal=postgres-conn-str="${TQ_POSTGRES_CONN_STR}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n task-queue rollout restart deployment/task-queue-api task-queue-worker task-queue-scheduler
