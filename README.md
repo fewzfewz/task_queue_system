@@ -453,13 +453,13 @@ The repo includes:
 - unit tests
 - store tests
 - health tests
-- webhook tests
+- webhook tests (unit + integration: HMAC verification, exponential backoff,
+  retry/give-up behaviour, payload integrity, concurrent deliveries)
 - a build-tagged chaos suite
 - a Postgres integration suite (every `Store` interface method against a real Postgres, run in CI)
 
 Known gaps:
 
-- The webhook delivery integration test is opt-in and uses a mock HTTP server
 - Chaos tests are present, but they are opt-in via build tags and Docker
 
 Optional integration workflows:
@@ -467,6 +467,7 @@ Optional integration workflows:
 ```bash
 RUN_QUEUE_INTEGRATION=1 go test ./test
 make test-postgres
+make test-webhooks
 go test ./internal/webhooks -run DispatcherSendIntegration
 ```
 
@@ -482,6 +483,22 @@ executes `go test ./test/... ./internal/storage/...` against it, and tears it
 down. The `jobs` table is truncated before/after each test. See
 [README-production.md](/home/fewzan/Projects/task-queue-system/README-production.md#postgres-integration-tests)
 for local and CI details.
+
+Webhook delivery tests run in the default suite and need no external services
+(they use `httptest` and in-memory Redis). To additionally exercise the full
+Redis stream → dispatcher pipeline, run:
+
+```bash
+make test-webhooks
+```
+
+This starts a dedicated Redis container on `:6380` (so it never collides with a
+running `make dev`/compose stack on `:6379`), runs
+`RUN_QUEUE_INTEGRATION=1 go test -race ./internal/webhooks/`, and tears the
+container down. CI runs this in a dedicated `test-webhooks` job against a
+Redis service. See
+[README-production.md](/home/fewzan/Projects/task-queue-system/README-production.md#webhook-integration-tests)
+for details.
 
 ## Production Deployment
 

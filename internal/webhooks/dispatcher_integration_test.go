@@ -2,6 +2,7 @@ package webhooks
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -64,15 +65,30 @@ func TestDispatcherStartIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		t.Skip("Redis not available on localhost:6379, skipping")
+		t.Skipf("Redis not available on %s, skipping", addr)
 	}
 	defer rdb.FlushAll(ctx)
 
 	var delivered atomic.Int64
+	const streamSecret = "stream-secret"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		sig := r.Header.Get("X-Webhook-Signature")
+		want := "sha256=" + sign(body, streamSecret)
+		if !hmac.Equal([]byte(sig), []byte(want)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		delivered.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -92,7 +108,7 @@ func TestDispatcherStartIntegration(t *testing.T) {
 		Result:    map[string]string{"ok": "yes"},
 		Timestamp: time.Now().UTC(),
 		URL:       srv.URL,
-		Secret:    "",
+		Secret:    streamSecret,
 	}
 	data, err := json.Marshal(ev)
 	if err != nil {

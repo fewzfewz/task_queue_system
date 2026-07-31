@@ -200,6 +200,43 @@ service container and executes the same suite with `-race`. The Postgres tests
 are intentionally excluded from the fast test job so the default CI run needs
 no database beyond Redis.
 
+## Webhook Integration Tests
+
+The webhook delivery suite lives in `internal/webhooks/` and is split in two:
+
+- **Default-run delivery tests** (`delivery_integration_test.go`) — fully
+  self-contained using `httptest` receivers and in-memory Redis, so they run
+  as part of `go test ./...` with no external services:
+  - HMAC-SHA256 signature verification on the receiving end (valid secret
+    accepted, wrong secret rejected as a 4xx without retry)
+  - payload integrity across the event types the system emits (`completed`,
+    `failed`) — exact body, method, content-type, and timestamp
+  - exponential backoff schedule with jitter bounds, give-up after `MaxRetries`
+  - retry on 5xx and on client timeout; no retry on 4xx
+  - 50-way concurrent deliveries with a goroutine-leak check
+- **Redis-pipeline test** (`dispatcher_integration_test.go`) — gated behind
+  `RUN_QUEUE_INTEGRATION=1` and drives the real stream → consumer-group →
+  dispatcher path, verifying the delivered webhook signature end-to-end.
+
+### Locally
+
+```bash
+make test-webhooks
+```
+
+This starts a dedicated Redis container (`task_queue_redis_test`) on host port
+`:6380`, runs `RUN_QUEUE_INTEGRATION=1 go test -race ./internal/webhooks/`, and
+removes the container afterwards. It uses a separate port so it never collides
+with a running `make dev`/compose stack on `:6379`, and the gated test reads
+`REDIS_ADDR` (default `localhost:6379`) to find Redis. If Redis is
+unreachable the gated tests skip.
+
+### In CI
+
+`test.yml` runs a dedicated `test-webhooks` job with a `redis:7` service
+container and `RUN_QUEUE_INTEGRATION=1`. The default-run delivery tests are
+already covered by the fast `test` job.
+
 ## Deploy Order
 
 1. Create namespace.

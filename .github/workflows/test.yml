@@ -87,6 +87,37 @@ jobs:
           POSTGRES_CONN_STR: postgres://tq:tq@localhost:5432/tq?sslmode=disable
           POSTGRES_MIGRATIONS_DIR: ${{ github.workspace }}/db/migrations
 
+  test-webhooks:
+    name: Webhook Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run webhook integration tests
+        run: go test -p 1 -count=1 -race ./internal/webhooks/
+        env:
+          RUN_QUEUE_INTEGRATION: "1"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

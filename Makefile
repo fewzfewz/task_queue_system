@@ -1,6 +1,6 @@
 APP_NAME=task-queue-system
 
-.PHONY: help deps test test-postgres test-postgres-up test-postgres-down build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
+.PHONY: help deps test test-postgres test-postgres-up test-postgres-down test-webhooks build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
 
 help:
 	@echo "Targets:"
@@ -9,6 +9,7 @@ help:
 	@echo "  test-postgres      Run Postgres integration tests (spins up a test DB via docker compose)"
 	@echo "  test-postgres-up   Start the Postgres test DB container only"
 	@echo "  test-postgres-down Stop the Postgres test DB container"
+	@echo "  test-webhooks      Run webhook integration tests (spins up a dedicated Redis container)"
 	@echo "  build              Build all binaries"
 	@echo "  run-api            Run the API locally"
 	@echo "  run-worker         Run the worker locally"
@@ -50,6 +51,20 @@ test-postgres-up:
 
 test-postgres-down:
 	@docker-compose -f deploy/test/docker-compose.yml down
+
+test-webhooks:
+	@echo "[test-webhooks] Starting dedicated Redis container..."
+	@-docker run -d -p 6380:6379 --name task_queue_redis_test redis:7-alpine > /dev/null 2>&1; \
+		case $$? in \
+			0) echo "Redis started on :6380" ;; \
+			1) echo "Redis container already running (reusing)" ;; \
+			*) echo "Warning: Redis may not be available on :6380 (integration tests will skip)" ;; \
+		esac
+	@sleep 2
+	@echo "[test-webhooks] Running webhook integration tests..."
+	@RUN_QUEUE_INTEGRATION=1 REDIS_ADDR='localhost:6380' go test -p 1 -count=1 -race ./internal/webhooks/
+	@echo "[test-webhooks] Stopping Redis container..."
+	@-docker rm -f task_queue_redis_test > /dev/null 2>&1 || true
 
 build: build-api build-worker build-scheduler build-cli
 
