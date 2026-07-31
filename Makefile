@@ -1,6 +1,6 @@
 APP_NAME=task-queue-system
 
-.PHONY: help deps test test-postgres test-postgres-up test-postgres-down test-webhooks build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
+.PHONY: help deps test test-postgres test-postgres-up test-postgres-down test-webhooks test-vault build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
 
 help:
 	@echo "Targets:"
@@ -10,6 +10,7 @@ help:
 	@echo "  test-postgres-up   Start the Postgres test DB container only"
 	@echo "  test-postgres-down Stop the Postgres test DB container"
 	@echo "  test-webhooks      Run webhook integration tests (spins up a dedicated Redis container)"
+	@echo "  test-vault         Run Vault integration tests (spins up a Vault dev server)"
 	@echo "  build              Build all binaries"
 	@echo "  run-api            Run the API locally"
 	@echo "  run-worker         Run the worker locally"
@@ -65,6 +66,14 @@ test-webhooks:
 	@RUN_QUEUE_INTEGRATION=1 REDIS_ADDR='localhost:6380' go test -p 1 -count=1 -race ./internal/webhooks/
 	@echo "[test-webhooks] Stopping Redis container..."
 	@-docker rm -f task_queue_redis_test > /dev/null 2>&1 || true
+
+test-vault:
+	@echo "[test-vault] Starting Vault dev server..."
+	@docker-compose -f deploy/test/docker-compose.vault.yml up -d --wait > /dev/null
+	@echo "[test-vault] Running Vault integration tests..."
+	@VAULT_ADDR='http://127.0.0.1:8200' VAULT_DEV_ROOT_TOKEN_ID='root' go test -p 1 -count=1 -race ./internal/secrets/
+	@echo "[test-vault] Stopping Vault dev server..."
+	@docker-compose -f deploy/test/docker-compose.vault.yml down > /dev/null
 
 build: build-api build-worker build-scheduler build-cli
 

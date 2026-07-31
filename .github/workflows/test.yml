@@ -118,6 +118,42 @@ jobs:
         env:
           RUN_QUEUE_INTEGRATION: "1"
 
+  test-vault:
+    name: Vault Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      vault:
+        image: hashicorp/vault:1.18
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: root
+          VAULT_ADDR: http://127.0.0.1:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add IPC_LOCK
+          --health-cmd "vault status"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run Vault integration tests
+        run: go test -p 1 -count=1 -race ./internal/secrets/
+        env:
+          VAULT_ADDR: http://127.0.0.1:8200
+          VAULT_DEV_ROOT_TOKEN_ID: root
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

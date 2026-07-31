@@ -237,6 +237,45 @@ unreachable the gated tests skip.
 container and `RUN_QUEUE_INTEGRATION=1`. The default-run delivery tests are
 already covered by the fast `test` job.
 
+## Vault Integration Tests
+
+The Vault suite lives in `internal/secrets/vault_integration_test.go`. It tests
+the `VaultSecretsProvider`'s TTL caching contract against a real Vault dev
+server (AppRole auth + KV v2), using a counting HTTP transport so assertions are
+made on actual Vault calls rather than mocks:
+
+- login via AppRole (`role-id` + `secret-id`) and KV v2 secret retrieval
+- value served from cache until the TTL expires (confirmed by changing the
+  underlying secret and observing the old value is still returned, with only 1
+  Vault read)
+- re-fetch after TTL expiry picks up the new value
+- stale-while-revalidate: a failed background refresh inside the pre-expiry
+  window still serves the stale cached value; after full expiry the provider
+  returns an error instead of stale data
+- single-flight coalescing: 20 concurrent cold-miss readers cause exactly 1 Vault
+  read, and 20 concurrent in-window readers trigger a single coalesced refresh
+  (no stampede)
+
+If no Vault server is reachable the tests skip, so `go test ./...` needs no
+extra services.
+
+### Locally
+
+```bash
+make test-vault
+```
+
+This starts a Vault dev server (`hashicorp/vault:1.18` in dev mode, root token
+`root`) from `deploy/test/docker-compose.vault.yml` on host port `:8200`, runs
+`go test -race ./internal/secrets/`, and tears the container down. Override the
+endpoint with `VAULT_ADDR` / `VAULT_DEV_ROOT_TOKEN_ID` to run against an
+existing dev server.
+
+### In CI
+
+`test.yml` runs a dedicated `test-vault` job with a `hashicorp/vault:1.18`
+service container (dev mode, unsealed) on `:8200`.
+
 ## Deploy Order
 
 1. Create namespace.

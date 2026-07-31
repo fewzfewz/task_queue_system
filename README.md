@@ -457,6 +457,8 @@ The repo includes:
   retry/give-up behaviour, payload integrity, concurrent deliveries)
 - a build-tagged chaos suite
 - a Postgres integration suite (every `Store` interface method against a real Postgres, run in CI)
+- a Vault integration suite (TTL caching, expiry/refetch, stale-while-revalidate, and
+  single-flight coalescing against a real Vault dev server, run in CI)
 
 Known gaps:
 
@@ -468,6 +470,7 @@ Optional integration workflows:
 RUN_QUEUE_INTEGRATION=1 go test ./test
 make test-postgres
 make test-webhooks
+make test-vault
 go test ./internal/webhooks -run DispatcherSendIntegration
 ```
 
@@ -498,6 +501,19 @@ running `make dev`/compose stack on `:6379`), runs
 container down. CI runs this in a dedicated `test-webhooks` job against a
 Redis service. See
 [README-production.md](/home/fewzan/Projects/task-queue-system/README-production.md#webhook-integration-tests)
+for details.
+
+Vault secret integration tests run in the default suite too, but skip unless a
+Vault dev server is reachable. To exercise them against a real Vault:
+
+```bash
+make test-vault
+```
+
+This starts a Vault dev server container from `deploy/test/docker-compose.vault.yml`
+on `:8200`, runs `go test -race ./internal/secrets/`, and tears the container
+down. CI runs this in a dedicated `test-vault` job against a Vault service. See
+[README-production.md](/home/fewzan/Projects/task-queue-system/README-production.md#vault-integration-tests)
 for details.
 
 ## Production Deployment
