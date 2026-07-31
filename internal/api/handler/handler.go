@@ -337,15 +337,53 @@ func (h *JobHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	completedJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Status: string(jobs.StatusCompleted), Limit: 1})
 	failedJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Status: string(jobs.StatusFailed), Limit: 1})
 
+	priorityDepths, _ := h.service.PriorityPartitionDepths(r.Context())
+
 	stats := map[string]interface{}{
-		"total_pending":    totalPending,
-		"queue_breakdown":  queueLengths,
-		"worker_count":     len(workers),
-		"workers":          workers,
-		"approx_completed": len(completedJobs), // hacky but gives a sense
-		"approx_failed":    len(failedJobs),
+		"total_pending":      totalPending,
+		"queue_breakdown":    queueLengths,
+		"priority_breakdown": priorityDepths,
+		"worker_count":       len(workers),
+		"workers":            workers,
+		"approx_completed":   len(completedJobs), // hacky but gives a sense
+		"approx_failed":      len(failedJobs),
 	}
 	h.writeJSON(w, http.StatusOK, stats)
+}
+
+// GetRateLimits handles GET /api/v1/rate-limits.
+//
+// @Summary      Get per-tenant rate limit status
+// @Description  Returns current fixed-window usage for every tenant that has submitted jobs.
+// @Tags         monitoring
+// @Produce      json
+// @Success      200  {object}  map[string]interface{}
+// @Failure      500  {object}  dto.ErrorResponse
+// @Router       /api/v1/rate-limits [get]
+func (h *JobHandler) GetRateLimits(w http.ResponseWriter, r *http.Request) {
+	statuses, err := h.service.RateLimitStatus(r.Context())
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	window := int64(1)
+	limit := int64(0)
+	for _, s := range statuses {
+		if window == 1 {
+			window = s.WindowSeconds
+		}
+		if s.Limit > limit {
+			limit = s.Limit
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"window_seconds": window,
+		"limit":          limit,
+		"unlimited":      limit == 0,
+		"tenants":        statuses,
+	})
 }
 
 // GetJobDeps returns the DAG dependency chain for a job.
@@ -508,6 +546,39 @@ func (h *JobHandler) GetWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeJSON(w, http.StatusOK, wh)
+}
+
+// GetWebhookDeliveries handles GET /api/v1/webhooks/{id}/deliveries.
+//
+// @Summary      Get webhook delivery history
+// @Description  Returns the last N delivery attempts (status codes, retry attempts, backoff state) for a webhook endpoint.
+// @Tags         webhooks
+// @Produce      json
+// @Param        id     path   string  true  "Webhook ID"
+// @Param        limit  query  int     false  "Max deliveries to return (default 20)"
+// @Success      200    {array}  webhooks.DeliveryRecord
+// @Failure      404    {object}  dto.ErrorResponse
+// @Router       /api/v1/webhooks/{id}/deliveries [get]
+func (h *JobHandler) GetWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	wh, err := h.webhookStore.GetByID(r.Context(), id)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, apperr.CodeNotFound, "webhook not found")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 20
+	}
+	records, err := h.webhookStore.ListDeliveries(r.Context(), wh.URL, limit)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, apperr.CodeInternal, "failed to load delivery history")
+		return
+	}
+	if records == nil {
+		records = []webhooks.DeliveryRecord{}
+	}
+	h.writeJSON(w, http.StatusOK, records)
 }
 
 // UpdateWebhook handles PUT /api/v1/webhooks/{id}.
@@ -799,12 +870,19 @@ func (h *JobHandler) ListFailedJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	total, _ := h.service.CountFailedJobs(r.Context(), tenantID, jobType)
+
 	res := make([]dto.JobResponse, len(jobs))
 	for i, j := range jobs {
 		res[i] = dto.FromJob(j)
 	}
 
-	h.writeJSON(w, http.StatusOK, res)
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"jobs":  res,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
 }
 
 // GetFailedJobDetail handles GET /api/v1/dlq/{id}.
@@ -855,7 +933,20 @@ func (h *JobHandler) ReplayFailedJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishDLQSSE(id, "replayed")
 	h.writeJSON(w, http.StatusOK, dto.FromJob(job))
+}
+
+func (h *JobHandler) publishDLQSSE(jobID, status string) {
+	if h.sseBroker == nil {
+		return
+	}
+	h.sseBroker.Publish(sse.Event{
+		Kind:   "dlq",
+		JobID:  jobID,
+		Status: status,
+		Type:   "dlq",
+	})
 }
 
 // DeleteFailedJob handles DELETE /api/v1/dlq/{id}.
@@ -876,6 +967,7 @@ func (h *JobHandler) DeleteFailedJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishDLQSSE(id, "purged")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -910,5 +1002,6 @@ func (h *JobHandler) BulkPurgeDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.publishDLQSSE("", "bulk_purged")
 	h.writeJSON(w, http.StatusOK, map[string]int64{"deleted": count})
 }

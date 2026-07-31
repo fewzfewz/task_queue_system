@@ -9,6 +9,10 @@ import (
 
 // Event represents a server-sent event.
 type Event struct {
+	// Kind categorizes the event so clients can route updates without
+	// guessing from status alone. Values: "job", "rate_limit",
+	// "circuit_breaker", "dlq".
+	Kind string `json:"kind,omitempty"`
 	JobID  string      `json:"job_id"`
 	Status string      `json:"status"`
 	Type   string      `json:"type"`

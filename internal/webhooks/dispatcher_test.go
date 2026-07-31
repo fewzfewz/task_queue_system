@@ -62,8 +62,12 @@ func TestDispatcherSendSetsWebhookSignature(t *testing.T) {
 		Secret:    "test-secret",
 	}
 
-	if err := dispatcher.send(context.Background(), ev); err != nil {
+	status, err := dispatcher.send(context.Background(), ev)
+	if err != nil {
 		t.Fatalf("send failed: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", status)
 	}
 
 	expectedBody, err := json.Marshal(ev)

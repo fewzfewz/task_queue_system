@@ -109,6 +109,23 @@ func (m *MockQueue) IsAllowed(_ context.Context, tenantID string) (bool, error) 
 	return true, nil
 }
 
+func (m *MockQueue) RateLimitStatus(_ context.Context) ([]TenantRateStatus, error) {
+	return []TenantRateStatus{}, nil
+}
+
+func (m *MockQueue) PriorityPartitionDepths(ctx context.Context) (PriorityDepthReport, error) {
+	size, _ := m.Size(ctx)
+	return PriorityDepthReport{
+		DequeueWeights:        map[string]int{"high": 70, "medium": 20, "low": 10},
+		PartitionsPerPriority: 3,
+		ByPriority: map[string]PriorityTierDepth{
+			"high":   {Total: 0, Partitions: map[string]int64{"1": 0, "2": 0, "3": 0}},
+			"medium": {Total: size, Partitions: map[string]int64{"1": size, "2": 0, "3": 0}},
+			"low":    {Total: 0, Partitions: map[string]int64{"1": 0, "2": 0, "3": 0}},
+		},
+	}, nil
+}
+
 func (m *MockQueue) PublishWebhookEvent(_ context.Context, event interface{}) error {
 	_, err := json.Marshal(event)
 	return err

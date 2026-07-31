@@ -97,6 +97,7 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 	if err != nil {
 		s.logger.Warn("rate limit check failed; allowing as fallback", "tenant_id", tenantID, "error", err)
 	} else if !allowed {
+		s.publishRateLimitSSE(tenantID)
 		return nil, apperr.NewTooManyRequests("tenant rate limit exceeded")
 	}
 
@@ -288,9 +289,24 @@ func (s *JobService) publishSSE(jobID, status, jobType, tenantID string) {
 		return
 	}
 	s.sseBroker.Publish(sse.Event{
+		Kind:   "job",
 		JobID:  jobID,
 		Status: status,
 		Type:   jobType,
+		Tenant: tenantID,
+	})
+}
+
+// publishRateLimitSSE broadcasts a tenant rate-limit rejection to connected
+// operators so they can watch limits being hit live.
+func (s *JobService) publishRateLimitSSE(tenantID string) {
+	if s.sseBroker == nil {
+		return
+	}
+	s.sseBroker.Publish(sse.Event{
+		Kind:   "rate_limit",
+		Type:   "rate_limit",
+		Status: "rejected",
 		Tenant: tenantID,
 	})
 }
@@ -424,6 +440,16 @@ func (s *JobService) QueueLengths(ctx context.Context) (map[string]map[string]in
 	return s.store.GetQueueLengths(ctx)
 }
 
+// RateLimitStatus returns the current per-tenant rate-limit usage.
+func (s *JobService) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
+	return s.queue.RateLimitStatus(ctx)
+}
+
+// PriorityPartitionDepths returns queue depths by priority tier and partition.
+func (s *JobService) PriorityPartitionDepths(ctx context.Context) (queue.PriorityDepthReport, error) {
+	return s.queue.PriorityPartitionDepths(ctx)
+}
+
 // SearchJobs returns jobs matching the given filter.
 func (s *JobService) SearchJobs(ctx context.Context, filter models.JobFilter) ([]*jobs.Job, error) {
 	return s.store.SearchJobs(ctx, filter)
@@ -495,6 +521,20 @@ func (s *JobService) ListQueueLengths(ctx context.Context) (map[string]map[strin
 
 func (s *JobService) ListFailedJobs(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
 	return s.store.ListJobs(ctx, tenantID, string(jobs.StatusFailed), jobType, limit, offset)
+}
+
+// CountFailedJobs returns the total number of permanently failed jobs matching filters.
+func (s *JobService) CountFailedJobs(ctx context.Context, tenantID, jobType string) (int, error) {
+	all, err := s.store.SearchJobs(ctx, models.JobFilter{
+		TenantID: tenantID,
+		Type:     jobType,
+		Status:   string(jobs.StatusFailed),
+		Limit:    10000,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return len(all), nil
 }
 
 func (s *JobService) ReplayJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, error) {

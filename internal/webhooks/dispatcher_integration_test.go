@@ -46,7 +46,7 @@ func TestDispatcherSendIntegration(t *testing.T) {
 		Secret:    "secret",
 	}
 
-	if err := d.send(context.Background(), ev); err != nil {
+	if _, err := d.send(context.Background(), ev); err != nil {
 		t.Fatalf("send failed: %v", err)
 	}
 	if gotSig == "" {

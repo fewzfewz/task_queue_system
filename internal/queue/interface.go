@@ -53,6 +53,15 @@ type Queue interface {
 	// Multi-tenancy
 	IsAllowed(ctx context.Context, tenantID string) (bool, error)
 
+	// RateLimitStatus reports the current per-tenant usage against the
+	// configured tenant rate limit. It returns an empty slice when the limit
+	// is disabled (0 = unlimited).
+	RateLimitStatus(ctx context.Context) ([]TenantRateStatus, error)
+
+	// PriorityPartitionDepths returns pending job counts by priority tier and
+	// hash partition. Backends that do not partition queues return zeros.
+	PriorityPartitionDepths(ctx context.Context) (PriorityDepthReport, error)
+
 	// Webhooks
 	PublishWebhookEvent(ctx context.Context, event interface{}) error
 }
@@ -71,4 +80,27 @@ type QueueMetrics struct {
 	FailedJobs    int64 `json:"failed_jobs"`
 	ActiveJobs    int64 `json:"active_jobs"`
 	WorkerCount   int   `json:"worker_count"`
+}
+
+// TenantRateStatus describes the current rate-limit window usage for a tenant.
+type TenantRateStatus struct {
+	Tenant        string `json:"tenant"`
+	Current       int64  `json:"current"`
+	Limit         int64  `json:"limit"`
+	WindowSeconds int64  `json:"window_seconds"`
+	Limited       bool   `json:"limited"`
+}
+
+// PriorityTierDepth holds queue depth for one priority tier, split by partition.
+type PriorityTierDepth struct {
+	Total      int64            `json:"total"`
+	Partitions map[string]int64 `json:"partitions"`
+}
+
+// PriorityDepthReport exposes priority-tier and hash-partition queue depths for
+// the operator dashboard.
+type PriorityDepthReport struct {
+	DequeueWeights        map[string]int                `json:"dequeue_weights"`
+	PartitionsPerPriority int                           `json:"partitions_per_priority"`
+	ByPriority            map[string]PriorityTierDepth  `json:"by_priority"`
 }

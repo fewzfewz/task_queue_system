@@ -119,8 +119,10 @@ func (d *Dispatcher) Start(ctx context.Context) {
 
 func (d *Dispatcher) dispatch(ctx context.Context, ev Event, msgID string) {
 	for attempt := 0; attempt < d.config.MaxRetries; attempt++ {
+		var backoffMs int64
 		if attempt > 0 {
 			delay := d.backoff(attempt)
+			backoffMs = delay.Milliseconds()
 			select {
 			case <-ctx.Done():
 				return
@@ -128,7 +130,24 @@ func (d *Dispatcher) dispatch(ctx context.Context, ev Event, msgID string) {
 			}
 		}
 
-		err := d.send(ctx, ev)
+		status, err := d.send(ctx, ev)
+		rec := DeliveryRecord{
+			Timestamp:  time.Now().UTC(),
+			JobID:      ev.JobID,
+			TenantID:   ev.TenantID,
+			URL:        ev.URL,
+			StatusCode: status,
+			Attempt:    attempt + 1,
+			Success:    err == nil,
+			BackoffMs:  backoffMs,
+		}
+		if err != nil {
+			rec.Error = err.Error()
+		}
+		if rerr := RecordDelivery(ctx, d.redis, rec); rerr != nil {
+			d.logger.Warn("failed to record webhook delivery", "error", rerr)
+		}
+
 		if err == nil {
 			d.redis.XAck(ctx, StreamKey, Group, msgID)
 			metrics.WebhookDeliveryTotal.WithLabelValues(ev.TenantID, "delivered").Inc()
@@ -193,11 +212,13 @@ func min(a, b int) int {
 	return b
 }
 
-func (d *Dispatcher) send(ctx context.Context, ev Event) error {
+// send delivers the event, returning the HTTP status code (0 on transport
+// errors) and any error.
+func (d *Dispatcher) send(ctx context.Context, ev Event) (int, error) {
 	body, _ := json.Marshal(ev)
 	req, err := http.NewRequestWithContext(ctx, "POST", ev.URL, bytes.NewBuffer(body))
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -209,15 +230,15 @@ func (d *Dispatcher) send(ctx context.Context, ev Event) error {
 
 	resp, err := d.client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return &webhookHTTPError{status: resp.StatusCode}
+		return resp.StatusCode, &webhookHTTPError{status: resp.StatusCode}
 	}
 
-	return nil
+	return resp.StatusCode, nil
 }
 
 func sign(body []byte, secret string) string {

@@ -62,13 +62,16 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 
 	read("GET /jobs", h.ListJobs)
 	read("GET /jobs/{id}", h.GetJobStatus)
+	read("GET /api/v1/jobs/{id}", h.GetJobStatus)
 	read("GET /api/v1/jobs/{id}/deps", h.GetJobDeps)
 	read("GET /api/v1/stats", h.GetStats)
 	read("GET /workers", h.GetWorkers)
 	read("GET /events", h.JobEventsSSE)
+	read("GET /api/v1/events", h.JobEventsSSE)
 	read("GET /api/v1/dlq", h.ListFailedJobs)
 	read("GET /api/v1/dlq/{id}", h.GetFailedJobDetail)
 	read("GET /api/v1/circuit-breakers", h.GetCircuitBreakers)
+	read("GET /api/v1/rate-limits", h.GetRateLimits)
 
 	write("POST /jobs", h.CreateJob)
 	write("POST /jobs/batch", h.CreateJobBatch)
@@ -87,6 +90,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	if webhookStore != nil {
 		read("GET /api/v1/webhooks", h.ListWebhooks)
 		read("GET /api/v1/webhooks/{id}", h.GetWebhook)
+		read("GET /api/v1/webhooks/{id}/deliveries", h.GetWebhookDeliveries)
 		write("POST /api/v1/webhooks", h.RegisterWebhook)
 		write("PUT /api/v1/webhooks/{id}", h.UpdateWebhook)
 		write("DELETE /api/v1/webhooks/{id}", h.DeleteWebhook)

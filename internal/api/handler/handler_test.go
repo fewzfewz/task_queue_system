@@ -27,6 +27,7 @@ type mockQueue struct {
 	failFunc              func(ctx context.Context, jobID string, err error) error
 	sizeFunc              func(ctx context.Context) (int64, error)
 	isAllowedFunc         func(ctx context.Context, tenantID string) (bool, error)
+	rateLimitStatusFunc   func(ctx context.Context) ([]queue.TenantRateStatus, error)
 	getFailedJobsFunc     func(ctx context.Context) ([]*jobs.Job, error)
 	getMetricsFunc        func(ctx context.Context) (queue.QueueMetrics, error)
 	registerHeartbeatFunc func(ctx context.Context, workerID string) error
@@ -73,6 +74,19 @@ func (m *mockQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error
 		return m.isAllowedFunc(ctx, tenantID)
 	}
 	return true, nil
+}
+func (m *mockQueue) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
+	if m.rateLimitStatusFunc != nil {
+		return m.rateLimitStatusFunc(ctx)
+	}
+	return []queue.TenantRateStatus{}, nil
+}
+func (m *mockQueue) PriorityPartitionDepths(_ context.Context) (queue.PriorityDepthReport, error) {
+	return queue.PriorityDepthReport{
+		DequeueWeights:        map[string]int{"high": 70, "medium": 20, "low": 10},
+		PartitionsPerPriority: 3,
+		ByPriority:            map[string]queue.PriorityTierDepth{},
+	}, nil
 }
 func (m *mockQueue) GetFailedJobs(ctx context.Context) ([]*jobs.Job, error) {
 	if m.getFailedJobsFunc != nil {
@@ -305,10 +319,14 @@ func TestListFailedJobs(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var jobs []dto.JobResponse
-	json.NewDecoder(w.Body).Decode(&jobs)
+	var result map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&result)
+	jobs, _ := result["jobs"].([]interface{})
 	if len(jobs) != 1 {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if int(result["total"].(float64)) != 1 {
+		t.Fatalf("expected total 1, got %v", result["total"])
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"task-queue-system/internal/api/middleware"
 	apperr "task-queue-system/internal/errors"
+	"task-queue-system/internal/sse"
 )
 
 // Login handles POST /api/v1/login.
@@ -155,6 +156,13 @@ func (h *JobHandler) ResetCircuitBreaker(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.proxyWorker(w, r, "/circuit-breaker/reset/"+url.PathEscape(jobType))
+	if r.Context().Err() == nil && h.sseBroker != nil {
+		h.sseBroker.Publish(sse.Event{
+			Kind:   "circuit_breaker",
+			Type:   jobType,
+			Status: "reset",
+		})
+	}
 }
 
 func (h *JobHandler) proxyWorker(w http.ResponseWriter, r *http.Request, path string) {

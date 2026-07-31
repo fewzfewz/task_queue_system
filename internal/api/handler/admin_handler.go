@@ -201,10 +201,45 @@ const adminHTML = `<!DOCTYPE html>
     }
     @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
     .slide-up { animation:slideUp .3s ease; }
+
+    /* ── Modal ── */
+    #modal-overlay {
+      position:fixed; inset:0; background:rgba(4,7,18,.72); z-index:500;
+      display:none; align-items:flex-start; justify-content:center; overflow-y:auto;
+      padding:48px 20px;
+    }
+    #modal-overlay.show { display:flex; }
+    .modal {
+      background:var(--surface); border:1px solid var(--border); border-radius:16px;
+      width:760px; max-width:100%; animation:slideUp .2s ease;
+    }
+    .modal .modal-head {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:18px 22px; border-bottom:1px solid var(--border);
+    }
+    .modal .modal-head h3 { font-size:15px; font-weight:600; }
+    .modal .modal-head button {
+      background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer;
+      padding:4px 8px; border-radius:8px;
+    }
+    .modal .modal-head button:hover { background:var(--surface2); color:var(--bad); }
+    .modal .modal-body { padding:20px 22px; }
+    .modal .modal-foot { display:flex; gap:10px; padding:14px 22px; border-top:1px solid var(--border); justify-content:flex-end; }
+    pre {
+      background:var(--bg2); border:1px solid var(--border); border-radius:10px;
+      padding:14px; font-size:12px; line-height:1.5; overflow:auto;
+      max-height:320px; font-family:'SF Mono','Fira Code',monospace;
+      white-space:pre-wrap; word-break:break-all;
+    }
   </style>
 </head>
 <body>
   <div id="toast"></div>
+  <div id="modal-overlay"><div class="modal">
+    <div class="modal-head"><h3 id="modal-title">Failed Job</h3><button onclick="closeModal()"><i class="fas fa-times"></i></button></div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div></div>
 
   <!-- Dashboard -->
   <div id="app">
@@ -297,9 +332,18 @@ const adminHTML = `<!DOCTYPE html>
               <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Tenant</label><input id="filter-tenant" value="tenant-a" placeholder="Filter by tenant..." /></div>
               <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Search</label><input id="search-dlq" placeholder="Search in results..." /></div>
             </div>
+            <div class="grid-3" style="margin-bottom:12px;">
+              <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Page</label><input id="dlq-page" type="number" value="1" min="1" /></div>
+              <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Limit</label><input id="dlq-limit" type="number" value="20" min="1" max="50" /></div>
+              <div style="display:flex;align-items:flex-end;gap:8px;">
+                <button class="btn-secondary btn-sm" onclick="dlqPrevPage()"><i class="fas fa-chevron-left"></i> Prev</button>
+                <button class="btn-secondary btn-sm" onclick="dlqNextPage()"><i class="fas fa-chevron-right"></i> Next</button>
+              </div>
+            </div>
             <div class="toolbar">
               <button class="btn-primary btn-sm" onclick="loadDLQ()"><i class="fas fa-sync"></i> Refresh</button>
               <button class="btn-secondary btn-sm" onclick="exportDLQ()"><i class="fas fa-download"></i> Export</button>
+              <span id="dlq-page-info" style="font-size:12px;color:var(--muted);">Page 1</span>
             </div>
           </div>
           <div class="section-card">
@@ -314,7 +358,7 @@ const adminHTML = `<!DOCTYPE html>
                     <th>Status</th>
                     <th>Tenant</th>
                     <th>Error</th>
-                    <th>Attempts</th>
+                    <th>Retries</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -337,6 +381,7 @@ const adminHTML = `<!DOCTYPE html>
     let SESSION={authenticated:false,username:'',role:'',csrf_token:''};
     let refreshTimer=null;
     let idleTimer=null;
+    let dlqState={page:1,limit:20};
 
     function toast(msg){
       const t=document.getElementById('toast');t.textContent=msg;
@@ -415,11 +460,25 @@ const adminHTML = `<!DOCTYPE html>
       try{
         const queue=document.getElementById('filter-queue').value;
         const tenant=document.getElementById('filter-tenant').value;
-        const data=await api(API_BASE+'/dlq?queue='+encodeURIComponent(queue));
-        const filtered=(data||[]).filter(j=>!tenant||(j.tenant_id||'').includes(tenant));
-        renderSummary(filtered);
+        const page=parseInt(document.getElementById('dlq-page').value)||1;
+        const limit=parseInt(document.getElementById('dlq-limit').value)||20;
+        const p=new URLSearchParams({page:page,limit:limit});
+        if(queue)p.set('queue',queue);
+        const data=await api(API_BASE+'/dlq?'+p.toString());
+        const jobs=Array.isArray(data)?data:((data&&data.jobs)||[]);
+        const total=(data&&data.total!=null)?data.total:jobs.length;
+        dlqState.page=page;
+        document.getElementById('dlq-page-info').innerText='Page '+page+' · '+total+' total';
+        const filtered=jobs.filter(j=>!tenant||(j.tenant_id||'').includes(tenant));
+        renderSummary(filtered,total);
         renderTable(filtered);
       }catch(e){console.error(e);}finally{loading.style.display='none';}
+    }
+    function dlqPrevPage(){
+      if(dlqState.page>1){dlqState.page--;document.getElementById('dlq-page').value=dlqState.page;loadDLQ();}
+    }
+    function dlqNextPage(){
+      dlqState.page++;document.getElementById('dlq-page').value=dlqState.page;loadDLQ();
     }
     async function loadWorkers(){
       try{
@@ -427,10 +486,10 @@ const adminHTML = `<!DOCTYPE html>
         renderWorkers(workers||[]);
       }catch(e){console.error(e);}
     }
-    function renderSummary(jobs){
+    function renderSummary(jobs,total){
       const tenants=new Set(),queues=new Set();
       (jobs||[]).forEach(j=>{if(j.tenant_id)tenants.add(j.tenant_id);if(j.type)queues.add(j.type);});
-      document.getElementById('stat-failed').innerText=String((jobs||[]).length);
+      document.getElementById('stat-failed').innerText=String(total!=null?total:(jobs||[]).length);
       document.getElementById('stat-queues').innerText=String(queues.size);
       document.getElementById('stat-tenants').innerText=String(tenants.size);
     }
@@ -447,6 +506,10 @@ const adminHTML = `<!DOCTYPE html>
           '<span class="pill green">Live</span></div>';
       }).join('');
     }
+    function lastError(j){
+      const hist=j.error_history||[];
+      return hist.length?hist[hist.length-1].error:(j.error||'');
+    }
     function renderTable(jobs){
       const tbody=document.getElementById('dlq-table-body');
       if(!jobs||jobs.length===0){
@@ -455,25 +518,66 @@ const adminHTML = `<!DOCTYPE html>
       }
       const isAdminSession=isAdmin();
       tbody.innerHTML=jobs.map(function(j){
-        const actions=isAdminSession?
-          '<button class="btn-primary btn-sm" data-replay="'+esc(j.id)+'" style="margin-right:4px;">Replay</button>'+
-          '<button class="btn-danger btn-sm" data-purge="'+esc(j.id)+'">Purge</button>':
-          '<span style="color:var(--muted);font-size:11px;">read-only</span>';
+        const actions=
+          '<button class="btn-secondary btn-sm" data-detail="'+esc(j.id)+'" style="margin-right:4px;">Details</button>'+
+          (isAdminSession?
+            '<button class="btn-primary btn-sm" data-replay="'+esc(j.id)+'" style="margin-right:4px;">Replay</button>'+
+            '<button class="btn-danger btn-sm" data-purge="'+esc(j.id)+'">Purge</button>':
+            '<span style="color:var(--muted);font-size:11px;">read-only</span>');
         return '<tr><td style="font-size:12px;font-family:monospace;color:var(--muted);">'+esc(j.id.substring(0,12))+'...</td>'+
           '<td><span class="pill blue">'+esc(j.type)+'</span></td>'+
           '<td><span class="pill red">'+esc(j.status)+'</span></td>'+
           '<td style="font-size:12px;color:var(--muted);">'+esc(j.tenant_id||'-')+'</td>'+
-          '<td style="font-size:12px;color:#f87171;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(String(j.last_error||j.result||'').substring(0,50))+'</td>'+
-          '<td style="font-size:12px;color:var(--muted);">'+esc(j.attempts||0)+'</td>'+
+          '<td style="font-size:12px;color:#f87171;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="'+esc(lastError(j))+'">'+esc(String(lastError(j)).substring(0,50))+'</td>'+
+          '<td style="font-size:12px;color:var(--muted);">'+esc(j.retries||0)+'</td>'+
           '<td style="white-space:nowrap;">'+actions+'</td></tr>';
       }).join('');
     }
     document.getElementById('dlq-table-body').addEventListener('click',function(e){
+      const detail=e.target.closest('[data-detail]');
+      if(detail){openDLQDetail(detail.getAttribute('data-detail'));return;}
       const replay=e.target.closest('[data-replay]');
       if(replay){replayDLQ(replay.getAttribute('data-replay'));return;}
       const purge=e.target.closest('[data-purge]');
       if(purge){purgeDLQ(purge.getAttribute('data-purge'));}
     });
+
+    // ── Detail modal ──
+    function openModal(title,body,foot){
+      document.getElementById('modal-title').innerHTML=title;
+      document.getElementById('modal-body').innerHTML=body||'';
+      document.getElementById('modal-foot').innerHTML=foot||'';
+      document.getElementById('modal-overlay').classList.add('show');
+    }
+    function closeModal(){
+      document.getElementById('modal-overlay').classList.remove('show');
+    }
+    document.getElementById('modal-overlay').addEventListener('click',function(e){
+      if(e.target===this)closeModal();
+    });
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal();});
+    async function openDLQDetail(id){
+      const j=await api(API_BASE+'/dlq/'+encodeURIComponent(id));
+      if(!j){toast('Job not found');return;}
+      const history=(j.error_history||[]).map(function(h){
+        return '<tr><td>'+(h.attempt!=null?'#'+h.attempt:'')+'</td><td>'+esc(h.timestamp||'')+'</td><td>'+esc(h.error)+'</td></tr>';
+      }).join('')||'<tr><td colspan="3" style="text-align:center;color:var(--muted);">No recorded attempts.</td></tr>';
+      const body='<table style="margin-bottom:12px;"><tbody>'+
+        '<tr><th style="width:150px;">ID</th><td>'+esc(j.id)+'</td></tr>'+
+        '<tr><th>Type</th><td>'+esc(j.type)+'</td></tr>'+
+        '<tr><th>Tenant</th><td>'+esc(j.tenant_id||'')+'</td></tr>'+
+        '<tr><th>Retries</th><td>'+esc(j.retries)+' / '+esc(j.max_retries)+'</td></tr>'+
+        '<tr><th>Updated</th><td>'+esc(j.updated_at)+'</td></tr>'+
+        '</tbody></table>'+
+        '<div class="section-title" style="font-size:11px;">Error History</div>'+
+        '<table><thead><tr><th>Attempt</th><th>Timestamp</th><th>Error</th></tr></thead><tbody>'+history+'</tbody></table>'+
+        '<div class="section-title" style="font-size:11px;margin-top:14px;">Payload</div>'+
+        '<pre>'+esc(JSON.stringify((j.payload)||{},null,2))+'</pre>';
+      const foot='<button class="btn-secondary btn-sm" onclick="closeModal()">Close</button>'+
+        (isAdmin()?'<button class="btn-primary btn-sm" onclick="replayDLQ(\''+esc(j.id)+'\')"><i class="fas fa-redo"></i> Replay</button>'+
+        '<button class="btn-danger btn-sm" onclick="purgeDLQ(\''+esc(j.id)+'\')"><i class="fas fa-times"></i> Purge</button>':'');
+      openModal('Failed Job '+esc(j.id),body,foot);
+    }
 
     async function replayDLQ(id){
       if(!confirmAction('Replay job '+id+' from the dead letter queue?'))return;
@@ -489,7 +593,8 @@ const adminHTML = `<!DOCTYPE html>
       const raw=document.getElementById('dlq-table-body').innerText;
       const queue=document.getElementById('filter-queue').value;
       const data=await api(API_BASE+'/dlq?queue='+encodeURIComponent(queue));
-      const blob=new Blob([JSON.stringify(data||[],null,2)],{type:'application/json'});
+      const jobs=Array.isArray(data)?data:((data&&data.jobs)||[]);
+      const blob=new Blob([JSON.stringify(jobs,null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob);const a=document.createElement('a');
       a.href=url;a.download='dlq-export.json';a.click();URL.revokeObjectURL(url);
     }
@@ -497,7 +602,22 @@ const adminHTML = `<!DOCTYPE html>
     async function loadDashboard(){
       await Promise.all([loadDLQ().catch(function(){}),loadWorkers().catch(function(){})]);
     }
-    loadSession().then(function(ok){if(ok)loadDashboard();});
+
+    // ── Live refresh via SSE ──
+    let eventSource=null;
+    function connectEvents(){
+      try{eventSource=new EventSource(API_BASE+'/events');}catch(e){return;}
+      eventSource.onopen=function(){
+        const s=document.getElementById('refresh-status');
+        if(!refreshTimer)s.innerHTML='<span class="status-dot green"></span> Live';
+      };
+      eventSource.onmessage=function(e){
+        let data={};
+        try{data=JSON.parse(e.data);}catch(_){}
+        if(data.kind==='dlq'||data.kind==='job'){loadDLQ().catch(function(){});}
+      };
+    }
+    loadSession().then(function(ok){if(ok){loadDashboard();connectEvents();}});
 
     document.getElementById('toggle-refresh').addEventListener('click',()=>{
       const status=document.getElementById('refresh-status');

@@ -116,6 +116,7 @@ const appHTML = `<!DOCTYPE html>
     .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
     .status-dot.green { background:var(--good); box-shadow:0 0 8px rgba(34,197,94,.4); }
     .status-dot.red { background:var(--bad); box-shadow:0 0 8px rgba(239,68,68,.4); }
+    .status-dot.yellow { background:var(--warn); box-shadow:0 0 8px rgba(245,158,11,.4); }
 
     #content { padding:24px; max-width:1360px; margin:0 auto; }
     .page { display:none; }
@@ -192,6 +193,67 @@ const appHTML = `<!DOCTYPE html>
     .pagination { display:flex; gap:8px; align-items:center; margin-top:12px; }
     .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 
+    /* ── CB chips ── */
+    .cb-chips { display:flex; flex-wrap:wrap; gap:10px; }
+    .cb-chip {
+      display:flex; align-items:center; gap:10px; padding:10px 14px;
+      background:var(--bg2); border:1px solid var(--border); border-radius:12px;
+      font-size:12px; font-weight:500;
+    }
+    .cb-chip .dot { width:10px; height:10px; border-radius:50%; }
+    .cb-chip.closed .dot { background:var(--good); box-shadow:0 0 8px rgba(34,197,94,.5); }
+    .cb-chip.open .dot { background:var(--bad); box-shadow:0 0 8px rgba(239,68,68,.5); }
+    .cb-chip.half .dot { background:var(--warn); box-shadow:0 0 8px rgba(245,158,11,.5); }
+    .cb-chip.closed { border-color:rgba(34,197,94,.3); }
+    .cb-chip.open { border-color:rgba(239,68,68,.4); }
+    .cb-chip.half { border-color:rgba(245,158,11,.4); }
+    .cb-chip .actions { display:flex; gap:6px; }
+
+    /* ── Live feed ── */
+    #feed-body { max-height:340px; overflow-y:auto; }
+    .feed-item {
+      display:flex; align-items:center; gap:12px; padding:8px 4px;
+      border-bottom:1px solid rgba(42,53,85,.4); font-size:12.5px;
+    }
+    .feed-item:last-child { border-bottom:none; }
+    .feed-item .time { color:var(--muted2); font-size:11px; font-family:'SF Mono',monospace; min-width:66px; }
+    .feed-item .kind {
+      min-width:82px; text-align:center; font-size:10px; font-weight:700;
+      text-transform:uppercase; letter-spacing:.05em; padding:3px 8px; border-radius:999px;
+    }
+    .feed-item .kind.job { background:rgba(99,102,241,.12); color:var(--accent2); }
+    .feed-item .kind.rate_limit { background:rgba(245,158,11,.12); color:#fbbf24; }
+    .feed-item .kind.circuit_breaker { background:rgba(239,68,68,.12); color:#f87171; }
+    .feed-item .kind.dlq { background:rgba(34,197,94,.12); color:#4ade80; }
+    .feed-item .msg { flex:1; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* ── Modal ── */
+    #modal-overlay {
+      position:fixed; inset:0; background:rgba(4,7,18,.72); z-index:500;
+      display:none; align-items:flex-start; justify-content:center; overflow-y:auto;
+      padding:48px 20px;
+    }
+    #modal-overlay.show { display:flex; }
+    .modal {
+      background:var(--surface); border:1px solid var(--border); border-radius:16px;
+      width:760px; max-width:100%; animation:fadeIn .2s ease;
+    }
+    .modal .modal-head {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:18px 22px; border-bottom:1px solid var(--border);
+    }
+    .modal .modal-head h3 { font-size:15px; font-weight:600; }
+    .modal .modal-head button {
+      background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer;
+      padding:4px 8px; border-radius:8px;
+    }
+    .modal .modal-head button:hover { background:var(--surface2); color:var(--bad); }
+    .modal .modal-body { padding:20px 22px; }
+    .modal .modal-foot {
+      display:flex; gap:10px; padding:14px 22px; border-top:1px solid var(--border);
+      justify-content:flex-end;
+    }
+
     /* ── Toast ── */
     #toast {
       position:fixed; bottom:24px; right:24px;
@@ -227,8 +289,12 @@ const appHTML = `<!DOCTYPE html>
 </head>
 <body>
   <div id="toast"></div>
+  <div id="modal-overlay"><div class="modal">
+    <div class="modal-head"><h3 id="modal-title">Details</h3><button onclick="closeModal()"><i class="fas fa-times"></i></button></div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div></div>
 
-  <!-- Dashboard -->
   <div id="app">
   <div class="layout">
 
@@ -288,7 +354,7 @@ const appHTML = `<!DOCTYPE html>
           </div>
         </div>
         <div class="right">
-          <span id="status-indicator"><span class="status-dot green"></span> Online</span>
+          <span id="status-indicator"><span class="status-dot green"></span> Live</span>
           <button onclick="loadEverything()"><i class="fas fa-sync-alt"></i> Refresh</button>
         </div>
       </div>
@@ -305,17 +371,45 @@ const appHTML = `<!DOCTYPE html>
             <div class="stat-card"><div class="stat-label">Pending Jobs</div><div id="stat-pending" class="stat-value">-</div><div class="stat-desc">Queued work</div></div>
             <div class="stat-card"><div class="stat-label">Active Workers</div><div id="stat-workers" class="stat-value">-</div><div class="stat-desc">Heartbeat received</div></div>
             <div class="stat-card"><div class="stat-label">Failed Jobs</div><div id="stat-dlq" class="stat-value">-</div><div class="stat-desc">Dead letter queue</div></div>
-            <div class="stat-card"><div class="stat-label">Circuit Breakers</div><div id="stat-cb" class="stat-value">0</div><div class="stat-desc">Open circuits</div></div>
+            <div class="stat-card"><div class="stat-label">Open Circuits</div><div id="stat-cb" class="stat-value">0</div><div class="stat-desc">Circuit breakers open</div></div>
+            <div class="stat-card"><div class="stat-label">Rate Limited</div><div id="stat-rl" class="stat-value">0</div><div class="stat-desc">Tenants at limit</div></div>
           </div>
-          <div class="section-card slide-up">
-            <div class="section-title"><i class="fas fa-bolt"></i> Quick Actions</div>
-            <div class="toolbar">
-              <button class="btn-primary btn-sm" data-admin onclick="showPage('jobs')"><i class="fas fa-plus"></i> Create Job</button>
-              <button class="btn-secondary btn-sm" onclick="showPage('search')"><i class="fas fa-search"></i> Search Jobs</button>
-              <button class="btn-secondary btn-sm" onclick="showPage('dlq');loadDLQ()"><i class="fas fa-trash"></i> DLQ</button>
-              <button class="btn-secondary btn-sm" onclick="showPage('stats');loadStats()"><i class="fas fa-chart-bar"></i> Stats</button>
-              <button class="btn-secondary btn-sm" onclick="showPage('workers');loadWorkers()"><i class="fas fa-server"></i> Workers</button>
-              <button class="btn-secondary btn-sm" onclick="showPage('webhooks');loadWebhooks()"><i class="fas fa-globe"></i> Webhooks</button>
+
+          <div class="grid-2" style="align-items:start;">
+            <div>
+              <div class="section-card slide-up">
+                <div class="section-title"><i class="fas fa-gauge-high"></i> Rate Limits <span style="text-transform:none;font-size:11px;">(fixed window)</span></div>
+                <div id="rl-note" style="font-size:13px;color:var(--muted);">Rate limiting is disabled (unlimited).</div>
+                <div style="display:none;" id="rl-wrap">
+                  <table><thead><tr><th>Tenant</th><th>Current</th><th>Limit</th><th>Window</th><th>Status</th></tr></thead>
+                  <tbody id="rl-body"><tr><td colspan="5" style="text-align:center;color:var(--muted);">No tenants yet</td></tr></tbody></table>
+                </div>
+              </div>
+              <div class="section-card slide-up">
+                <div class="section-title"><i class="fas fa-shield-halved"></i> Circuit Breakers</div>
+                <div class="cb-chips" id="dash-cb-body"><span style="font-size:13px;color:var(--muted);">No circuit breakers active.</span></div>
+              </div>
+              <div class="section-card slide-up">
+                <div class="section-title"><i class="fas fa-layer-group"></i> Priority Tiers <span style="text-transform:none;font-size:11px;">(70/20/10 dequeue weights)</span></div>
+                <div id="priority-body" style="font-size:13px;color:var(--muted);">Load stats to see tier depths.</div>
+              </div>
+            </div>
+            <div>
+              <div class="section-card slide-up">
+                <div class="section-title"><i class="fas fa-bolt"></i> Live Activity <span id="feed-status" class="pill" style="float:right;">connecting</span></div>
+                <div id="feed-body"><div style="font-size:13px;color:var(--muted);">Waiting for events…</div></div>
+              </div>
+              <div class="section-card slide-up">
+                <div class="section-title"><i class="fas fa-bolt"></i> Quick Actions</div>
+                <div class="toolbar">
+                  <button class="btn-primary btn-sm" data-admin onclick="showPage('jobs')"><i class="fas fa-plus"></i> Create Job</button>
+                  <button class="btn-secondary btn-sm" onclick="showPage('search')"><i class="fas fa-search"></i> Search Jobs</button>
+                  <button class="btn-secondary btn-sm" onclick="showPage('dlq');loadDLQ()"><i class="fas fa-trash"></i> DLQ</button>
+                  <button class="btn-secondary btn-sm" onclick="showPage('stats');loadStats()"><i class="fas fa-chart-bar"></i> Stats</button>
+                  <button class="btn-secondary btn-sm" onclick="showPage('workers');loadWorkers()"><i class="fas fa-server"></i> Workers</button>
+                  <button class="btn-secondary btn-sm" onclick="showPage('webhooks');loadWebhooks()"><i class="fas fa-globe"></i> Webhooks</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -371,14 +465,21 @@ const appHTML = `<!DOCTYPE html>
             <div class="pagination" style="justify-content:space-between;">
               <span id="page-info" style="font-size:12px;color:var(--muted);">Page 1</span>
             </div>
-            <pre id="search-output" style="margin-top:8px;">Results will appear here</pre>
+            <table>
+              <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Priority</th><th>Tenant</th><th>Retries</th><th>Deps</th><th>Created</th><th></th></tr></thead>
+              <tbody id="search-body"><tr><td colspan="9" style="text-align:center;color:var(--muted);">Run a search to see jobs.</td></tr></tbody>
+            </table>
           </div>
         </div>
 
         <!-- Page: Stats -->
         <div id="page-stats" class="page">
           <div class="section-card">
-            <div class="section-title"><i class="fas fa-chart-bar"></i> Queue Statistics</div>
+            <div class="section-title"><i class="fas fa-layer-group"></i> Priority &amp; Partition Depths</div>
+            <div id="stats-priority-view" style="margin-bottom:16px;font-size:13px;color:var(--muted);">Loading…</div>
+          </div>
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-chart-bar"></i> Queue Statistics (raw)</div>
             <pre id="stats-output">Click "Stats" to load</pre>
           </div>
         </div>
@@ -393,7 +494,7 @@ const appHTML = `<!DOCTYPE html>
             </div>
             <div class="grid-2" style="margin-top:14px;">
               <div>
-                <div class="section-title" style="font-size:11px;">Upstream (depends on)</div>
+                <div class="section-title" style="font-size:11px;">Upstream (depends on) — blocked until these complete</div>
                 <pre id="dag-upstream">Enter a job ID and click Lookup</pre>
               </div>
               <div>
@@ -433,16 +534,21 @@ const appHTML = `<!DOCTYPE html>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-trash-alt"></i> Dead Letter Queue</div>
             <div class="grid-3" style="margin-bottom:12px;">
-              <div class="form-group"><label>Search</label><input id="dlq-search" placeholder="Filter results..." /></div>
               <div class="form-group"><label>Queue Filter</label><input id="dlq-queue" value="email" /></div>
               <div class="form-group"><label>Tenant Filter</label><input id="dlq-tenant" value="tenant-a" /></div>
+              <div class="form-group"><label>Page</label><input id="dlq-page" type="number" value="1" /></div>
             </div>
             <div class="toolbar" style="margin-bottom:12px;">
               <button class="btn-primary btn-sm" onclick="loadDLQ()"><i class="fas fa-sync"></i> Load DLQ</button>
-              <button class="btn-secondary btn-sm" onclick="searchDLQ()"><i class="fas fa-filter"></i> Filter</button>
+              <button class="btn-secondary btn-sm" onclick="dlqPrevPage()"><i class="fas fa-chevron-left"></i> Prev</button>
+              <button class="btn-secondary btn-sm" onclick="dlqNextPage()"><i class="fas fa-chevron-right"></i> Next</button>
+              <span id="dlq-page-info" style="font-size:12px;color:var(--muted);">Page 1</span>
               <button class="btn-secondary btn-sm" onclick="exportDLQ()"><i class="fas fa-download"></i> Export JSON</button>
             </div>
-            <pre id="dlq-output">Load DLQ to see failed jobs</pre>
+            <table>
+              <thead><tr><th>ID</th><th>Type</th><th>Tenant</th><th>Error</th><th>Retries</th><th>Failed At</th><th></th></tr></thead>
+              <tbody id="dlq-body"><tr><td colspan="7" style="text-align:center;color:var(--muted);">Load DLQ to see failed jobs</td></tr></tbody>
+            </table>
             <div class="grid-2" style="margin-top:12px;">
               <div class="form-row">
                 <div class="form-group"><label>Job ID to Replay</label><input id="dlq-replay-id" value="job-123" /></div>
@@ -473,7 +579,10 @@ const appHTML = `<!DOCTYPE html>
           </div>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-list"></i> Registered Webhooks</div>
-            <pre id="wh-output">Click "Webhooks" to load</pre>
+            <table>
+              <thead><tr><th>ID</th><th>URL</th><th>Events</th><th>Created</th><th></th></tr></thead>
+              <tbody id="wh-body"><tr><td colspan="5" style="text-align:center;color:var(--muted);">Click "Webhooks" to load</td></tr></tbody>
+            </table>
           </div>
         </div>
 
@@ -494,7 +603,7 @@ const appHTML = `<!DOCTYPE html>
       dashboard:'System overview and real-time statistics','jobs':'Submit new tasks to the queue',
       search:'Find and inspect queued jobs','stats':'Detailed queue performance metrics',
       dag:'Visualize job dependency chains','workers':'Monitor worker processes and health endpoints',
-      cb':'Track circuit breaker states per plugin','dlq':'Manage failed jobs and retries',
+      'cb':'Track circuit breaker states per plugin','dlq':'Manage failed jobs and retries',
       webhooks:'Configure event-driven HTTP callbacks'
     };
     let SESSION = { authenticated:false, username:'', role:'', csrf_token:'' };
@@ -574,6 +683,21 @@ const appHTML = `<!DOCTYPE html>
       localStorage.setItem('task_queue_page',name);
     }
 
+    // ── Modal ──
+    function openModal(title,bodyHTML,footHTML) {
+      document.getElementById('modal-title').innerHTML=title;
+      document.getElementById('modal-body').innerHTML=bodyHTML||'';
+      document.getElementById('modal-foot').innerHTML=footHTML||'';
+      document.getElementById('modal-overlay').classList.add('show');
+    }
+    function closeModal() {
+      document.getElementById('modal-overlay').classList.remove('show');
+    }
+    document.getElementById('modal-overlay').addEventListener('click',function(e){
+      if(e.target===this)closeModal();
+    });
+    document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal();});
+
     // ── Create Job ──
     function fillExample() {
       document.getElementById('create-type').value='email';
@@ -604,6 +728,11 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Search Jobs ──
     let searchState={page:1,limit:20};
+    const STATUS_PILL={pending:'warn',running:'',completed:'good',failed:'bad',cancelled:'bad',paused:'warn'};
+    function statusPill(s){
+      const cls=STATUS_PILL[s]||'';
+      return '<span class="pill '+cls+'">'+esc(s)+'</span>';
+    }
     async function searchJobs() {
       const type=document.getElementById('search-type').value.trim();
       const status=document.getElementById('search-status').value.trim();
@@ -615,16 +744,95 @@ const appHTML = `<!DOCTYPE html>
       if(status)p.set('status',status);
       if(tenant)p.set('tenant_id',tenant);
       const out=await api('/jobs?'+p.toString());
-      document.getElementById('search-output').innerText=JSON.stringify(out,null,2);
+      const jobs=(out&&(out.jobs||out.items))?out.jobs||out.items:(Array.isArray(out)?out:[]);
+      const body=document.getElementById('search-body');
+      if(!jobs.length){body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);">No jobs found.</td></tr>';}
+      else{
+        body.innerHTML=jobs.map(j=>'<tr>'+
+          '<td>'+esc(j.id)+'</td>'+
+          '<td>'+esc(j.type)+'</td>'+
+          '<td>'+statusPill(j.status)+'</td>'+
+          '<td>'+esc(j.priority)+'</td>'+
+          '<td>'+esc(j.tenant_id||'')+'</td>'+
+          '<td>'+(j.retries||0)+'/'+(j.max_retries!=null?j.max_retries:'-')+'</td>'+
+          '<td>'+(j.dependencies&&j.dependencies.length?'<span class="pill warn">'+j.dependencies.length+' dep</span>':'-')+'</td>'+
+          '<td style="font-size:11px;color:var(--muted);">'+esc((j.created_at||'').slice(0,19).replace('T',' '))+'</td>'+
+          '<td><button class="btn-secondary btn-sm" onclick="openJobDetail(\''+esc(j.id)+'\')">Details</button></td>'+
+          '</tr>').join('');
+      }
       document.getElementById('page-info').innerText='Page '+searchState.page;
     }
     function prevPage(){if(searchState.page>1){searchState.page--;document.getElementById('search-page').value=searchState.page;searchJobs();}}
     function nextPage(){searchState.page++;document.getElementById('search-page').value=searchState.page;searchJobs();}
 
+    async function openJobDetail(id) {
+      const out=await api(API_BASE+'/jobs/'+encodeURIComponent(id));
+      let depsHTML='<tr><td colspan="2" style="text-align:center;color:var(--muted);">No dependencies.</td></tr>';
+      let blocked=false;
+      if(out&&out.dependencies&&out.dependencies.length){
+        const dag=await api(API_BASE+'/jobs/'+encodeURIComponent(id)+'/deps');
+        const upstream=(dag&&dag.depends_on)||[];
+        blocked=upstream.some(d=>d.status!=='completed');
+        depsHTML=upstream.map(d=>'<tr>'+
+          '<td>'+esc(d.id)+'</td>'+
+          '<td>'+statusPill(d.status)+'</td>'+
+          '</tr>').join('');
+        if(!upstream.length){
+          const ids=(out.dependencies||[]).map(esc).join(', ');
+          depsHTML='<tr><td colspan="2" style="color:var(--muted);">'+ids+' (not resolvable)</td></tr>';
+        }
+      }
+      const badge=blocked
+        ?'<span class="pill bad" title="One or more dependencies have not completed"><i class="fas fa-lock"></i> Blocked by dependencies</span>'
+        :(out&&out.dependencies&&out.dependencies.length?'<span class="pill good"><i class="fas fa-unlock"></i> Dependencies satisfied</span>':'');
+      const body='<table style="margin-bottom:12px;"><tbody>'+
+        '<tr><th style="width:150px;">ID</th><td>'+esc(out&&out.id)+'</td></tr>'+
+        '<tr><th>Type</th><td>'+esc(out&&out.type)+'</td></tr>'+
+        '<tr><th>Status</th><td>'+statusPill(out&&out.status)+' '+badge+'</td></tr>'+
+        '<tr><th>Priority</th><td>'+esc(out&&out.priority)+'</td></tr>'+
+        '<tr><th>Tenant</th><td>'+esc(out&&out.tenant_id||'')+'</td></tr>'+
+        '<tr><th>Retries</th><td>'+(out&&out.retries||0)+' / '+(out&&out.max_retries!=null?out.max_retries:'-')+'</td></tr>'+
+        '<tr><th>Created</th><td>'+esc(out&&out.created_at)+'</td></tr>'+
+        '<tr><th>Updated</th><td>'+esc(out&&out.updated_at)+'</td></tr>'+
+        '<tr><th>Shard Key</th><td>'+esc(out&&out.shard_key||'')+'</td></tr>'+
+        '</tbody></table>'+
+        '<div class="section-title" style="font-size:11px;">Payload</div>'+
+        '<pre>'+esc(JSON.stringify((out&&out.payload)||{},null,2))+'</pre>'+
+        '<div class="section-title" style="font-size:11px;margin-top:14px;">Dependencies</div>'+
+        '<table><thead><tr><th>Job</th><th>Status</th></tr></thead><tbody>'+depsHTML+'</tbody></table>';
+      openModal('Job '+esc(id),body,'<button class="btn-secondary btn-sm" onclick="closeModal()">Close</button>');
+    }
+
     // ── Stats ──
+    function renderPriorityBreakdown(pb) {
+      if(!pb||!pb.by_priority){
+        return '<span style="color:var(--muted);">No priority breakdown available.</span>';
+      }
+      const weights=pb.dequeue_weights||{};
+      const parts=pb.partitions_per_priority||3;
+      let html='<p style="font-size:12px;color:var(--muted2);margin-bottom:10px;">'+parts+' hash partitions per tier · weights high '+((weights.high)||70)+'% / medium '+((weights.medium)||20)+'% / low '+((weights.low)||10)+'%</p>';
+      html+='<table><thead><tr><th>Tier</th><th>Total</th>';
+      for(let i=1;i<=parts;i++){html+='<th>P'+i+'</th>';}
+      html+='</tr></thead><tbody>';
+      ['high','medium','low'].forEach(function(tier){
+        const td=pb.by_priority[tier]||{total:0,partitions:{}};
+        const cls=tier==='high'?'bad':tier==='low'?'':'warn';
+        html+='<tr><td><span class="pill '+cls+'">'+tier+'</span></td><td><strong>'+(td.total||0)+'</strong></td>';
+        for(let i=1;i<=parts;i++){
+          const n=(td.partitions&&td.partitions[String(i)])||0;
+          html+='<td style="color:var(--muted);">'+n+'</td>';
+        }
+        html+='</tr>';
+      });
+      html+='</tbody></table>';
+      return html;
+    }
     async function loadStats() {
       const out=await api(API_BASE+'/stats');
       document.getElementById('stats-output').innerText=JSON.stringify(out,null,2);
+      const pb=out&&out.priority_breakdown;
+      document.getElementById('stats-priority-view').innerHTML=renderPriorityBreakdown(pb);
+      document.getElementById('priority-body').innerHTML=renderPriorityBreakdown(pb);
       if(out){
         document.getElementById('stat-pending').innerText=String(out.total_pending||0);
         document.getElementById('stat-workers').innerText=String(out.worker_count||0);
@@ -654,22 +862,71 @@ const appHTML = `<!DOCTYPE html>
       if(!id){toast('Enter a job ID');return;}
       const out=await api(API_BASE+'/jobs/'+encodeURIComponent(id)+'/deps');
       if(!out){document.getElementById('dag-upstream').innerText='No response';return;}
-      document.getElementById('dag-upstream').innerText=JSON.stringify(out.depends_on||[],null,2);
-      document.getElementById('dag-downstream').innerText=JSON.stringify(out.dependents||[],null,2);
+      const up=out.depends_on||[], down=out.dependents||[];
+      const fmt=function(list){return list.map(d=>{
+        const s=d.status==='completed'?'good':(d.status==='failed'?'bad':'warn');
+        return '['+d.status+'] '+d.id+(d.type?' ('+d.type+')':'');
+      }).join('\n')||'none';};
+      document.getElementById('dag-upstream').innerText=fmt(up);
+      document.getElementById('dag-downstream').innerText=fmt(down);
+      const blocked=up.some(d=>d.status!=='completed');
+      if(blocked){toast('Job is blocked by '+up.filter(d=>d.status!=='completed').length+' uncompleted dependency/dependencies');}
+    }
+
+    // ── Rate Limits ──
+    async function loadRateLimits() {
+      const out=await api(API_BASE+'/rate-limits');
+      if(!out)return;
+      const tenants=out.tenants||[];
+      const limited=tenants.filter(t=>t.limited).length;
+      document.getElementById('stat-rl').innerText=String(limited);
+      const wrap=document.getElementById('rl-wrap');
+      const note=document.getElementById('rl-note');
+      if(out.unlimited){
+        note.style.display='';wrap.style.display='none';
+        note.textContent='Rate limiting is disabled (unlimited).';
+        return;
+      }
+      note.style.display='none';wrap.style.display='';
+      const body=document.getElementById('rl-body');
+      if(!tenants.length){body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);">No tenants have submitted requests yet.</td></tr>';}
+      else{
+        body.innerHTML=tenants.map(t=>
+          '<tr>'+
+          '<td>'+esc(t.tenant)+'</td>'+
+          '<td>'+esc(t.current)+'</td>'+
+          '<td>'+esc(t.limit)+'</td>'+
+          '<td>'+esc(t.window_seconds)+'s</td>'+
+          '<td>'+(t.limited?'<span class="pill bad">limited</span>':'<span class="pill good">ok</span>')+'</td>'+
+          '</tr>').join('');
+      }
     }
 
     // ── Circuit Breaker ──
     async function loadCircuitBreakers() {
       const out=await api(API_BASE+'/circuit-breakers');
-      document.getElementById('stat-cb').innerText=String(Object.keys(out||{}).length);
-      const rows=Object.entries(out||{}).map(([k,v])=>{
+      const map=out||{};
+      const open=Object.entries(map).filter(([,v])=>/open/.test(v)).length;
+      document.getElementById('stat-cb').innerText=String(open);
+      const rows=Object.entries(map).map(([k,v])=>{
         const cls=v.startsWith('open')?'bad':v==='closed'?'good':'warn';
         const action=isAdmin()?'<td><button class="btn-secondary btn-sm" data-reset="'+esc(k)+'">Reset</button></td>':'';
         return '<tr><td>'+esc(k)+'</td><td><span class="pill '+cls+'">'+esc(v)+'</span></td>'+action+'</tr>';
       }).join('');
       document.getElementById('cb-body').innerHTML=rows||'<tr><td colspan="3" style="text-align:center;color:var(--muted);">No circuit breakers active.</td></tr>';
+      const chips=Object.entries(map).map(([k,v])=>{
+        const cls=v.startsWith('open')?'open':v==='closed'?'closed':'half';
+        return '<div class="cb-chip '+cls+'"><span class="dot"></span>'+esc(k)+' <span style="color:var(--muted);font-size:11px;">'+esc(v)+'</span>'+
+          (isAdmin()?'<span class="actions"><button class="btn-secondary btn-sm" data-reset="'+esc(k)+'">Reset</button></span>':'')+
+          '</div>';
+      }).join('');
+      document.getElementById('dash-cb-body').innerHTML=chips||'<span style="font-size:13px;color:var(--muted);">No circuit breakers active.</span>';
     }
     document.getElementById('cb-body').addEventListener('click',function(e){
+      const b=e.target.closest('[data-reset]');
+      if(b)resetBreaker(b.getAttribute('data-reset'));
+    });
+    document.getElementById('dash-cb-body').addEventListener('click',function(e){
       const b=e.target.closest('[data-reset]');
       if(b)resetBreaker(b.getAttribute('data-reset'));
     });
@@ -680,29 +937,82 @@ const appHTML = `<!DOCTYPE html>
     }
 
     // ── DLQ ──
+    let dlqState={page:1,limit:20,cache:[],total:0};
     async function loadDLQ() {
       const queue=document.getElementById('dlq-queue').value.trim();
       const tenant=document.getElementById('dlq-tenant').value.trim();
-      const path=API_BASE+'/dlq'+(queue?'?queue='+encodeURIComponent(queue):'');
-      const out=await api(path);
-      const filtered=(out||[]).filter(j=>!tenant||(j.tenant_id||'').includes(tenant));
-      document.getElementById('dlq-output').innerText=JSON.stringify(filtered,null,2);
-      document.getElementById('stat-dlq').innerText=String(filtered.length);
+      dlqState.page=parseInt(document.getElementById('dlq-page').value)||1;
+      const p=new URLSearchParams({page:dlqState.page,limit:dlqState.limit});
+      if(queue)p.set('queue',queue);
+      const out=await api(API_BASE+'/dlq?'+p.toString());
+      const list=Array.isArray(out)?out:(out&&out.jobs)||[];
+      dlqState.cache=list;
+      dlqState.total=(out&&out.total!=null)?out.total:list.length;
+      document.getElementById('dlq-page-info').innerText='Page '+dlqState.page+' · '+dlqState.total+' total';
+      const filtered=list.filter(j=>!tenant||(j.tenant_id||'').includes(tenant));
+      const body=document.getElementById('dlq-body');
+      if(!filtered.length){body.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);">No failed jobs on this page.</td></tr>';}
+      else{
+        body.innerHTML=filtered.map(j=>{
+          const err=((j.error_history&&j.error_history.length)?j.error_history[j.error_history.length-1].error:j.error)||'';
+          return '<tr>'+
+            '<td>'+esc(j.id)+'</td>'+
+            '<td>'+esc(j.type)+'</td>'+
+            '<td>'+esc(j.tenant_id||'')+'</td>'+
+            '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);" title="'+esc(err)+'">'+esc(err)+'</td>'+
+            '<td>'+(j.retries||0)+'</td>'+
+            '<td style="font-size:11px;color:var(--muted);">'+esc((j.updated_at||'').slice(0,19).replace('T',' '))+'</td>'+
+            '<td><button class="btn-secondary btn-sm" onclick="openDLQDetail(\''+esc(j.id)+'\')">Details</button>'+
+            (isAdmin()?' <button class="btn-primary btn-sm" onclick="replayDLQId(\''+esc(j.id)+'\')"><i class="fas fa-redo"></i></button>':'')+
+            '</td>'+
+            '</tr>';
+        }).join('');
+      }
+      document.getElementById('stat-dlq').innerText=String(dlqState.total);
       return filtered;
     }
-    function searchDLQ() {
-      const q=document.getElementById('dlq-search').value.trim().toLowerCase();
-      const raw=document.getElementById('dlq-output').innerText;
-      try{
-        const items=JSON.parse(raw||'[]');
-        const filtered=items.filter(j=>JSON.stringify(j).toLowerCase().includes(q));
-        document.getElementById('dlq-output').innerText=JSON.stringify(filtered,null,2);
-        document.getElementById('stat-dlq').innerText=String(filtered.length);
-      }catch(_){toast('Nothing to search');}
+    function dlqPrevPage(){if(dlqState.page>1){dlqState.page--;document.getElementById('dlq-page').value=dlqState.page;loadDLQ();}}
+    function dlqNextPage(){dlqState.page++;document.getElementById('dlq-page').value=dlqState.page;loadDLQ();}
+
+    async function openDLQDetail(id) {
+      const j=await api(API_BASE+'/dlq/'+encodeURIComponent(id));
+      if(!j){toast('Job not found');return;}
+      const lastErr=(j.error_history&&j.error_history.length)?j.error_history[j.error_history.length-1].error:(j.error||'Unknown failure');
+      const history=(j.error_history||[]).map(h=>
+        '<tr><td>'+(h.attempt!=null?'#'+h.attempt:'')+'</td><td>'+esc(h.timestamp||'')+'</td><td>'+esc(h.error)+'</td></tr>'
+      ).join('')||'<tr><td colspan="3" style="text-align:center;color:var(--muted);">No recorded attempts.</td></tr>';
+      const body=
+        '<div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:12px 14px;margin-bottom:14px;">'+
+        '<div style="font-size:11px;color:var(--muted2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;">Failure Reason</div>'+
+        '<div style="font-size:13px;color:#f87171;word-break:break-word;">'+esc(lastErr)+'</div></div>'+
+        '<table style="margin-bottom:12px;"><tbody>'+
+        '<tr><th style="width:150px;">ID</th><td>'+esc(j.id)+'</td></tr>'+
+        '<tr><th>Type</th><td>'+esc(j.type)+'</td></tr>'+
+        '<tr><th>Tenant</th><td>'+esc(j.tenant_id||'')+'</td></tr>'+
+        '<tr><th>Retries</th><td>'+esc(j.retries)+' / '+esc(j.max_retries)+'</td></tr>'+
+        '<tr><th>Updated</th><td>'+esc(j.updated_at)+'</td></tr>'+
+        '</tbody></table>'+
+        '<div class="section-title" style="font-size:11px;">Retry History</div>'+
+        '<table><thead><tr><th>Attempt</th><th>Timestamp</th><th>Error</th></tr></thead><tbody>'+history+'</tbody></table>'+
+        '<div class="section-title" style="font-size:11px;margin-top:14px;">Original Payload</div>'+
+        '<pre>'+esc(JSON.stringify((j.payload)||{},null,2))+'</pre>';
+      const foot='<button class="btn-secondary btn-sm" onclick="closeModal()">Close</button>'+
+        (isAdmin()?'<button class="btn-primary btn-sm" onclick="replayDLQId(\''+esc(j.id)+'\')"><i class="fas fa-redo"></i> Replay</button>'+
+        '<button class="btn-danger btn-sm" onclick="deleteDLQId(\''+esc(j.id)+'\')"><i class="fas fa-times"></i> Purge</button>':'');
+      openModal('Failed Job '+esc(j.id),body,foot);
+    }
+    async function replayDLQId(id) {
+      if(!confirmAction('Replay job '+id+' from the dead letter queue?'))return;
+      await api(API_BASE+'/dlq/'+encodeURIComponent(id)+'/replay',{method:'POST'});
+      closeModal(); loadDLQ(); toast('Replayed job: '+id);
+    }
+    async function deleteDLQId(id) {
+      if(!confirmAction('Permanently purge job '+id+'? This cannot be undone.'))return;
+      await api(API_BASE+'/dlq/'+encodeURIComponent(id),{method:'DELETE'});
+      closeModal(); loadDLQ(); toast('Purged job: '+id);
     }
     function exportDLQ() {
-      const raw=document.getElementById('dlq-output').innerText;
-      const blob=new Blob([raw],{type:'application/json'});
+      const blob=new Blob([JSON.stringify(dlqState.cache,null,2)],{type:'application/json'});
       const url=URL.createObjectURL(blob);
       const a=document.createElement('a');a.href=url;a.download='dlq-export.json';a.click();
       URL.revokeObjectURL(url);
@@ -734,8 +1044,20 @@ const appHTML = `<!DOCTYPE html>
     async function loadWebhooks() {
       try{
         const out=await api(API_BASE+'/webhooks');
-        document.getElementById('wh-output').innerText=JSON.stringify(out||[],null,2);
-      }catch(e){document.getElementById('wh-output').innerText='Failed to load webhooks.';}
+        const list=Array.isArray(out)?out:[];
+        const body=document.getElementById('wh-body');
+        if(!list.length){body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);">No webhooks registered.</td></tr>';}
+        else{
+          body.innerHTML=list.map(w=>
+            '<tr>'+
+            '<td style="font-family:monospace;font-size:12px;">'+esc(w.id)+'</td>'+
+            '<td style="color:var(--muted);">'+esc(w.url)+'</td>'+
+            '<td>'+(w.events||[]).map(e=>'<span class="pill">'+esc(e)+'</span>').join(' ')+'</td>'+
+            '<td style="font-size:11px;color:var(--muted);">'+esc((w.created_at||'').slice(0,19).replace('T',' '))+'</td>'+
+            '<td><button class="btn-secondary btn-sm" onclick="openWhHistory(\''+esc(w.id)+'\',\''+esc(w.url)+'\')"><i class="fas fa-history"></i> History</button></td>'+
+            '</tr>').join('');
+        }
+      }catch(e){document.getElementById('wh-body').innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);">Failed to load webhooks.</td></tr>';}
     }
     async function registerWebhook() {
       const body={
@@ -745,8 +1067,71 @@ const appHTML = `<!DOCTYPE html>
       };
       if(!body.url){toast('URL is required');return;}
       const out=await api(API_BASE+'/webhooks',{method:'POST',body:JSON.stringify(body)});
-      document.getElementById('wh-output').innerText=JSON.stringify(out,null,2);
+      if(!out){toast('Register failed');return;}
       loadWebhooks(); toast('Webhook registered');
+    }
+    async function openWhHistory(id,url) {
+      const out=await api(API_BASE+'/webhooks/'+encodeURIComponent(id)+'/deliveries?limit=20');
+      const list=Array.isArray(out)?out:[];
+      const rows=list.map(d=>{
+        const ok=d.success;
+        const backoff=d.backoff_ms>0?esc(d.backoff_ms)+'ms':'—';
+        return '<tr>'+
+          '<td style="font-size:11px;color:var(--muted);">'+esc((d.timestamp||'').slice(0,19).replace('T',' '))+'</td>'+
+          '<td style="font-family:monospace;font-size:12px;">'+esc(d.job_id||'')+'</td>'+
+          '<td>#'+(d.attempt||1)+'</td>'+
+          '<td>'+backoff+'</td>'+
+          '<td>'+(d.status_code?esc(d.status_code):'<span style="color:var(--bad);">transport</span>')+'</td>'+
+          '<td>'+(ok?'<span class="pill good">delivered</span>':'<span class="pill bad">failed</span>')+'</td>'+
+          '<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);" title="'+esc(d.error)+'">'+esc(d.error||'')+'</td>'+
+          '</tr>';
+      }).join('')||'<tr><td colspan="7" style="text-align:center;color:var(--muted);">No deliveries recorded yet.</td></tr>';
+      const body='<p style="font-size:12px;color:var(--muted);margin-bottom:12px;word-break:break-all;">'+esc(url)+'</p>'+
+        '<table><thead><tr><th>Time</th><th>Job</th><th>Attempt</th><th>Backoff</th><th>Status</th><th>Result</th><th>Error</th></tr></thead><tbody>'+rows+'</tbody></table>';
+      openModal('Delivery History',body,'<button class="btn-secondary btn-sm" onclick="closeModal()">Close</button>');
+    }
+
+    // ── Live Activity (SSE) ──
+    let eventSource=null;
+    function connectEvents() {
+      try{
+        eventSource=new EventSource(API_BASE+'/events');
+      }catch(e){document.getElementById('feed-status').textContent='offline';return;}
+      eventSource.onopen=function(){document.getElementById('feed-status').textContent='connected';document.getElementById('feed-status').className='pill good';};
+      eventSource.onerror=function(){
+        document.getElementById('feed-status').textContent='reconnecting';
+        document.getElementById('feed-status').className='pill warn';
+      };
+      eventSource.onmessage=function(e){
+        let data={};
+        try{data=JSON.parse(e.data);}catch(_){}
+        pushFeed(data);
+        if(data.kind==='job'){loadStats().catch(function(){});loadCircuitBreakers().catch(function(){});}
+        else if(data.kind==='rate_limit'){loadRateLimits().catch(function(){});}
+        else if(data.kind==='circuit_breaker'){loadCircuitBreakers().catch(function(){});}
+        else if(data.kind==='dlq'){loadDLQ().catch(function(){});}
+      };
+      eventSource.addEventListener('session_expired',function(){
+        toast('Session expired — redirecting to login');
+        setTimeout(function(){window.location.href='/login';},1500);
+      });
+    }
+    function pushFeed(data) {
+      const feed=document.getElementById('feed-body');
+      const time=new Date().toTimeString().slice(0,8);
+      const kind=data.kind||'job';
+      let msg;
+      if(kind==='job'){msg=(data.status||'')+' '+(data.type||'')+' job '+esc(data.job_id||'')+(data.tenant_id?' <'+esc(data.tenant_id)+'>':'');}
+      else if(kind==='rate_limit'){msg='Rate limit rejected for tenant '+esc(data.tenant_id||'');}
+      else if(kind==='circuit_breaker'){msg='Circuit breaker '+(data.status||'changed')+' for plugin '+esc(data.type||'');}
+      else if(kind==='dlq'){msg=(data.status||'')+' failed job '+esc(data.job_id||'');}
+      else{msg=esc(data.job_id||data.type||'');}
+      if(data.error){msg+=' — '+esc(data.error);}
+      const item=document.createElement('div');
+      item.className='feed-item';
+      item.innerHTML='<span class="time">'+time+'</span><span class="kind '+esc(kind)+'">'+esc(kind)+'</span><span class="msg">'+msg+'</span>';
+      feed.prepend(item);
+      while(feed.children.length>50){feed.removeChild(feed.lastChild);}
     }
 
     // ── Init ──
@@ -759,10 +1144,12 @@ const appHTML = `<!DOCTYPE html>
         loadMetrics().catch(function(){}),
         checkHealth().catch(function(){}),
         loadStats().catch(function(){}),
-        loadCircuitBreakers().catch(function(){})
+        loadCircuitBreakers().catch(function(){}),
+        loadRateLimits().catch(function(){}),
+        loadWebhooks().catch(function(){})
       ]);
     }
-    loadSession().then(function(ok){if(ok)loadEverything();});
+    loadSession().then(function(ok){if(ok){loadEverything();connectEvents();}});
   </script>
 </body>
 </html>`

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -34,6 +35,9 @@ const (
 	dequeueTimeout = 5 * time.Second
 	// processedSetKey is a Redis Set that stores IDs of successfully completed jobs.
 	processedSetKey = "task_queue:processed"
+	// tenantSetKey tracks every tenant that has submitted at least one job,
+	// used to enumerate per-tenant rate-limit windows for the status endpoint.
+	tenantSetKey = "task_queue:tenants"
 )
 
 // promoteScheduledJobsScript moves due jobs from ZSET to priority lists atomically.
@@ -561,7 +565,7 @@ func (q *RedisQueue) CleanupProcessedIDs(ctx context.Context) (int64, error) {
 }
 
 
-// IsAllowed implements per-tenant rate limiting using a Redis-backed token bucket.
+// IsAllowed implements per-tenant rate limiting using a Redis-backed fixed window.
 func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error) {
 	if q.rateLimit == 0 {
 		return true, nil // unlimited
@@ -581,9 +585,78 @@ func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, erro
 
 	if val == 1 {
 		q.client.Expire(ctx, key, time.Second)
+		q.client.SAdd(ctx, tenantSetKey, tenantID)
 	}
 
 	return val <= limit, nil
+}
+
+// RateLimitStatus reports the current per-tenant usage against the configured
+// tenant rate limit. Tenants are tracked the first time they submit a job.
+func (q *RedisQueue) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
+	if q.rateLimit == 0 {
+		return []queue.TenantRateStatus{}, nil
+	}
+
+	tenants, err := q.client.SMembers(ctx, tenantSetKey).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	statuses := make([]queue.TenantRateStatus, 0, len(tenants))
+	for _, t := range tenants {
+		if t == "" {
+			continue
+		}
+		val, err := q.client.Get(ctx, "task_queue:tenant:"+t+":rate").Int64()
+		if err != nil {
+			val = 0
+		}
+		statuses = append(statuses, queue.TenantRateStatus{
+			Tenant:        t,
+			Current:       val,
+			Limit:         q.rateLimit,
+			WindowSeconds: 1,
+			Limited:       val >= q.rateLimit,
+		})
+	}
+
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Tenant < statuses[j].Tenant })
+	return statuses, nil
+}
+
+// PriorityPartitionDepths returns pending job counts for each priority tier and
+// hash partition (job-ID mod numPartitions).
+func (q *RedisQueue) PriorityPartitionDepths(ctx context.Context) (queue.PriorityDepthReport, error) {
+	report := queue.PriorityDepthReport{
+		DequeueWeights:        map[string]int{"high": 70, "medium": 20, "low": 10},
+		PartitionsPerPriority: q.numPartitions,
+		ByPriority:            make(map[string]queue.PriorityTierDepth),
+	}
+
+	for _, tier := range []struct {
+		name string
+		base string
+	}{
+		{"high", q.qHigh},
+		{"medium", q.qMedium},
+		{"low", q.qLow},
+	} {
+		td := queue.PriorityTierDepth{Partitions: make(map[string]int64)}
+		for i := 1; i <= q.numPartitions; i++ {
+			key := fmt.Sprintf("%s:%d", tier.base, i)
+			n, err := q.client.LLen(ctx, key).Result()
+			if err != nil {
+				return report, fmt.Errorf("queue: LLen %s: %w", key, err)
+			}
+			partKey := fmt.Sprintf("%d", i)
+			td.Partitions[partKey] = n
+			td.Total += n
+		}
+		report.ByPriority[tier.name] = td
+	}
+
+	return report, nil
 }
 
 func (q *RedisQueue) PublishWebhookEvent(ctx context.Context, event interface{}) error {
