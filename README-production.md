@@ -404,7 +404,8 @@ kubectl apply -f deploy/k8s/certificate.yaml
 ```
 
 cert-manager issues a certificate into the `task-queue-tls` secret (referenced
-by both the `Certificate` and the ingress `tls` block). Watch until `Ready`:
+by both the `Certificate` and the ingress `tls` block). The ingress forces
+HTTP→HTTPS (`ssl-redirect`/`force-ssl-redirect: "true"`). Watch until `Ready`:
 
 ```bash
 kubectl -n task-queue get certificate task-queue-tls -w
