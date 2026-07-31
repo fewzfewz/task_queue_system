@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: task-queue-api
+  name: task-queue-scheduler
   namespace: task-queue
   labels:
-    app: task-queue-api
+    app: task-queue-scheduler
     app.kubernetes.io/part-of: task-queue
 spec:
   selector:
-    app: task-queue-api
+    app: task-queue-scheduler
   ports:
-    - port: 8080
-      targetPort: 8080
+    - port: 8082
+      targetPort: 8082
       name: http
   type: ClusterIP

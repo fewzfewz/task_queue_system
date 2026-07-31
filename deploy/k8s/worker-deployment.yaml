@@ -14,6 +14,7 @@ spec:
         app: task-queue-worker
     spec:
       serviceAccountName: task-queue-worker
+      terminationGracePeriodSeconds: 75
       containers:
         - name: worker
           image: task-queue-worker:latest
@@ -32,8 +33,21 @@ spec:
               value: "50"
             - name: DRAIN_TIMEOUT
               value: "60"
+            - name: POSTGRES_CONN_STR
+              valueFrom:
+                secretKeyRef:
+                  name: task-queue-secrets
+                  key: postgres-conn-str
           ports:
             - containerPort: 8081
+              name: http
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           readinessProbe:
             httpGet:
               path: /readyz
@@ -52,8 +66,4 @@ spec:
             preStop:
               exec:
                 command:
-                  [
-                    "/bin/sh",
-                    "-c",
-                    "sleep 5 && curl -X POST localhost:8081/healthz/shutdown",
-                  ]
+                  ["/bin/sh", "-c", "sleep 5"]

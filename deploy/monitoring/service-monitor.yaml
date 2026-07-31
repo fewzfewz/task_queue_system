@@ -1,0 +1,29 @@
+# Kubernetes-native scrape config for the task-queue services.
+#
+# Requires the Prometheus Operator (kube-prometheus-stack) in the `monitoring`
+# namespace. The `release` / `app` labels match the default ServiceMonitor and
+# rule selectors of a `helm install kube-prometheus-stack ...`; adjust them if
+# you installed the stack under a different release name.
+#
+#   kubectl apply -f deploy/monitoring/service-monitor.yaml
+#
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: task-queue
+  namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
+spec:
+  jobLabel: app
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: task-queue
+  namespaceSelector:
+    matchNames:
+      - task-queue
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

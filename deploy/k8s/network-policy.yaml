@@ -9,6 +9,32 @@ spec:
     - Ingress
     - Egress
 ---
+# All pods need kube-dns to resolve `*.svc.cluster.local` names (Redis/Postgres/OTel).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-egress-dns
+  namespace: task-queue
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# API: only the ingress controller (user traffic) and Prometheus (metrics scrape)
+# may connect.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -27,7 +53,54 @@ spec:
               kubernetes.io/metadata.name: ingress-nginx
       ports:
         - port: 8080
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
 ---
+# Worker: Prometheus scrapes /metrics on :8081.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-worker-ingress
+  namespace: task-queue
+spec:
+  podSelector:
+    matchLabels:
+      app: task-queue-worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8081
+---
+# Scheduler: Prometheus scrapes /metrics on :8082.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-scheduler-ingress
+  namespace: task-queue
+spec:
+  podSelector:
+    matchLabels:
+      app: task-queue-scheduler
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8082
+---
+# Redis: only the application pods may connect.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -53,6 +126,33 @@ spec:
       ports:
         - port: 6379
 ---
+# Postgres: only the application pods may connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-postgres-ingress
+  namespace: task-queue
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: task-queue-api
+        - podSelector:
+            matchLabels:
+              app: task-queue-worker
+        - podSelector:
+            matchLabels:
+              app: task-queue-scheduler
+      ports:
+        - port: 5432
+---
+# Egress for the application pods to their backing stores.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -60,8 +160,13 @@ metadata:
   namespace: task-queue
 spec:
   podSelector:
-    matchLabels:
-      app: task-queue-api
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - task-queue-api
+          - task-queue-worker
+          - task-queue-scheduler
   policyTypes:
     - Egress
   egress:
@@ -71,3 +176,27 @@ spec:
               app: redis
       ports:
         - port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-egress-postgres
+  namespace: task-queue
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - task-queue-api
+          - task-queue-worker
+          - task-queue-scheduler
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432

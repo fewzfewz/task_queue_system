@@ -3,6 +3,9 @@ kind: PrometheusRule
 metadata:
   name: task-queue-alerts
   namespace: monitoring
+  labels:
+    app: kube-prometheus-stack
+    release: kube-prometheus-stack
 spec:
   groups:
     - name: task-queue.rules

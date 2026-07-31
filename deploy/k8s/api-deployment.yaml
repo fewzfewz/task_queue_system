@@ -35,10 +35,28 @@ spec:
                 secretKeyRef:
                   name: task-queue-secrets
                   key: api-key
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: task-queue-secrets
+                  key: admin-password
+            - name: POSTGRES_CONN_STR
+              valueFrom:
+                secretKeyRef:
+                  name: task-queue-secrets
+                  key: postgres-conn-str
             - name: WORKER_POOL_SIZE
               value: "50"
           ports:
             - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
           readinessProbe:
             httpGet:
               path: /readyz
