@@ -51,6 +51,42 @@ jobs:
           file: ./coverage.out
           fail_ci_if_error: false
 
+  test-postgres:
+    name: Postgres Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tq
+          POSTGRES_PASSWORD: tq
+          POSTGRES_DB: tq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tq -d tq"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run Postgres integration tests
+        run: go test -p 1 -count=1 -race ./test/... ./internal/storage/...
+        env:
+          POSTGRES_CONN_STR: postgres://tq:tq@localhost:5432/tq?sslmode=disable
+          POSTGRES_MIGRATIONS_DIR: ${{ github.workspace }}/db/migrations
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

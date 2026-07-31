@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tq
+      POSTGRES_PASSWORD: tq
+      POSTGRES_DB: tq
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tq -d tq"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s

@@ -1,11 +1,14 @@
 APP_NAME=task-queue-system
 
-.PHONY: help deps test build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
+.PHONY: help deps test test-postgres test-postgres-up test-postgres-down build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
 
 help:
 	@echo "Targets:"
 	@echo "  deps               Download Go module dependencies"
-	@echo "  test               Run the test suite"
+	@echo "  test               Run the fast unit test suite"
+	@echo "  test-postgres      Run Postgres integration tests (spins up a test DB via docker compose)"
+	@echo "  test-postgres-up   Start the Postgres test DB container only"
+	@echo "  test-postgres-down Stop the Postgres test DB container"
 	@echo "  build              Build all binaries"
 	@echo "  run-api            Run the API locally"
 	@echo "  run-worker         Run the worker locally"
@@ -29,6 +32,24 @@ deps:
 
 test:
 	go test ./...
+
+POSTGRES_TEST_CONN_STR := postgres://tq:tq@localhost:5433/tq?sslmode=disable
+
+test-postgres:
+	@echo "[test-postgres] Starting Postgres test DB..."
+	@docker-compose -f deploy/test/docker-compose.yml up -d --wait > /dev/null
+	@echo "[test-postgres] Running Postgres integration tests..."
+	@POSTGRES_CONN_STR='$(POSTGRES_TEST_CONN_STR)' \
+		POSTGRES_MIGRATIONS_DIR='$(CURDIR)/db/migrations' \
+		go test -p 1 -count=1 ./test/... ./internal/storage/...
+	@echo "[test-postgres] Stopping Postgres test DB..."
+	@docker-compose -f deploy/test/docker-compose.yml down > /dev/null
+
+test-postgres-up:
+	@docker-compose -f deploy/test/docker-compose.yml up -d --wait
+
+test-postgres-down:
+	@docker-compose -f deploy/test/docker-compose.yml down
 
 build: build-api build-worker build-scheduler build-cli
 

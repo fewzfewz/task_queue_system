@@ -455,10 +455,10 @@ The repo includes:
 - health tests
 - webhook tests
 - a build-tagged chaos suite
+- a Postgres integration suite (every `Store` interface method against a real Postgres, run in CI)
 
 Known gaps:
 
-- The Postgres store integration workflow is opt-in and only runs when `POSTGRES_CONN_STR` is set
 - The webhook delivery integration test is opt-in and uses a mock HTTP server
 - Chaos tests are present, but they are opt-in via build tags and Docker
 
@@ -466,9 +466,22 @@ Optional integration workflows:
 
 ```bash
 RUN_QUEUE_INTEGRATION=1 go test ./test
-POSTGRES_CONN_STR='postgres://...' go test ./test -run PostgresStoreIntegrationWorkflow
+make test-postgres
 go test ./internal/webhooks -run DispatcherSendIntegration
 ```
+
+The Postgres store suite is no longer gated on `POSTGRES_CONN_STR` alone — it
+has a dedicated runner:
+
+```bash
+make test-postgres
+```
+
+This starts the Postgres container from `deploy/test/docker-compose.yml`,
+executes `go test ./test/... ./internal/storage/...` against it, and tears it
+down. The `jobs` table is truncated before/after each test. See
+[README-production.md](/home/fewzan/Projects/task-queue-system/README-production.md#postgres-integration-tests)
+for local and CI details.
 
 ## Production Deployment
 

@@ -1,0 +1,2 @@
+-- 003_add_progress.sql
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS progress DOUBLE PRECISION DEFAULT 0;

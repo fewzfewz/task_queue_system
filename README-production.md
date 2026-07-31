@@ -134,6 +134,72 @@ The worker also exposes:
 
 Use those endpoints for probes and graceful shutdown hooks.
 
+## Postgres Integration Tests
+
+The Postgres store path is covered by a dedicated integration suite that runs
+against a real PostgreSQL instance — no mocking, no build tags. The tests are
+opt-in and gated on the `POSTGRES_CONN_STR` environment variable, so the fast
+unit suite (`go test ./...`) never needs a database.
+
+### Locally
+
+The easiest way is the one-command Makefile target, which starts a Postgres
+container from `deploy/test/docker-compose.yml`, runs the suite, and tears the
+container down:
+
+```bash
+make test-postgres
+```
+
+Under the hood this runs:
+
+```bash
+POSTGRES_CONN_STR='postgres://tq:tq@localhost:5433/tq?sslmode=disable' \
+POSTGRES_MIGRATIONS_DIR='<repo>/db/migrations' \
+go test -count=1 ./test/... ./internal/storage/...
+```
+
+If you want the database to stay up between runs:
+
+```bash
+make test-postgres-up     # start the test DB only
+make test-postgres        # run against the running container
+make test-postgres-down   # stop it
+```
+
+Or point the suite at any Postgres you already run:
+
+```bash
+POSTGRES_CONN_STR='postgres://user:pass@host:5432/db?sslmode=disable' \
+POSTGRES_MIGRATIONS_DIR='$(pwd)/db/migrations' \
+go test -count=1 ./test/... ./internal/storage/...
+```
+
+`POSTGRES_MIGRATIONS_DIR` is optional when the suite can find `db/migrations`
+from the repository root; it is always required to be set from CI because Go
+runs each test package from its own directory.
+
+What the suite covers against the real Postgres backend:
+
+- job save/get/enqueue round-trips (payload, priority, dedup key, shard key,
+  webhook config, DAG dependencies, progress)
+- update status/progress/result, error history accumulation
+- dequeue with SKIP LOCKED: priority tiers (high > medium > low), scheduled
+  gating, tenant and shard filtering, DAG dependency blocking/release
+- heartbeats, orphan recovery, completion/failure/requeue
+- list/search filters and pagination, `GetByIDs`, dedup idempotency markers,
+  queue length stats, job deletion and TTL cleanup
+
+The `jobs` table is truncated before and after every test so runs are isolated
+and repeatable.
+
+### In CI
+
+`test.yml` runs a dedicated `test-postgres` job that spins up a `postgres:16`
+service container and executes the same suite with `-race`. The Postgres tests
+are intentionally excluded from the fast test job so the default CI run needs
+no database beyond Redis.
+
 ## Deploy Order
 
 1. Create namespace.

@@ -317,7 +317,11 @@ func (s *PostgresStore) GetByWorkerAndStatus(ctx context.Context, workerID strin
 		SELECT 
 			id, tenant_id, type, payload, status, priority, 
 			attempts, max_attempts, correlation_id, timeout_seconds, 
-			version, scheduled_at, created_at, updated_at, processed_by
+			version, scheduled_at, created_at, updated_at, processed_by,
+			progress,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			error_history,
+			dedup_key, dependencies, shard_key
 		FROM jobs WHERE processed_by = $1 AND status = $2
 	`
 	rows, err := s.pool.Query(ctx, query, workerID, string(status))
@@ -383,6 +387,7 @@ func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string, shardKey s
 		  AND (
 		    j.dependencies IS NULL
 		    OR j.dependencies = '[]'::jsonb
+		    OR j.dependencies = 'null'::jsonb
 		    OR NOT EXISTS (
 		      SELECT 1
 		      FROM jsonb_array_elements_text(j.dependencies) AS dep_id
@@ -513,7 +518,7 @@ func (s *PostgresStore) IsDedupKeyTaken(ctx context.Context, dedupKey, tenantID 
 func (s *PostgresStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, tenant_id, type, payload, status, priority,
-		        retries, max_retries, correlation_id, timeout_seconds,
+		        attempts, max_attempts, correlation_id, timeout_seconds,
 		        version, scheduled_at, created_at, updated_at, processed_by,
 		        progress,
 		        webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
