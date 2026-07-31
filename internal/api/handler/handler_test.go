@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"task-queue-system/internal/api/dto"
+	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/service"
@@ -132,7 +133,8 @@ func newTestHandler() (*JobHandler, *models.InMemoryStore) {
 	store := models.NewInMemoryStore()
 	q := &mockQueue{}
 	svc := service.New(q, store, slog.Default(), 0)
-	return New(svc, slog.Default(), "test-api-key", "admin", "admin123"), store
+	sessions := session.NewStore(time.Hour)
+	return New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", 5), store
 }
 
 func TestCreateJob_Success(t *testing.T) {
@@ -214,7 +216,8 @@ func TestCreateJob_RateLimited(t *testing.T) {
 		},
 	}
 	svc := service.New(q, store, slog.Default(), 0)
-	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123")
+	sessions := session.NewStore(time.Hour)
+	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", 5)
 
 	body := `{"type":"email","payload":{"to":"a@b.com"},"priority":"medium","tenant_id":"tenant-a"}`
 	req := httptest.NewRequest("POST", "/jobs", bytes.NewReader([]byte(body)))

@@ -3,12 +3,14 @@ package routes
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "task-queue-system/docs"
 	"task-queue-system/internal/api/handler"
 	"task-queue-system/internal/api/middleware"
+	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/service"
@@ -21,7 +23,10 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	if webhookStore != nil {
 		svc.SetWebhookStore(webhookStore)
 	}
-	h := handler.New(svc, logger, cfg.ApiKey, cfg.AdminUsername, cfg.AdminPassword)
+
+	sessions := session.NewStore(time.Duration(cfg.SessionTTLSeconds) * time.Second)
+	h := handler.New(svc, logger, cfg.ApiKey, cfg.AdminUsername, cfg.AdminPassword, sessions, cfg.WorkerAddr, cfg.LoginRateLimit)
+	h.SetReadonlyCredentials(cfg.ReadonlyUsername, cfg.ReadonlyPassword)
 	svc.SetSSEBroker(h.SSEBroker())
 	if webhookStore != nil {
 		h.SetWebhookStore(webhookStore)
@@ -29,45 +34,62 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 
 	mux := http.NewServeMux()
 
+	// ── Public routes ────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/v1/login", h.Login)
-
+	mux.HandleFunc("GET /api/v1/session", h.GetSession)
 	mux.HandleFunc("GET /", h.ServeAppUI)
 	mux.HandleFunc("GET /ui", h.ServeAppUI)
 	mux.HandleFunc("GET /login", h.ServeLoginPage)
-
-	mux.Handle("POST /jobs", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJob)))
-	mux.Handle("POST /jobs/batch", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJobBatch)))
-
-	mux.Handle("GET /jobs", middleware.AuthRequired(cfg)(http.HandlerFunc(h.ListJobs)))
-	mux.HandleFunc("GET /jobs/{id}", h.GetJobStatus)
-	mux.HandleFunc("PATCH /jobs/{id}/progress", h.UpdateJobProgress)
-	mux.HandleFunc("POST /jobs/{id}/cancel", h.CancelJob)
-	mux.HandleFunc("POST /jobs/{id}/pause", h.PauseJob)
-	mux.HandleFunc("POST /jobs/{id}/resume", h.ResumeJob)
-
-	mux.HandleFunc("GET /metrics", h.GetMetrics)
-	mux.HandleFunc("GET /workers", h.GetWorkers)
-	mux.HandleFunc("GET /events", h.JobEventsSSE)
+	mux.HandleFunc("GET /metrics", h.GetMetrics) // Prometheus scrape target
 	mux.HandleFunc("GET /admin/dlq", h.ServeAdminDLQ)
 
-	mux.HandleFunc("GET /api/v1/stats", h.GetStats)
-	mux.HandleFunc("GET /api/v1/jobs/{id}/deps", h.GetJobDeps)
+	// ── Authenticated routes (API key or session cookie) ──────────────────────
+	auth := middleware.RequireAuth(cfg, sessions)
+	csrf := middleware.CSRFProtect()
 
-	auth := middleware.AuthRequired(cfg)
+	// read registers an authenticated GET route. Any authenticated principal
+	// (admin or viewer) may read.
+	read := func(pattern string, fn http.HandlerFunc) {
+		mux.Handle(pattern, auth(http.HandlerFunc(fn)))
+	}
 
-	mux.Handle("GET /api/v1/dlq", auth(http.HandlerFunc(h.ListFailedJobs)))
-	mux.Handle("GET /api/v1/dlq/{id}", auth(http.HandlerFunc(h.GetFailedJobDetail)))
-	mux.Handle("POST /api/v1/dlq/{id}/replay", auth(http.HandlerFunc(h.ReplayFailedJob)))
-	mux.Handle("DELETE /api/v1/dlq/{id}", auth(http.HandlerFunc(h.DeleteFailedJob)))
-	mux.Handle("DELETE /api/v1/dlq", auth(http.HandlerFunc(h.BulkPurgeDLQ)))
+	// write registers an authenticated, admin-only, CSRF-protected mutation.
+	write := func(pattern string, fn http.HandlerFunc) {
+		mw := middleware.RequireRole(middleware.RoleAdmin)(http.HandlerFunc(fn))
+		mw = csrf(mw)
+		mux.Handle(pattern, auth(mw))
+	}
+
+	read("GET /jobs", h.ListJobs)
+	read("GET /jobs/{id}", h.GetJobStatus)
+	read("GET /api/v1/jobs/{id}/deps", h.GetJobDeps)
+	read("GET /api/v1/stats", h.GetStats)
+	read("GET /workers", h.GetWorkers)
+	read("GET /events", h.JobEventsSSE)
+	read("GET /api/v1/dlq", h.ListFailedJobs)
+	read("GET /api/v1/dlq/{id}", h.GetFailedJobDetail)
+	read("GET /api/v1/circuit-breakers", h.GetCircuitBreakers)
+
+	write("POST /jobs", h.CreateJob)
+	write("POST /jobs/batch", h.CreateJobBatch)
+	write("PATCH /jobs/{id}/progress", h.UpdateJobProgress)
+	write("POST /jobs/{id}/cancel", h.CancelJob)
+	write("POST /jobs/{id}/pause", h.PauseJob)
+	write("POST /jobs/{id}/resume", h.ResumeJob)
+	write("POST /api/v1/dlq/{id}/replay", h.ReplayFailedJob)
+	write("DELETE /api/v1/dlq/{id}", h.DeleteFailedJob)
+	write("DELETE /api/v1/dlq", h.BulkPurgeDLQ)
+	write("POST /api/v1/circuit-breakers/reset/{type}", h.ResetCircuitBreaker)
+
+	// Logout is CSRF-protected but available to any authenticated session.
+	mux.Handle("POST /api/v1/logout", auth(csrf(http.HandlerFunc(h.Logout))))
 
 	if webhookStore != nil {
-		ws := middleware.AuthRequired(cfg)
-		mux.Handle("POST /api/v1/webhooks", ws(http.HandlerFunc(h.RegisterWebhook)))
-		mux.Handle("GET /api/v1/webhooks", ws(http.HandlerFunc(h.ListWebhooks)))
-		mux.Handle("GET /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.GetWebhook)))
-		mux.Handle("PUT /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.UpdateWebhook)))
-		mux.Handle("DELETE /api/v1/webhooks/{id}", ws(http.HandlerFunc(h.DeleteWebhook)))
+		read("GET /api/v1/webhooks", h.ListWebhooks)
+		read("GET /api/v1/webhooks/{id}", h.GetWebhook)
+		write("POST /api/v1/webhooks", h.RegisterWebhook)
+		write("PUT /api/v1/webhooks/{id}", h.UpdateWebhook)
+		write("DELETE /api/v1/webhooks/{id}", h.DeleteWebhook)
 	}
 
 	mux.HandleFunc("GET /swagger/", httpSwagger.Handler(

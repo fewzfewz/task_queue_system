@@ -3,13 +3,13 @@ package handler
 import (
 	"fmt"
 	"net/http"
-	"strings"
 )
 
-// ServeAppUI renders the general operator UI for the queue system.
+// ServeAppUI renders the general operator UI for the queue system. The page
+// contains no secrets; it authenticates against the session API on load.
 func (h *JobHandler) ServeAppUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, strings.ReplaceAll(appHTML, "__API_KEY__", h.apiKey))
+	fmt.Fprint(w, appHTML)
 }
 
 // ServeLoginPage renders the standalone login page.
@@ -244,7 +244,7 @@ const appHTML = `<!DOCTYPE html>
           <i class="fas fa-chart-pie"></i> Dashboard
         </a>
         <div class="nav-label">Jobs</div>
-        <a class="nav-item" data-page="jobs" onclick="showPage('jobs')">
+        <a class="nav-item" data-page="jobs" data-admin onclick="showPage('jobs')">
           <i class="fas fa-plus-circle"></i> Create Jobs
         </a>
         <a class="nav-item" data-page="search" onclick="showPage('search')">
@@ -267,7 +267,7 @@ const appHTML = `<!DOCTYPE html>
           <i class="fas fa-trash-alt"></i> Dead Letter Queue
         </a>
         <div class="nav-label">Settings</div>
-        <a class="nav-item" data-page="webhooks" onclick="showPage('webhooks');loadWebhooks()">
+        <a class="nav-item" data-page="webhooks" data-admin onclick="showPage('webhooks');loadWebhooks()">
           <i class="fas fa-globe"></i> Webhooks
         </a>
       </div>
@@ -294,6 +294,10 @@ const appHTML = `<!DOCTYPE html>
       </div>
       <div id="content">
 
+        <div id="ro-banner" style="display:none;background:rgba(245,158,11,.1);border:1px solid var(--warn);color:var(--warn);border-radius:10px;padding:10px 16px;font-size:13px;margin-bottom:16px;">
+          <i class="fas fa-eye"></i> Read-only session. Changes require an admin account.
+        </div>
+
         <!-- Page: Dashboard -->
         <div id="page-dashboard" class="page active">
           <div class="stats-grid">
@@ -306,7 +310,7 @@ const appHTML = `<!DOCTYPE html>
           <div class="section-card slide-up">
             <div class="section-title"><i class="fas fa-bolt"></i> Quick Actions</div>
             <div class="toolbar">
-              <button class="btn-primary btn-sm" onclick="showPage('jobs')"><i class="fas fa-plus"></i> Create Job</button>
+              <button class="btn-primary btn-sm" data-admin onclick="showPage('jobs')"><i class="fas fa-plus"></i> Create Job</button>
               <button class="btn-secondary btn-sm" onclick="showPage('search')"><i class="fas fa-search"></i> Search Jobs</button>
               <button class="btn-secondary btn-sm" onclick="showPage('dlq');loadDLQ()"><i class="fas fa-trash"></i> DLQ</button>
               <button class="btn-secondary btn-sm" onclick="showPage('stats');loadStats()"><i class="fas fa-chart-bar"></i> Stats</button>
@@ -442,16 +446,16 @@ const appHTML = `<!DOCTYPE html>
             <div class="grid-2" style="margin-top:12px;">
               <div class="form-row">
                 <div class="form-group"><label>Job ID to Replay</label><input id="dlq-replay-id" value="job-123" /></div>
-                <div style="display:flex;align-items:flex-end;"><button class="btn-primary btn-sm" onclick="replayDLQ()"><i class="fas fa-redo"></i> Replay</button></div>
+                <div style="display:flex;align-items:flex-end;"><button class="btn-primary btn-sm" data-admin onclick="replayDLQ()"><i class="fas fa-redo"></i> Replay</button></div>
               </div>
               <div class="form-row">
                 <div class="form-group"><label>Job ID to Purge</label><input id="dlq-purge-id" value="job-123" /></div>
-                <div style="display:flex;align-items:flex-end;"><button class="btn-danger btn-sm" onclick="deleteDLQ()"><i class="fas fa-times"></i> Purge</button></div>
+                <div style="display:flex;align-items:flex-end;"><button class="btn-danger btn-sm" data-admin onclick="deleteDLQ()"><i class="fas fa-times"></i> Purge</button></div>
               </div>
             </div>
             <div class="form-row" style="margin-top:12px;grid-template-columns:1fr auto;">
               <div class="form-group"><label>Bulk Purge (older than)</label><input id="dlq-older" value="2025-01-01T00:00:00Z" /></div>
-              <div style="display:flex;align-items:flex-end;"><button class="btn-danger btn-sm" onclick="bulkPurgeDLQ()"><i class="fas fa-trash"></i> Bulk Purge</button></div>
+              <div style="display:flex;align-items:flex-end;"><button class="btn-danger btn-sm" data-admin onclick="bulkPurgeDLQ()"><i class="fas fa-trash"></i> Bulk Purge</button></div>
             </div>
           </div>
         </div>
@@ -465,7 +469,7 @@ const appHTML = `<!DOCTYPE html>
               <div class="form-group"><label>Secret</label><input id="wh-secret" value="wh-secret-123" /></div>
               <div class="form-group"><label>Events (comma)</label><input id="wh-events" value="completed,failed" /></div>
             </div>
-            <button class="btn-primary" onclick="registerWebhook()"><i class="fas fa-plus"></i> Register</button>
+            <button class="btn-primary" data-admin onclick="registerWebhook()"><i class="fas fa-plus"></i> Register</button>
           </div>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-list"></i> Registered Webhooks</div>
@@ -480,8 +484,7 @@ const appHTML = `<!DOCTYPE html>
 
   <script>
     const API_BASE = '/api/v1';
-    const WORKER_PORT = '8081';
-    const TOKEN_KEY = 'task_queue_api_key';
+    const IDLE_TIMEOUT = 15 * 60 * 1000;
     const PAGE_NAMES = {
       dashboard:'Dashboard','jobs':'Create Jobs','search':'Search Jobs','stats':'Queue Statistics',
       dag:'DAG Dependencies','workers':'Workers & Health','cb':'Circuit Breaker',
@@ -494,23 +497,62 @@ const appHTML = `<!DOCTYPE html>
       cb':'Track circuit breaker states per plugin','dlq':'Manage failed jobs and retries',
       webhooks:'Configure event-driven HTTP callbacks'
     };
+    let SESSION = { authenticated:false, username:'', role:'', csrf_token:'' };
+    let idleTimer = null;
 
     function toast(msg) {
       const t=document.getElementById('toast'); t.textContent=msg;
       t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500);
     }
-    function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
-    function headers() {
-      const t=getToken();
-      return t?{'Content-Type':'application/json','X-API-Key':t}:{'Content-Type':'application/json'};
+    function esc(s) {
+      return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
     }
+    function isAdmin() { return SESSION.role === 'admin'; }
+    function confirmAction(message) { return window.confirm(message); }
+
     async function api(path,options={}) {
+      const method=options.method||'GET';
+      const headers=Object.assign({'Content-Type':'application/json'},options.headers||{});
+      if(method!=='GET'&&method!=='HEAD'&&SESSION.csrf_token){headers['X-CSRF-Token']=SESSION.csrf_token;}
       try {
-        const res=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})}});
+        const res=await fetch(path,Object.assign({},options,{headers:headers,credentials:'same-origin'}));
         if(res.status===204)return null;
         const text=await res.text();
         try{return JSON.parse(text)}catch(_){return text}
       }catch(_){return null}
+    }
+
+    async function loadSession() {
+      try {
+        const res=await fetch(API_BASE+'/session',{credentials:'same-origin'});
+        if(res.ok){SESSION=await res.json();}
+      }catch(_){SESSION={authenticated:false};}
+      if(!SESSION.authenticated){window.location.href='/login';return false;}
+      applyRoleGating();
+      startIdleTimer();
+      return true;
+    }
+    function applyRoleGating() {
+      const admin=isAdmin();
+      document.querySelectorAll('[data-admin]').forEach(function(el){el.style.display=admin?'':'none';});
+      const banner=document.getElementById('ro-banner');
+      if(banner){banner.style.display=admin?'none':'';}
+    }
+    function startIdleTimer() {
+      const reset=function(){
+        clearTimeout(idleTimer);
+        idleTimer=setTimeout(logout,IDLE_TIMEOUT);
+      };
+      ['click','keydown','mousemove','scroll','touchstart'].forEach(function(ev){
+        window.addEventListener(ev,reset,{passive:true});
+      });
+      reset();
+    }
+    async function logout() {
+      try{await fetch(API_BASE+'/logout',{method:'POST',credentials:'same-origin'});}catch(_){}
+      window.location.href='/login';
     }
 
     function toggleSidebar() {
@@ -519,14 +561,6 @@ const appHTML = `<!DOCTYPE html>
     document.getElementById('sidebar').addEventListener('click',function(e){
       if(window.innerWidth<=768)this.classList.remove('open');
     });
-
-    function logout() {
-      localStorage.removeItem(TOKEN_KEY);
-      window.location.href='/login';
-    }
-    if(!getToken()){
-      window.location.href='/login';
-    }
 
     function showPage(name) {
       document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -626,16 +660,22 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Circuit Breaker ──
     async function loadCircuitBreakers() {
-      const out=await api('//'+location.hostname+':'+WORKER_PORT+'/circuit-breaker');
+      const out=await api(API_BASE+'/circuit-breakers');
       document.getElementById('stat-cb').innerText=String(Object.keys(out||{}).length);
       const rows=Object.entries(out||{}).map(([k,v])=>{
         const cls=v.startsWith('open')?'bad':v==='closed'?'good':'warn';
-        return '<tr><td>'+k+'</td><td><span class="pill '+cls+'">'+v+'</span></td><td><button class="btn-secondary btn-sm" onclick="resetBreaker(\''+k+'\')">Reset</button></td></tr>';
+        const action=isAdmin()?'<td><button class="btn-secondary btn-sm" data-reset="'+esc(k)+'">Reset</button></td>':'';
+        return '<tr><td>'+esc(k)+'</td><td><span class="pill '+cls+'">'+esc(v)+'</span></td>'+action+'</tr>';
       }).join('');
       document.getElementById('cb-body').innerHTML=rows||'<tr><td colspan="3" style="text-align:center;color:var(--muted);">No circuit breakers active.</td></tr>';
     }
+    document.getElementById('cb-body').addEventListener('click',function(e){
+      const b=e.target.closest('[data-reset]');
+      if(b)resetBreaker(b.getAttribute('data-reset'));
+    });
     async function resetBreaker(type) {
-      await api('//'+location.hostname+':'+WORKER_PORT+'/circuit-breaker/reset/'+encodeURIComponent(type),{method:'POST'});
+      if(!confirmAction('Reset the circuit breaker for plugin "'+type+'"?'))return;
+      await api(API_BASE+'/circuit-breakers/reset/'+encodeURIComponent(type),{method:'POST'});
       toast('Reset breaker for '+type); loadCircuitBreakers();
     }
 
@@ -670,18 +710,21 @@ const appHTML = `<!DOCTYPE html>
     async function replayDLQ() {
       const id=document.getElementById('dlq-replay-id').value.trim();
       if(!id)return;
+      if(!confirmAction('Replay job '+id+' from the dead letter queue?'))return;
       await api(API_BASE+'/dlq/'+encodeURIComponent(id)+'/replay',{method:'POST'});
       loadDLQ(); toast('Replayed job: '+id);
     }
     async function deleteDLQ() {
       const id=document.getElementById('dlq-purge-id').value.trim();
       if(!id)return;
+      if(!confirmAction('Permanently purge job '+id+'? This cannot be undone.'))return;
       await api(API_BASE+'/dlq/'+encodeURIComponent(id),{method:'DELETE'});
       loadDLQ(); toast('Purged job: '+id);
     }
     async function bulkPurgeDLQ() {
       const older=document.getElementById('dlq-older').value.trim();
       if(!older)return;
+      if(!confirmAction('Permanently purge ALL failed jobs older than '+older+'? This cannot be undone.'))return;
       const queue=document.getElementById('dlq-queue').value.trim();
       await api(API_BASE+'/dlq?older_than='+encodeURIComponent(older)+(queue?'&queue='+encodeURIComponent(queue):''),{method:'DELETE'});
       loadDLQ(); toast('Bulk purge completed');
@@ -719,7 +762,7 @@ const appHTML = `<!DOCTYPE html>
         loadCircuitBreakers().catch(function(){})
       ]);
     }
-    if(getToken())loadEverything();
+    loadSession().then(function(ok){if(ok)loadEverything();});
   </script>
 </body>
 </html>`
@@ -788,15 +831,12 @@ const loginPageHTML = `<!DOCTYPE html>
     <div class="logo"><i class="fas fa-tasks"></i></div>
     <h1>Task Queue</h1>
     <p>Sign in to manage jobs, workers, and monitor the system</p>
-    <input id="login-user" type="text" placeholder="Username" value="admin" autocomplete="username" />
-    <input id="login-pass" type="password" placeholder="Password" value="admin123" autocomplete="current-password" />
+    <input id="login-user" type="text" placeholder="Username" autocomplete="username" autofocus />
+    <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" />
     <button id="login-btn" onclick="login()">Sign In</button>
     <div id="login-error" class="error">Invalid credentials</div>
-    <div class="info"><i class="fas fa-info-circle"></i> Default: admin / admin123</div>
   </div>
   <script>
-    const TOKEN_KEY='task_queue_api_key';
-    if(localStorage.getItem(TOKEN_KEY)){window.location.href='/';}
     async function login(){
       const btn=document.getElementById('login-btn');
       const err=document.getElementById('login-error');
@@ -809,14 +849,15 @@ const loginPageHTML = `<!DOCTYPE html>
         const res=await fetch('/api/v1/login',{
           method:'POST',
           body:JSON.stringify({username:user,password:pass}),
-          headers:{'Content-Type':'application/json'}
+          headers:{'Content-Type':'application/json'},
+          credentials:'same-origin'
         });
-        const data=await res.json();
-        if(res.ok&&data.api_key){
-          localStorage.setItem(TOKEN_KEY,data.api_key);
+        if(res.ok){
           window.location.href='/';
         }else{
-          err.style.display='block';err.textContent='Invalid credentials';
+          const data=await res.json().catch(function(){return {};});
+          err.style.display='block';
+          err.textContent=(data&&data.error)?data.error:'Invalid credentials';
         }
       }catch(e){
         err.style.display='block';err.textContent='Connection error';
@@ -826,6 +867,7 @@ const loginPageHTML = `<!DOCTYPE html>
     document.getElementById('login-pass').addEventListener('keydown',function(e){
       if(e.key==='Enter')login();
     });
+    document.getElementById('login-btn').addEventListener('click',function(e){e.preventDefault();login();});
   </script>
 </body>
 </html>`

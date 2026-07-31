@@ -41,6 +41,11 @@ spec:
               value: "50"
             - name: DRAIN_TIMEOUT
               value: "60"
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: task-queue-secrets
+                  key: api-key
             - name: POSTGRES_CONN_STR
               valueFrom:
                 secretKeyRef:

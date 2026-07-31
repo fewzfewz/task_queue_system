@@ -38,8 +38,12 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 
 ## Key Routes
 
-- `GET /` or `GET /ui` — browser-based operator UI (login required)
-- `POST /api/v1/login` — authenticate with username/password, returns api_key
+- `GET /` or `GET /ui` — browser-based operator UI (session login required)
+- `POST /api/v1/login` — authenticate with username/password, starts a session
+- `POST /api/v1/logout` — revoke the current session
+- `GET /api/v1/session` — current session state (role + CSRF token)
+- `GET /api/v1/circuit-breakers` — worker circuit-breaker status (proxied)
+- `POST /api/v1/circuit-breakers/reset/{type}` — reset a circuit breaker
 - `POST /jobs` — create a job
 - `POST /jobs/batch` — batch create up to 100 jobs
 - `GET /jobs` — list/search jobs
@@ -87,16 +91,22 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 | `POSTGRES_CONN_STR` | `` | PostgreSQL connection string |
 | `DRAIN_TIMEOUT` | `60` | Worker drain timeout (seconds) |
 | `WORKER_POOL_SIZE` | `50` | Worker goroutine count |
-| `ADMIN_USERNAME` | `admin` | UI login username |
+| `ADMIN_USERNAME` | `admin` | UI login username (admin role) |
 | `ADMIN_PASSWORD` | `admin123` | UI login password |
+| `READONLY_USERNAME` | `` | Optional viewer-only UI login |
+| `READONLY_PASSWORD` | `` | Password for the viewer login |
+| `SESSION_TTL_SECONDS` | `28800` | Operator UI session lifetime (seconds) |
+| `LOGIN_RATE_LIMIT` | `5` | Login attempts per IP per minute |
+| `WORKER_ADDR` | `localhost:8081` | Worker address for the circuit-breaker proxy |
 | `SLA_TARGET_SECONDS` | `300` | SLA target in seconds |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `` | OpenTelemetry gRPC endpoint |
 | `POSTGRES_MIGRATIONS_DIR` | `db/migrations` | Postgres SQL migrations directory |
 
 Auth:
-- All protected endpoints require the `X-API-Key` header set to the value of `API_KEY`.
-- The `/api/v1/login` endpoint accepts `{"username":"...","password":"..."}` and returns the API key.
-- The UI prompts for credentials on first load, then stores the returned key in `localStorage`.
+- Machine clients authenticate with the `X-API-Key` header set to the value of `API_KEY` on every request.
+- Browsers authenticate via a server-side session: `POST /api/v1/login` returns an `HttpOnly` session cookie and a per-session CSRF token. The API key is never exposed to the browser.
+- Write endpoints (job control, DLQ replay/purge, webhooks, CB reset, logout) additionally require an admin role and the `X-CSRF-Token` header.
+- `GET /events` (SSE) and all job/DLQ/stats/worker endpoints require authentication.
 
 ## Local Run
 
@@ -246,31 +256,33 @@ A focused dead-letter queue management console:
 
 ### Auth flow
 
-Both pages show a login overlay on first load. Credentials default to `admin` / `admin123`. On success the server returns the API key, which is stored in `localStorage` and sent as `X-API-Key` on all subsequent `fetch()` calls. Only `POST /api/v1/login` is unauthenticated.
+Both pages show a login overlay on first load. `POST /api/v1/login` validates the credentials and starts a server-side session (an `HttpOnly` session cookie plus a per-session CSRF token). The API key is never returned to the browser and nothing is stored in `localStorage`; the session cookie is sent with every request and the CSRF token rides in the `X-CSRF-Token` header on mutating calls. Sessions expire after `SESSION_TTL_SECONDS` and are revoked by `POST /api/v1/logout` or after 15 minutes of idle.
 
 ## Terminal Examples
 
-Set an API key:
+Set an API key (machine clients):
 
 ```bash
 export API_KEY=secret-api-key
 ```
 
-Or get one via the login endpoint:
+Browser-style login (creates a session cookie, returns a CSRF token):
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/login \
+  -c /tmp/tq-cookies.txt \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
-# Returns: {"api_key":"secret-api-key"}
+# 200 → {"authenticated":true,"role":"admin","csrf_token":"<token>"}
 ```
 
-Create a job:
+All subsequent calls use the session cookie; mutating calls also send `X-CSRF-Token`:
 
 ```bash
 curl -X POST http://localhost:8080/jobs \
+  -b /tmp/tq-cookies.txt \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: secret-api-key" \
+  -H "X-CSRF-Token: <token>" \
   -d '{"type":"email","payload":{"to":"user@example.com","subject":"Hello"},"priority":"medium","tenant_id":"tenant-a"}'
 ```
 
@@ -313,15 +325,15 @@ Get metrics and workers:
 
 ```bash
 curl http://localhost:8080/metrics
-curl http://localhost:8080/workers
+curl http://localhost:8080/workers -H "X-API-Key: secret-api-key"
 ```
 
-## Admin vs Everyone Else
+## Admin vs View-Only Roles
 
-- The main UI at `/` and `/ui` is for general users and operators.
-- The admin DLQ page at `/admin/dlq` is a DLQ-focused console with stronger operational emphasis.
-- The API routes under `/api/v1/dlq` are the actual privileged backend actions both UIs use.
-- In practice, the admin page is just a more DLQ-centric view, not a different security model by itself.
+- Sessions are granted a role: `admin` (from `ADMIN_USERNAME`/`ADMIN_PASSWORD`) or `readonly` (from `READONLY_USERNAME`/`READONLY_PASSWORD`, optional).
+- Read endpoints (jobs, stats, workers, DLQ GET, SSE, circuit-breaker status) are available to any authenticated session.
+- Mutating endpoints (job control, DLQ replay/purge, webhooks, circuit-breaker reset) require the `admin` role plus a valid CSRF token.
+- API-key requests bypass role checks — the `X-API-Key` header is the privileged machine identity, so keep it out of browsers.
 
 ## Storage and Dependencies
 

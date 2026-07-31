@@ -200,3 +200,23 @@ spec:
               app: postgres
       ports:
         - port: 5432
+---
+# API proxies circuit-breaker access to the worker on :8081.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-queue-egress-worker
+  namespace: task-queue
+spec:
+  podSelector:
+    matchLabels:
+      app: task-queue-api
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: task-queue-worker
+      ports:
+        - port: 8081

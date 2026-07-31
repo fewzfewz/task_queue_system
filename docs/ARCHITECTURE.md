@@ -48,13 +48,14 @@ The task queue system is composed of four independent binaries that coordinate t
 - Accepts job submissions (`POST /jobs`)
 - Serves browser UI (`GET /` or `/ui`) — sidebar dashboard with jobs, stats, DAG, CB, DLQ, webhooks
 - Serves DLQ admin console (`GET /admin/dlq`) — focused dead-letter queue management
-- Auth login (`POST /api/v1/login`) — returns API key for UI localStorage
+- Auth login (`POST /api/v1/login`) — starts a server-side httpOnly session (cookie + CSRF token); logout/session endpoints at `/api/v1/logout`, `/api/v1/session`
+- Circuit-breaker proxy (`GET /api/v1/circuit-breakers`, `POST /api/v1/circuit-breakers/reset/{type}`) — forwards `X-API-Key` to the worker on `WORKER_ADDR`
 - Exposes metrics and worker health (`GET /metrics`, `/workers`)
-- SSE event stream (`GET /events`) — real-time job status updates
+- SSE event stream (`GET /events`) — real-time job status updates, authenticated per connection
 - DLQ management endpoints (`/api/v1/dlq/*`)
 - Webhooks CRUD (`/api/v1/webhooks/*`)
 - Swagger UI at `/swagger/`
-- Auth: `X-API-Key` header on all endpoints except `/healthz`, `/readyz`, `/api/v1/login`
+- Auth: machine clients use the `X-API-Key` header; browsers use session cookies (`tq_session`, HttpOnly + Secure + SameSite=Strict) with `X-CSRF-Token` on mutating calls. Only `/healthz`, `/readyz`, `/api/v1/login`, and the login/metrics/DLQ/UI pages are unauthenticated.
 
 ### cmd/worker — Job Executor (port 8081)
 - Runs N concurrent worker goroutines (configurable via `WORKER_POOL_SIZE`)
@@ -137,11 +138,16 @@ Each priority level has 3 hash-based partitions for concurrency.
 ## Security Model
 
 - `/healthz`, `/readyz`: No auth (health checks)
-- `/api/v1/login`: No auth (accepts username/password, returns API key)
-- `/`, `/ui`, `/admin/dlq`: No auth (UI pages, login overlay triggers `/api/v1/login`)
-- `/metrics`: No auth (Prometheus scraping)
-- All other endpoints: Auth required (`X-API-Key` header)
-- UI login flow: Browser shows login overlay → user submits credentials → server returns `api_key` → stored in `localStorage` → sent as `X-API-Key` on all subsequent `fetch()` calls
+- `/api/v1/login`: No auth (accepts username/password; starts a session, never returns the API key)
+- `/api/v1/logout`: Any authenticated session + CSRF token (revokes the session)
+- `/`, `/ui`, `/admin/dlq`, `/login`, `/metrics`, `/swagger/`: No auth for the page shell (Prometheus scraping; the UI loads data only through authenticated APIs)
+- `GET /events` (SSE): Auth required; session connections re-validate every 15s and are torn down on expiry
+- Read endpoints (jobs, stats, workers, DLQ GET, circuit breakers): Auth required — `X-API-Key` header or valid session cookie
+- Mutating endpoints (job control, DLQ replay/purge, webhooks, CB reset): Auth + `admin` role + `X-CSRF-Token` header
+- Sessions: server-side store with TTL (`SESSION_TTL_SECONDS`, default 8h); cookie `tq_session` is `HttpOnly`, `Secure`, `SameSite=Strict`; CSRF token is returned per-session in the login/session JSON body only
+- Login throttling: `LOGIN_RATE_LIMIT` (default 5/min per client IP)
+- Worker circuit-breaker endpoints on :8081 require the `X-API-Key` header; the operator UI never calls the worker cross-origin (it proxies via the API)
+- UI login flow: Browser shows login overlay → user submits credentials → server sets the httpOnly session cookie and returns a CSRF token → the UI sends the cookie + `X-CSRF-Token` on `fetch()` calls; nothing sensitive is stored in `localStorage`; idle sessions auto-logout after 15 minutes
 
 ## Observability
 

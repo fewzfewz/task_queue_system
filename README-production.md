@@ -365,9 +365,14 @@ Defaults are applied by the binaries when the env var is unset.
 | `REDIS_HOST`                | `localhost:6379`                 | all       | set to `redis.task-queue.svc.cluster.local:6379` in manifests |
 | `REDIS_PASSWORD`            | ``                               | all       |                                    |
 | `REDIS_DB`                  | `0`                              | all       |                                    |
-| `API_KEY`                   | `secret-api-key`                 | api       | from secret in manifests           |
-| `ADMIN_USERNAME`            | `admin`                          | api       | UI login                           |
+| `API_KEY`                   | `secret-api-key`                 | api, worker | from secret in manifests           |
+| `ADMIN_USERNAME`            | `admin`                          | api       | UI login (admin role)              |
 | `ADMIN_PASSWORD`            | `admin123`                       | api       | from secret in manifests           |
+| `READONLY_USERNAME`         | `` (disabled)                    | api       | optional viewer-only UI login      |
+| `READONLY_PASSWORD`         | `` (disabled)                    | api       | required with `READONLY_USERNAME`  |
+| `SESSION_TTL_SECONDS`       | `28800` (8h)                     | api       | operator UI session lifetime       |
+| `LOGIN_RATE_LIMIT`          | `5`                              | api       | login attempts per IP per minute   |
+| `WORKER_ADDR`               | `localhost:8081`                 | api       | worker base addr for the circuit-breaker proxy |
 | `POSTGRES_CONN_STR`         | ``                               | all       | from secret in manifests           |
 | `STORE_BACKEND`             | `redis`                          | all       | `redis`, `postgres`, or `dual`     |
 | `WORKER_POOL_SIZE`          | `50`                             | worker    | concurrent job goroutines          |
@@ -556,17 +561,18 @@ JOB_ID="$(curl -sf -X POST http://localhost:8080/jobs \
 echo "enqueued ${JOB_ID}"
 
 for i in $(seq 1 20); do
-  STATUS="$(curl -s http://localhost:8080/jobs/${JOB_ID} | jq -r .status)"
+  STATUS="$(curl -s -H "X-API-Key: ${TQ_API_KEY}" http://localhost:8080/jobs/${JOB_ID} | jq -r .status)"
   [ "${STATUS}" = "completed" ] && break
   sleep 1
 done
 echo "final status: ${STATUS}"
 ```
 
-SSE stream — start a listener, then enqueue another job and confirm events flow:
+SSE stream — start a listener, then enqueue another job and confirm events flow.
+The stream now requires authentication (API key or an operator session):
 
 ```bash
-curl -N -m 5 -s http://localhost:8080/events > /tmp/tq-sse.out &
+curl -N -m 5 -s -H "X-API-Key: ${TQ_API_KEY}" http://localhost:8080/events > /tmp/tq-sse.out &
 curl -sf -X POST http://localhost:8080/jobs \
   -H "X-API-Key: ${TQ_API_KEY}" -H "Content-Type: application/json" \
   -d '{"type":"email","payload":{"to":"a@b.c","subject":"sse","body":"x"}}' > /dev/null
@@ -595,9 +601,13 @@ curl -s -H "X-API-Key: ${TQ_API_KEY}" http://localhost:8080/api/v1/dlq | jq .
 Browser UI:
 
 ```bash
+# Login now starts a server-side session; the API key is never returned.
+# Keep the cookie jar and confirm the session API reports authenticated.
 curl -sf -X POST http://localhost:8080/api/v1/login \
   -H "Content-Type: application/json" \
+  -c /tmp/tq-cookies.txt \
   -d "{\"username\":\"admin\",\"password\":\"${TQ_ADMIN_PASSWORD}\"}" | jq .
+curl -s -b /tmp/tq-cookies.txt http://localhost:8080/api/v1/session | jq .
 ```
 
 Open http://localhost:8080/login (or https://${TQ_HOST}/login) and sign in with

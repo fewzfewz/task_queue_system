@@ -27,8 +27,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// cors wraps a handler with CORS headers so the UI (served on a different port) can
-// reach the worker's circuit-breaker endpoints from the browser.
+// cors wraps a handler with permissive CORS so browser tooling can reach the
+// worker's circuit-breaker endpoints directly. The operator UI no longer calls
+// the worker cross-origin (it proxies through the API), so CORS is limited to
+// preflight support and the endpoints themselves require the shared API key.
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -149,6 +151,12 @@ func main() {
 	mux.Handle("/metrics", promhttp.Handler())
 
 	cb := cors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != cfg.ApiKey {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"code":"UNAUTHORIZED","error":"missing or invalid API key"}`)
+			return
+		}
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
 			status := jobExec.CircuitBreakerStatus()

@@ -30,6 +30,23 @@ type Config struct {
 	// AdminPassword is the login password for the web UI.
 	AdminPassword string
 
+	// ReadonlyUsername/ReadonlyPassword optionally define a second UI account
+	// with viewer-only (no state-changing) permissions. Empty disables it.
+	ReadonlyUsername string
+	ReadonlyPassword string
+
+	// SessionTTLSeconds is how long an operator UI session lasts before the
+	// session cookie expires. Default: 28800 (8 hours).
+	SessionTTLSeconds int
+
+	// LoginRateLimit is the maximum number of login attempts per IP per minute.
+	// Default: 5.
+	LoginRateLimit int
+
+	// WorkerAddr is the base address of the worker's HTTP server, used to proxy
+	// circuit-breaker access through the API. Default: "localhost:8081".
+	WorkerAddr string
+
 	// JobRateLimit is the global throughput limit for worker tasks (JPS).
 	// Default: 0 (unlimited)
 	JobRateLimit float64
@@ -90,6 +107,11 @@ func Load() *Config {
 		ApiKey:          getEnvOrDefault("API_KEY", "secret-api-key"),
 		AdminUsername:   getEnvOrDefault("ADMIN_USERNAME", "admin"),
 		AdminPassword:   getEnvOrDefault("ADMIN_PASSWORD", "admin123"),
+		ReadonlyUsername:   getEnvOrDefault("READONLY_USERNAME", ""),
+		ReadonlyPassword:   getEnvOrDefault("READONLY_PASSWORD", ""),
+		SessionTTLSeconds:  getEnvAsInt("SESSION_TTL_SECONDS", 28800),
+		LoginRateLimit:     getEnvAsInt("LOGIN_RATE_LIMIT", 5),
+		WorkerAddr:         getEnvOrDefault("WORKER_ADDR", "localhost:8081"),
 		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
 		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
 		MaxQueueSize:  getEnvAsInt64("MAX_QUEUE_SIZE", 10000),

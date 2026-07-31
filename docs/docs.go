@@ -412,7 +412,7 @@ const docTemplate = `{
         },
         "/api/v1/login": {
             "post": {
-                "description": "Authenticates with admin credentials and returns the API key.",
+                "description": "Authenticates with operator credentials and starts a server-side session.",
                 "consumes": [
                     "application/json"
                 ],

@@ -3,13 +3,14 @@ package handler
 import (
 	"fmt"
 	"net/http"
-	"strings"
 )
 
-// ServeAdminDLQ renders the single-page HTML management console for the Dead Letter Queue.
+// ServeAdminDLQ renders the single-page HTML management console for the Dead
+// Letter Queue. The page contains no secrets; it authenticates against the
+// session API on load.
 func (h *JobHandler) ServeAdminDLQ(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, strings.ReplaceAll(adminHTML, "__API_KEY__", h.apiKey))
+	fmt.Fprint(w, adminHTML)
 }
 
 const adminHTML = `<!DOCTYPE html>
@@ -254,6 +255,10 @@ const adminHTML = `<!DOCTYPE html>
       </div>
       <div id="content">
 
+        <div id="ro-banner" style="display:none;background:rgba(245,158,11,.1);border:1px solid var(--warn);color:var(--warn);border-radius:10px;padding:10px 16px;font-size:13px;margin-bottom:16px;">
+          <i class="fas fa-eye"></i> Read-only session. Changes require an admin account.
+        </div>
+
         <!-- Page: Overview -->
         <div id="page-overview" class="page active">
           <div class="stats-grid">
@@ -328,21 +333,63 @@ const adminHTML = `<!DOCTYPE html>
 
   <script>
     const API_BASE='/api/v1';
-    const TOKEN_KEY='task_queue_api_key';
+    const IDLE_TIMEOUT=15*60*1000;
+    let SESSION={authenticated:false,username:'',role:'',csrf_token:''};
     let refreshTimer=null;
+    let idleTimer=null;
 
     function toast(msg){
       const t=document.getElementById('toast');t.textContent=msg;
       t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);
     }
-    function getToken(){return localStorage.getItem(TOKEN_KEY)||'';}
+    function esc(s){
+      return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    }
+    function isAdmin(){return SESSION.role==='admin';}
+    function confirmAction(message){return window.confirm(message);}
+
     async function api(path,options={}){
+      const method=options.method||'GET';
+      const headers=Object.assign({},options.headers||{},{'Content-Type':'application/json'});
+      if(method!=='GET'&&method!=='HEAD'&&SESSION.csrf_token){headers['X-CSRF-Token']=SESSION.csrf_token;}
       try{
-        const t=getToken();
-        const res=await fetch(path,{...options,headers:{...options.headers,'Content-Type':'application/json',...(t?{'X-API-Key':t}:{})}});
+        const res=await fetch(path,Object.assign({},options,{headers:headers,credentials:'same-origin'}));
         if(res.status===204)return null;
         return res.json();
       }catch(_){return null;}
+    }
+
+    async function loadSession(){
+      try{
+        const res=await fetch(API_BASE+'/session',{credentials:'same-origin'});
+        if(res.ok){SESSION=await res.json();}
+      }catch(_){SESSION={authenticated:false};}
+      if(!SESSION.authenticated){window.location.href='/login';return false;}
+      applyRoleGating();
+      startIdleTimer();
+      return true;
+    }
+    function applyRoleGating(){
+      const admin=isAdmin();
+      document.querySelectorAll('[data-admin]').forEach(function(el){el.style.display=admin?'':'none';});
+      const banner=document.getElementById('ro-banner');
+      if(banner){banner.style.display=admin?'none':'';}
+    }
+    function startIdleTimer(){
+      const reset=function(){
+        clearTimeout(idleTimer);
+        idleTimer=setTimeout(logout,IDLE_TIMEOUT);
+      };
+      ['click','keydown','mousemove','scroll','touchstart'].forEach(function(ev){
+        window.addEventListener(ev,reset,{passive:true});
+      });
+      reset();
+    }
+    async function logout(){
+      try{await fetch(API_BASE+'/logout',{method:'POST',credentials:'same-origin'});}catch(_){}
+      window.location.href='/login';
     }
 
     function toggleSidebar(){
@@ -351,14 +398,6 @@ const adminHTML = `<!DOCTYPE html>
     document.getElementById('sidebar').addEventListener('click',function(){
       if(window.innerWidth<=768)this.classList.remove('open');
     });
-
-    function logout(){
-      localStorage.removeItem(TOKEN_KEY);
-      window.location.href='/login';
-    }
-    if(!getToken()){
-      window.location.href='/login';
-    }
 
     function showPage(name){
       const titles={overview:'DLQ Overview',workers:'Workers',dlq:'DLQ Table'};
@@ -404,7 +443,7 @@ const adminHTML = `<!DOCTYPE html>
       }
       list.innerHTML=workers.map(function(w){
         return '<div class="worker-card"><div class="w-info"><i class="fas fa-circle" style="font-size:8px;color:var(--good);"></i>'+
-          '<div><div class="w-id">'+w.id+'</div><div class="w-time">'+(w.last_heartbeat?new Date(w.last_heartbeat).toLocaleString():'Just now')+'</div></div></div>'+
+          '<div><div class="w-id">'+esc(w.id)+'</div><div class="w-time">'+(w.last_heartbeat?new Date(w.last_heartbeat).toLocaleString():'Just now')+'</div></div></div>'+
           '<span class="pill green">Live</span></div>';
       }).join('');
     }
@@ -414,27 +453,38 @@ const adminHTML = `<!DOCTYPE html>
         tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;">No failed jobs found.</td></tr>';
         return;
       }
+      const isAdminSession=isAdmin();
       tbody.innerHTML=jobs.map(function(j){
-        return '<tr><td style="font-size:12px;font-family:monospace;color:var(--muted);">'+j.id.substring(0,12)+'...</td>'+
-          '<td><span class="pill blue">'+j.type+'</span></td>'+
-          '<td><span class="pill red">'+j.status+'</span></td>'+
-          '<td style="font-size:12px;color:var(--muted);">'+(j.tenant_id||'-')+'</td>'+
-          '<td style="font-size:12px;color:#f87171;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(j.last_error||j.result||'').substring(0,50)+'</td>'+
-          '<td style="font-size:12px;color:var(--muted);">'+(j.attempts||0)+'</td>'+
-          '<td style="white-space:nowrap;">'+
-          '<button class="btn-primary btn-sm" onclick="replayDLQ(\''+j.id+'\')" style="margin-right:4px;">Replay</button>'+
-          '<button class="btn-danger btn-sm" onclick="purgeDLQ(\''+j.id+'\')">Purge</button></td></tr>';
+        const actions=isAdminSession?
+          '<button class="btn-primary btn-sm" data-replay="'+esc(j.id)+'" style="margin-right:4px;">Replay</button>'+
+          '<button class="btn-danger btn-sm" data-purge="'+esc(j.id)+'">Purge</button>':
+          '<span style="color:var(--muted);font-size:11px;">read-only</span>';
+        return '<tr><td style="font-size:12px;font-family:monospace;color:var(--muted);">'+esc(j.id.substring(0,12))+'...</td>'+
+          '<td><span class="pill blue">'+esc(j.type)+'</span></td>'+
+          '<td><span class="pill red">'+esc(j.status)+'</span></td>'+
+          '<td style="font-size:12px;color:var(--muted);">'+esc(j.tenant_id||'-')+'</td>'+
+          '<td style="font-size:12px;color:#f87171;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(String(j.last_error||j.result||'').substring(0,50))+'</td>'+
+          '<td style="font-size:12px;color:var(--muted);">'+esc(j.attempts||0)+'</td>'+
+          '<td style="white-space:nowrap;">'+actions+'</td></tr>';
       }).join('');
     }
+    document.getElementById('dlq-table-body').addEventListener('click',function(e){
+      const replay=e.target.closest('[data-replay]');
+      if(replay){replayDLQ(replay.getAttribute('data-replay'));return;}
+      const purge=e.target.closest('[data-purge]');
+      if(purge){purgeDLQ(purge.getAttribute('data-purge'));}
+    });
 
-    window.replayDLQ=async function(id){
-      await api(API_BASE+'/dlq/'+id+'/replay',{method:'POST'});
+    async function replayDLQ(id){
+      if(!confirmAction('Replay job '+id+' from the dead letter queue?'))return;
+      await api(API_BASE+'/dlq/'+encodeURIComponent(id)+'/replay',{method:'POST'});
       loadDLQ();toast('Replayed job: '+id);
-    };
-    window.purgeDLQ=async function(id){
-      await api(API_BASE+'/dlq/'+id,{method:'DELETE'});
+    }
+    async function purgeDLQ(id){
+      if(!confirmAction('Permanently purge job '+id+'? This cannot be undone.'))return;
+      await api(API_BASE+'/dlq/'+encodeURIComponent(id),{method:'DELETE'});
       loadDLQ();toast('Purged job: '+id);
-    };
+    }
     async function exportDLQ(){
       const raw=document.getElementById('dlq-table-body').innerText;
       const queue=document.getElementById('filter-queue').value;
@@ -447,7 +497,7 @@ const adminHTML = `<!DOCTYPE html>
     async function loadDashboard(){
       await Promise.all([loadDLQ().catch(function(){}),loadWorkers().catch(function(){})]);
     }
-    if(getToken())loadDashboard();
+    loadSession().then(function(ok){if(ok)loadDashboard();});
 
     document.getElementById('toggle-refresh').addEventListener('click',()=>{
       const status=document.getElementById('refresh-status');

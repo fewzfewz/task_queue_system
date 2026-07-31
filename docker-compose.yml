@@ -32,6 +32,7 @@ services:
       - REDIS_PASSWORD=
       - REDIS_DB=0
       - API_KEY=secret-api-key
+      - WORKER_ADDR=worker:8081
       - STORE_BACKEND=redis
     depends_on:
       redis:

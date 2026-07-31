@@ -15,6 +15,7 @@ import (
 
 	"task-queue-system/internal/api/dto"
 	"task-queue-system/internal/api/middleware"
+	"task-queue-system/internal/api/session"
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/service"
@@ -25,25 +26,42 @@ import (
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
 type JobHandler struct {
-	service       *service.JobService
-	webhookStore  *webhooks.WebhookStore
-	sseBroker     *sse.Broker
-	logger        *slog.Logger
-	apiKey        string
-	adminUsername string
-	adminPassword string
+	service            *service.JobService
+	webhookStore       *webhooks.WebhookStore
+	sseBroker          *sse.Broker
+	logger             *slog.Logger
+	apiKey             string
+	adminUsername      string
+	adminPassword      string
+	readonlyUsername   string
+	readonlyPassword   string
+	sessions           *session.Store
+	loginLimiter       *session.LoginLimiter
+	workerAddr         string
+	sseCheckInterval   time.Duration
 }
 
-// New creates a JobHandler.
-func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string) *JobHandler {
+// New creates a JobHandler. The session store backs the operator UI login; the
+// worker address is used to proxy circuit-breaker access through the API.
+func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string, sessions *session.Store, workerAddr string, loginRateLimit int) *JobHandler {
 	return &JobHandler{
-		service:       svc,
-		sseBroker:     sse.NewBroker(logger.With("component", "sse")),
-		logger:        logger,
-		apiKey:        apiKey,
-		adminUsername: adminUsername,
-		adminPassword: adminPassword,
+		service:          svc,
+		sseBroker:        sse.NewBroker(logger.With("component", "sse")),
+		logger:           logger,
+		apiKey:           apiKey,
+		adminUsername:    adminUsername,
+		adminPassword:    adminPassword,
+		sessions:         sessions,
+		loginLimiter:     session.NewLoginLimiter(loginRateLimit, time.Minute),
+		workerAddr:       workerAddr,
+		sseCheckInterval: 15 * time.Second,
 	}
+}
+
+// SetReadonlyCredentials enables an optional viewer-only login account.
+func (h *JobHandler) SetReadonlyCredentials(username, password string) {
+	h.readonlyUsername = username
+	h.readonlyPassword = password
 }
 
 // SSEBroker returns the SSE broker for wiring into other components.
@@ -52,41 +70,6 @@ func (h *JobHandler) SSEBroker() *sse.Broker { return h.sseBroker }
 // SetWebhookStore attaches the persistent webhook store for CRUD endpoints.
 func (h *JobHandler) SetWebhookStore(ws *webhooks.WebhookStore) {
 	h.webhookStore = ws
-}
-
-// Login handles POST /api/v1/login.
-//
-// @Summary      Login
-// @Description  Authenticates with admin credentials and returns the API key.
-// @Tags         auth
-// @Accept       json
-// @Produce      json
-// @Param        body  body      object{username=string,password=string}  true  "Login credentials"
-// @Success      200   {object}  map[string]string
-// @Failure      401   {object}  dto.ErrorResponse
-// @Router       /api/v1/login [post]
-func (h *JobHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body")
-		return
-	}
-	defer r.Body.Close()
-
-	if req.Username == "" || req.Password == "" {
-		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "username and password required")
-		return
-	}
-
-	if req.Username != h.adminUsername || req.Password != h.adminPassword {
-		h.writeError(w, http.StatusUnauthorized, apperr.CodeUnauthorized, "invalid credentials")
-		return
-	}
-
-	h.writeJSON(w, http.StatusOK, map[string]string{"api_key": h.apiKey})
 }
 
 // CreateJob handles POST /jobs.
@@ -641,7 +624,7 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	ch := h.sseBroker.Subscribe()
 	defer h.sseBroker.Unsubscribe(ch)
@@ -650,10 +633,28 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, ": keepalive\n\n")
 	flusher.Flush()
 
+	// Session-based connections are re-validated periodically so the stream is
+	// torn down when the operator session expires or is revoked.
+	authType, _ := r.Context().Value(middleware.ContextKeyAuthType).(string)
+	sess := middleware.SessionFromContext(r.Context())
+
+	var tickerC <-chan time.Time
+	if authType == middleware.AuthTypeSession && sess != nil {
+		ticker := time.NewTicker(h.sseCheckInterval)
+		defer ticker.Stop()
+		tickerC = ticker.C
+	}
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-tickerC:
+			if _, ok := h.sessions.Get(sess.ID); !ok {
+				fmt.Fprintf(w, "event: session_expired\n\ndata: {\"error\":\"session expired\"}\n\n")
+				flusher.Flush()
+				return
+			}
 		case msg, ok := <-ch:
 			if !ok {
 				return

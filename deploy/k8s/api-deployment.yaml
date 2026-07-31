@@ -48,6 +48,8 @@ spec:
                 secretKeyRef:
                   name: task-queue-secrets
                   key: admin-password
+            - name: WORKER_ADDR
+              value: "task-queue-worker.task-queue.svc.cluster.local:8081"
             - name: POSTGRES_CONN_STR
               valueFrom:
                 secretKeyRef:

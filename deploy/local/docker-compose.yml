@@ -17,6 +17,9 @@ services:
       REDIS_PASSWORD: ""
       STORE_BACKEND: redis
       API_KEY: secret-api-key
+      WORKER_ADDR: worker:8081
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin123
     ports:
       - "8080:8080"
     depends_on:
