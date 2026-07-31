@@ -1,0 +1,83 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobs-per-tier:
+        description: 'Jobs enqueued per priority tier'
+        required: false
+        default: '5000'
+      concurrency:
+        description: 'Parallel enqueue clients'
+        required: false
+        default: '50'
+      tolerance:
+        description: 'Drift tolerance percent'
+        required: false
+        default: '20'
+      warn:
+        description: 'Non-blocking: report drift without failing the run'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Capture + drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Start bench stack
+        run: |
+          docker compose -p tq-bench -f docker-compose.yml \
+            -f deploy/test/docker-compose.bench.yml up -d --build --scale worker=3
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/readyz && exit 0
+            sleep 2
+          done
+          echo "API did not become ready" >&2
+          exit 1
+
+      - name: Capture baseline
+        env:
+          JOBS_PER_TIER: ${{ github.event.inputs.jobs-per-tier || '5000' }}
+          CONCURRENCY: ${{ github.event.inputs.concurrency || '50' }}
+        run: ./scripts/bench/capture.sh
+
+      - name: Compare against committed baseline
+        run: |
+          BASELINE=$(git ls-tree -r --name-only HEAD docs/benchmarks/ \
+            | grep -E 'baseline-.*\.json$' | sort | tail -1)
+          if [ -z "$BASELINE" ]; then
+            echo "No committed baseline; skipping drift check" >&2
+            exit 0
+          fi
+          git show "HEAD:$BASELINE" > /tmp/committed-baseline.json
+          ARGS="-t ${{ github.event.inputs.tolerance || '20' }}"
+          if [ "${{ github.event.inputs.warn || 'false' }}" = "true" ]; then
+            ARGS="$ARGS --warn"
+          fi
+          ./scripts/bench/compare.sh $ARGS \
+            docs/benchmarks/baseline-$(date +%Y-%m-%d).json /tmp/committed-baseline.json
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: |
+            docs/benchmarks/baseline-*.json
+            docs/benchmarks/baseline-*.md
+          retention-days: 14

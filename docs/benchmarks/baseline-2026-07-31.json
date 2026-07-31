@@ -1,0 +1,353 @@
+{
+  "tool": "scripts/bench/capture.sh",
+  "captured_at_utc": "2026-07-31T16:59:36Z",
+  "jobs_per_tier": 5000,
+  "concurrency": 50,
+  "environment": {
+    "host": {
+      "cpu_count": 8,
+      "memory_total_mb": 7789,
+      "kernel": "6.18.12+kali-amd64",
+      "docker_compose_version": "2.24.1"
+    },
+    "containers": [
+      {
+        "name": "task_queue_api",
+        "image": "tq-bench-api",
+        "status": "running",
+        "cpus_nano": 500000000,
+        "mem_bytes": 536870912,
+        "worker_pool_size": null
+      },
+      {
+        "name": "task_queue_redis",
+        "image": "redis:7-alpine",
+        "status": "running",
+        "cpus_nano": 0,
+        "mem_bytes": 0,
+        "worker_pool_size": null
+      },
+      {
+        "name": "task_queue_scheduler",
+        "image": "tq-bench-scheduler",
+        "status": "running",
+        "cpus_nano": 250000000,
+        "mem_bytes": 268435456,
+        "worker_pool_size": null
+      },
+      {
+        "name": "tq-bench-worker-1",
+        "image": "tq-bench-worker",
+        "status": "running",
+        "cpus_nano": 500000000,
+        "mem_bytes": 536870912,
+        "worker_pool_size": "50"
+      },
+      {
+        "name": "tq-bench-worker-2",
+        "image": "tq-bench-worker",
+        "status": "running",
+        "cpus_nano": 500000000,
+        "mem_bytes": 536870912,
+        "worker_pool_size": "50"
+      },
+      {
+        "name": "tq-bench-worker-3",
+        "image": "tq-bench-worker",
+        "status": "running",
+        "cpus_nano": 500000000,
+        "mem_bytes": 536870912,
+        "worker_pool_size": "50"
+      }
+    ]
+  },
+  "tiers": {
+    "high": {
+      "enqueue_ms": 45833,
+      "enqueued_total": 5000,
+      "enqueue_ok_201": 5000,
+      "enqueue_errors": 0,
+      "enqueue_error_rate": 0,
+      "enqueue_latency_ms": {
+        "p50": 282.0,
+        "p95": 526.1,
+        "p99": 639.0,
+        "mean": 295.8
+      },
+      "completed": 5000,
+      "failed": 0,
+      "cancelled": 0,
+      "unfinished": 0,
+      "completion_latency_ms": {
+        "p50": 37.7,
+        "p95": 130.0,
+        "p99": 342.2,
+        "mean": 48.2
+      },
+      "sustained_completed_per_sec": 109.2,
+      "dlq_growth": 0,
+      "container_stats": [
+        {
+          "container": "task_queue_api",
+          "samples": 10,
+          "cpu_avg_pct": 15.7,
+          "cpu_max_pct": 17.6,
+          "mem_used_max": "12.36MiB"
+        },
+        {
+          "container": "tq-bench-worker-1",
+          "samples": 10,
+          "cpu_avg_pct": 10.1,
+          "cpu_max_pct": 50.5,
+          "mem_used_max": "75.77MiB"
+        },
+        {
+          "container": "tq-bench-worker-2",
+          "samples": 10,
+          "cpu_avg_pct": 9.1,
+          "cpu_max_pct": 40.8,
+          "mem_used_max": "78.16MiB"
+        },
+        {
+          "container": "tq-bench-worker-3",
+          "samples": 10,
+          "cpu_avg_pct": 14.7,
+          "cpu_max_pct": 50.9,
+          "mem_used_max": "78.82MiB"
+        },
+        {
+          "container": "task_queue_redis",
+          "samples": 10,
+          "cpu_avg_pct": 7.5,
+          "cpu_max_pct": 9.7,
+          "mem_used_max": "84.59MiB"
+        },
+        {
+          "container": "task_queue_scheduler",
+          "samples": 10,
+          "cpu_avg_pct": 3.3,
+          "cpu_max_pct": 5.4,
+          "mem_used_max": "7.855MiB"
+        }
+      ]
+    },
+    "medium": {
+      "enqueue_ms": 41878,
+      "enqueued_total": 5000,
+      "enqueue_ok_201": 5000,
+      "enqueue_errors": 0,
+      "enqueue_error_rate": 0,
+      "enqueue_latency_ms": {
+        "p50": 270.0,
+        "p95": 472.0,
+        "p99": 576.0,
+        "mean": 278.7
+      },
+      "completed": 5000,
+      "failed": 0,
+      "cancelled": 0,
+      "unfinished": 0,
+      "completion_latency_ms": {
+        "p50": 62.3,
+        "p95": 135.1,
+        "p99": 201.0,
+        "mean": 69.6
+      },
+      "sustained_completed_per_sec": 120.2,
+      "dlq_growth": 0,
+      "container_stats": [
+        {
+          "container": "task_queue_api",
+          "samples": 9,
+          "cpu_avg_pct": 15.7,
+          "cpu_max_pct": 23.0,
+          "mem_used_max": "9.988MiB"
+        },
+        {
+          "container": "tq-bench-worker-1",
+          "samples": 9,
+          "cpu_avg_pct": 9.0,
+          "cpu_max_pct": 48.9,
+          "mem_used_max": "87.52MiB"
+        },
+        {
+          "container": "tq-bench-worker-2",
+          "samples": 9,
+          "cpu_avg_pct": 6.7,
+          "cpu_max_pct": 9.1,
+          "mem_used_max": "75MiB"
+        },
+        {
+          "container": "tq-bench-worker-3",
+          "samples": 9,
+          "cpu_avg_pct": 11.4,
+          "cpu_max_pct": 51.3,
+          "mem_used_max": "81.83MiB"
+        },
+        {
+          "container": "task_queue_redis",
+          "samples": 9,
+          "cpu_avg_pct": 9.1,
+          "cpu_max_pct": 9.2,
+          "mem_used_max": "86.15MiB"
+        },
+        {
+          "container": "task_queue_scheduler",
+          "samples": 9,
+          "cpu_avg_pct": 13.2,
+          "cpu_max_pct": 5.0,
+          "mem_used_max": "8.73MiB"
+        }
+      ]
+    },
+    "low": {
+      "enqueue_ms": 43788,
+      "enqueued_total": 5000,
+      "enqueue_ok_201": 5000,
+      "enqueue_errors": 0,
+      "enqueue_error_rate": 0,
+      "enqueue_latency_ms": {
+        "p50": 289.0,
+        "p95": 505.1,
+        "p99": 619.0,
+        "mean": 299.3
+      },
+      "completed": 5000,
+      "failed": 0,
+      "cancelled": 0,
+      "unfinished": 0,
+      "completion_latency_ms": {
+        "p50": 68.3,
+        "p95": 147.5,
+        "p99": 176.4,
+        "mean": 74.3
+      },
+      "sustained_completed_per_sec": 115.5,
+      "dlq_growth": 0,
+      "container_stats": [
+        {
+          "container": "task_queue_api",
+          "samples": 9,
+          "cpu_avg_pct": 15.1,
+          "cpu_max_pct": 17.3,
+          "mem_used_max": "9.992MiB"
+        },
+        {
+          "container": "tq-bench-worker-1",
+          "samples": 9,
+          "cpu_avg_pct": 17.1,
+          "cpu_max_pct": 51.2,
+          "mem_used_max": "95.57MiB"
+        },
+        {
+          "container": "tq-bench-worker-2",
+          "samples": 9,
+          "cpu_avg_pct": 22.1,
+          "cpu_max_pct": 52.0,
+          "mem_used_max": "93.38MiB"
+        },
+        {
+          "container": "tq-bench-worker-3",
+          "samples": 9,
+          "cpu_avg_pct": 14.2,
+          "cpu_max_pct": 48.3,
+          "mem_used_max": "89.51MiB"
+        },
+        {
+          "container": "task_queue_redis",
+          "samples": 9,
+          "cpu_avg_pct": 16.6,
+          "cpu_max_pct": 9.2,
+          "mem_used_max": "99MiB"
+        },
+        {
+          "container": "task_queue_scheduler",
+          "samples": 9,
+          "cpu_avg_pct": 10.0,
+          "cpu_max_pct": 4.0,
+          "mem_used_max": "8.793MiB"
+        }
+      ]
+    },
+    "mixed": {
+      "enqueue_ms": 42265,
+      "enqueued_total": 5000,
+      "enqueue_ok_201": 5000,
+      "enqueue_errors": 0,
+      "enqueue_error_rate": 0,
+      "enqueue_latency_ms": {
+        "p50": 286.0,
+        "p95": 474.0,
+        "p99": 560.0,
+        "mean": 290.9
+      },
+      "completed": 5000,
+      "failed": 0,
+      "cancelled": 0,
+      "unfinished": 0,
+      "completion_latency_ms": {
+        "p50": 63.1,
+        "p95": 162.2,
+        "p99": 218.4,
+        "mean": 78.6
+      },
+      "sustained_completed_per_sec": 119.7,
+      "dlq_growth": 0,
+      "container_stats": [
+        {
+          "container": "task_queue_api",
+          "samples": 9,
+          "cpu_avg_pct": 15.6,
+          "cpu_max_pct": 19.4,
+          "mem_used_max": "9.996MiB"
+        },
+        {
+          "container": "tq-bench-worker-1",
+          "samples": 9,
+          "cpu_avg_pct": 11.4,
+          "cpu_max_pct": 50.4,
+          "mem_used_max": "99.81MiB"
+        },
+        {
+          "container": "tq-bench-worker-2",
+          "samples": 9,
+          "cpu_avg_pct": 12.7,
+          "cpu_max_pct": 7.1,
+          "mem_used_max": "104.3MiB"
+        },
+        {
+          "container": "tq-bench-worker-3",
+          "samples": 9,
+          "cpu_avg_pct": 15.5,
+          "cpu_max_pct": 51.1,
+          "mem_used_max": "99.02MiB"
+        },
+        {
+          "container": "task_queue_redis",
+          "samples": 9,
+          "cpu_avg_pct": 6.4,
+          "cpu_max_pct": 6.2,
+          "mem_used_max": "70.57MiB"
+        },
+        {
+          "container": "task_queue_scheduler",
+          "samples": 9,
+          "cpu_avg_pct": 3.6,
+          "cpu_max_pct": 5.2,
+          "mem_used_max": "8MiB"
+        }
+      ]
+    }
+  },
+  "cross_check": {
+    "tool": "scripts/load_test.sh",
+    "jobs": 1000,
+    "concurrency": 50,
+    "throughput_jobs_per_sec": 186.83
+  },
+  "redis": {
+    "version": "7.4.10",
+    "maxmemory_bytes": "0",
+    "maxmemory_policy": "noeviction"
+  }
+}

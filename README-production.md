@@ -384,6 +384,67 @@ Notes:
   execution errors (config, unreachable targets, docker failures). Use the
   report `verdict` to drive CI gates.
 
+## Benchmarks
+
+Committed baselines for the load-testing tooling live in
+[`docs/benchmarks/`](docs/benchmarks/) and are captured by
+[`scripts/bench/capture.sh`](scripts/bench/capture.sh) against a pinned
+reference environment (`deploy/test/docker-compose.bench.yml`). Drift between a
+new capture and the committed baseline is checked by
+[`scripts/bench/compare.sh`](scripts/bench/compare.sh), and can be run on demand
+from GitHub Actions via the `Benchmarks` workflow (manual dispatch only).
+
+### Reference environment
+
+The benchmark pins CPU/memory limits on the API and scheduler (and inherits the
+worker limits from the base compose file) so numbers are reproducible:
+
+```
+docker-compose -p tq-bench -f docker-compose.yml \
+  -f deploy/test/docker-compose.bench.yml up -d --build --scale worker=3
+```
+
+The stack uses the canonical ports (8080/6379), so stop any other stack
+(including the dev `local` project) first. Container names are fixed
+(`task_queue_api`, `task_queue_redis`, `task_queue_scheduler`,
+`tq-bench-worker-1..3`), so only one stack can run at a time.
+
+### Capturing a baseline
+
+```
+./scripts/bench/capture.sh
+```
+
+This enqueues `JOBS_PER_TIER` (default 5000) email jobs per priority tier
+(high/medium/low/mixed) at `CONCURRENCY` (default 50), records enqueue latency
+p50/p95/p99, end-to-end completion latency, sustained jobs/sec, error rate, DLQ
+growth, and per-container CPU/mem, then writes
+`docs/benchmarks/baseline-<date>.json` and `.md`. It cross-checks the enqueue
+path with `scripts/load_test.sh` (1000 jobs @50).
+
+Completion latency is measured as time-in-system: reconstructed from the Redis
+`metrics:total` (arrival) and `metrics:completed` (completion) counter curves
+sampled at ~50ms, assuming FIFO completion per priority queue. For jobs faster
+than ~100ms the sub-sample values are approximate; the systematic polling skew
+of black-box per-job polling is avoided entirely. See the "Methodology" section
+of each generated report.
+
+### Drift detection
+
+```
+./scripts/bench/compare.sh docs/benchmarks/baseline-2026-07-31.json   # vs newest committed baseline
+./scripts/bench/compare.sh new.json docs/benchmarks/baseline-OLD.json # explicit baseline
+./scripts/bench/compare.sh -t 10 --warn -v new.json baseline.json     # 10%, non-blocking, verbose
+```
+
+Because `capture.sh` reuses the same-date filename, compare the just-captured
+report against the *committed* baseline explicitly (e.g.
+`git show HEAD:docs/benchmarks/<baseline>.json > /tmp/base.json`) rather than
+relying on the "newest file" default on the same day. Drift beyond `±20%` on
+any latency percentile, sustained throughput, error rate, DLQ growth, or
+unfinished count exits `1`; `--warn` reports without failing. The CI workflow
+does this automatically against `HEAD`.
+
 ## Deploy Order
 
 1. Create namespace.

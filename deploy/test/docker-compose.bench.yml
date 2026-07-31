@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Override used by scripts/bench/capture.sh to define the reproducible
+# reference environment for performance baselines. Worker resource limits come
+# from the base docker-compose.yml; this adds limits for the API and scheduler.
+#
+# The bench stack is the canonical docker-compose.yml project (ports 8080/6379,
+# so any other stack on this host must be stopped first):
+#   docker-compose -p tq-bench -f docker-compose.yml \
+#     -f deploy/test/docker-compose.bench.yml up -d --build --scale worker=3
+
+services:
+  api:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+
+  scheduler:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
