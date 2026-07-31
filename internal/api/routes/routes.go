@@ -33,6 +33,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 
 	mux.HandleFunc("GET /", h.ServeAppUI)
 	mux.HandleFunc("GET /ui", h.ServeAppUI)
+	mux.HandleFunc("GET /login", h.ServeLoginPage)
 
 	mux.Handle("POST /jobs", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJob)))
 	mux.Handle("POST /jobs/batch", middleware.AuthRequired(cfg)(http.HandlerFunc(h.CreateJobBatch)))

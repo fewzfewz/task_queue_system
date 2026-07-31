@@ -12,318 +12,460 @@ func (h *JobHandler) ServeAdminDLQ(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, strings.ReplaceAll(adminHTML, "__API_KEY__", h.apiKey))
 }
 
-const adminHTML = `
-<!DOCTYPE html>
-<html lang="en" class="h-full bg-gray-900">
+const adminHTML = `<!DOCTYPE html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TaskQueue | DLQ Control</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-        .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .modal-bg { background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(4px); }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaskQueue | DLQ Console</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    :root {
+      --bg:#0a0f1e; --bg2:#111827; --surface:#1a2236; --surface2:#1f2a40;
+      --border:#2a3555; --text:#e2e8f0; --muted:#94a3b8; --muted2:#64748b;
+      --accent:#6366f1; --accent2:#818cf8; --good:#22c55e; --bad:#ef4444; --warn:#f59e0b;
+      --sidebar-w:250px; --header-h:64px;
+    }
+    body {
+      font-family:'Inter',-apple-system,sans-serif; background:var(--bg); color:var(--text);
+      min-height:100vh; overflow-x:hidden;
+    }
+    ::-webkit-scrollbar { width:6px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+    @keyframes fadeIn { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
+
+    .layout { display:flex; min-height:100vh; }
+    #sidebar {
+      width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
+      position:fixed; top:0; left:0; height:100vh; z-index:100;
+      display:flex; flex-direction:column; transition:transform .3s ease;
+    }
+    #sidebar.closed { transform:translateX(-100%); }
+    .sidebar-brand {
+      padding:20px 20px 16px; border-bottom:1px solid var(--border);
+      display:flex; align-items:center; gap:12px;
+    }
+    .sidebar-brand .brand-icon {
+      width:40px; height:40px; background:linear-gradient(135deg,#ef4444,#f87171);
+      border-radius:12px; display:flex; align-items:center; justify-content:center;
+      box-shadow:0 4px 12px rgba(239,68,68,.3);
+    }
+    .sidebar-brand .brand-icon i { color:#fff; font-size:18px; }
+    .sidebar-brand h2 { font-size:16px; font-weight:700; }
+    .sidebar-brand span { font-size:11px; color:#f87171; font-weight:500; }
+    .sidebar-nav { flex:1; overflow-y:auto; padding:12px 10px; }
+    .nav-item {
+      display:flex; align-items:center; gap:12px; padding:10px 14px;
+      border-radius:10px; cursor:pointer; transition:all .15s;
+      font-size:13px; font-weight:500; color:var(--muted);
+      margin-bottom:2px;
+    }
+    .nav-item i { width:18px; text-align:center; font-size:14px; }
+    .nav-item:hover { background:var(--surface2); color:var(--text); }
+    .nav-item.active { background:rgba(239,68,68,.12); color:#f87171; }
+    .sidebar-footer {
+      padding:14px 16px; border-top:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .sidebar-footer .user { font-size:12px; color:var(--muted); }
+    .sidebar-footer button {
+      background:none; border:1px solid var(--border); border-radius:8px;
+      padding:6px 12px; color:var(--muted); font-size:12px; cursor:pointer;
+      transition:all .15s;
+    }
+    .sidebar-footer button:hover { border-color:var(--bad); color:var(--bad); }
+
+    #main {
+      margin-left:var(--sidebar-w); flex:1; transition:margin-left .3s ease;
+      min-height:100vh;
+    }
+    #main.expanded { margin-left:0; }
+    #topbar {
+      height:var(--header-h); background:var(--surface); border-bottom:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between;
+      padding:0 24px; position:sticky; top:0; z-index:50;
+      backdrop-filter:blur(12px); background:rgba(26,34,54,.85);
+    }
+    #topbar .left { display:flex; align-items:center; gap:16px; }
+    #topbar .left button {
+      background:none; border:none; color:var(--muted); font-size:18px;
+      cursor:pointer; padding:6px; border-radius:8px; display:none;
+    }
+    #topbar .left button:hover { background:var(--surface2); }
+    #topbar .title-section h3 { font-size:16px; font-weight:600; }
+    #topbar .title-section p { font-size:12px; color:var(--muted); }
+    #topbar .right { display:flex; align-items:center; gap:12px; }
+    #topbar .right button {
+      background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+      padding:8px 14px; color:var(--text); font-size:12px; font-weight:500;
+      cursor:pointer; transition:all .15s;
+    }
+    #topbar .right button:hover { background:var(--border); }
+    .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+    .status-dot.green { background:var(--good); box-shadow:0 0 8px rgba(34,197,94,.4); }
+    .status-dot.red { background:var(--bad); box-shadow:0 0 8px rgba(239,68,68,.4); }
+    .status-dot.yellow { background:var(--warn); box-shadow:0 0 8px rgba(245,158,11,.4); }
+
+    #content { padding:24px; max-width:1360px; margin:0 auto; }
+    .page { display:none; }
+    .page.active { display:block; animation:fadeIn .25s ease; }
+
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:24px; }
+    .stat-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:16px;
+      padding:18px 20px; transition:border-color .2s;
+    }
+    .stat-card:hover { border-color:#ef4444; }
+    .stat-card .stat-label { font-size:11px; color:var(--muted2); text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+    .stat-card .stat-value { font-size:28px; font-weight:700; margin-top:6px; }
+    .stat-card .stat-desc { font-size:12px; color:var(--muted); margin-top:2px; }
+
+    .section-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:16px;
+      padding:20px; margin-bottom:16px;
+    }
+    .section-card .section-title {
+      font-size:13px; font-weight:600; color:var(--muted2); text-transform:uppercase;
+      letter-spacing:.08em; margin-bottom:14px;
+    }
+
+    input, select, textarea, .input {
+      width:100%; background:var(--bg2); border:1px solid var(--border);
+      border-radius:10px; padding:11px 14px; color:var(--text); font-size:13px;
+      outline:none; transition:border-color .2s;
+    }
+    input:focus { border-color:#ef4444; }
+    .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+    button, .btn {
+      padding:10px 18px; border-radius:10px; font-size:13px; font-weight:600;
+      cursor:pointer; transition:all .15s; border:none;
+    }
+    .btn-primary { background:linear-gradient(135deg,#dc2626,#ef4444); color:#fff; }
+    .btn-primary:hover { opacity:.9; }
+    .btn-secondary { background:var(--surface2); border:1px solid var(--border); color:var(--text); }
+    .btn-secondary:hover { background:var(--border); }
+    .btn-danger { background:linear-gradient(135deg,#dc2626,#ef4444); color:#fff; }
+    .btn-sm { padding:6px 12px; font-size:11px; border-radius:8px; }
+
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--border); }
+    th { color:var(--muted2); font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+    tr:hover td { background:rgba(255,255,255,.02); }
+    .pill { display:inline-block; padding:3px 10px; border-radius:999px;
+      font-size:11px; font-weight:500; }
+    .pill.red { background:rgba(239,68,68,.12); color:#f87171; }
+    .pill.green { background:rgba(34,197,94,.12); color:#4ade80; }
+    .pill.blue { background:rgba(99,102,241,.12); color:#818cf8; }
+    .pill.gray { background:rgba(148,163,184,.12); color:#94a3b8; }
+
+    .worker-card {
+      background:var(--bg2); border:1px solid var(--border); border-radius:12px;
+      padding:14px; display:flex; align-items:center; justify-content:space-between;
+      transition:border-color .2s;
+    }
+    .worker-card:hover { border-color:#ef4444; }
+    .worker-card .w-info { display:flex; align-items:center; gap:10px; }
+    .worker-card .w-info .w-id { font-size:13px; font-weight:500; }
+    .worker-card .w-info .w-time { font-size:11px; color:var(--muted); }
+
+    #toast {
+      position:fixed; bottom:24px; right:24px;
+      background:var(--surface2); border:1px solid var(--border);
+      border-radius:12px; padding:14px 20px; font-size:13px;
+      opacity:0; transform:translateY(10px); transition:all .3s ease;
+      pointer-events:none; z-index:999; max-width:360px;
+      box-shadow:0 12px 40px rgba(0,0,0,.4);
+    }
+    #toast.show { opacity:1; transform:translateY(0); }
+
+    @media(max-width:768px) {
+      #sidebar { transform:translateX(-100%); }
+      #sidebar.open { transform:translateX(0); box-shadow:0 0 40px rgba(0,0,0,.5); }
+      #main { margin-left:0; }
+      #topbar .left button { display:block; }
+      .grid-3, .grid-2 { grid-template-columns:1fr; }
+      .stats-grid { grid-template-columns:repeat(2,1fr); }
+      #content { padding:16px; }
+      #sidebar { width:280px; }
+    }
+    @media(min-width:769px) {
+      #sidebar { transform:translateX(0) !important; }
+    }
+    @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+    .slide-up { animation:slideUp .3s ease; }
+  </style>
 </head>
-<body class="h-full text-gray-100 antialiased overflow-hidden flex flex-col">
+<body>
+  <div id="toast"></div>
 
-    <!-- Login overlay -->
-    <div id="login-overlay" class="fixed inset-0 modal-bg flex items-center justify-center z-50">
-        <div class="glass rounded-2xl p-8 w-96 max-w-[90vw]">
-            <h2 class="text-2xl font-bold mb-1">TaskQueue</h2>
-            <p class="text-sm text-gray-400 mb-6">Sign in to manage the dead letter queue</p>
-            <div class="space-y-4">
-                <input id="login-user" type="text" placeholder="Username" value="admin" class="w-full bg-gray-800 border border-white/10 rounded-lg px-4 py-3 text-sm focus:ring-indigo-500 focus:border-indigo-500" />
-                <input id="login-pass" type="password" placeholder="Password" value="admin123" class="w-full bg-gray-800 border border-white/10 rounded-lg px-4 py-3 text-sm focus:ring-indigo-500 focus:border-indigo-500" />
-                <button onclick="login()" class="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-semibold transition-colors">Sign in</button>
-                <p id="login-error" class="text-red-400 text-sm hidden">Invalid credentials</p>
-            </div>
+  <!-- Dashboard -->
+  <div id="app">
+  <div class="layout">
+
+    <!-- Sidebar -->
+    <nav id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon"><i class="fas fa-trash-alt"></i></div>
+        <div><h2>TaskQueue</h2><span>DLQ Console</span></div>
+      </div>
+      <div class="sidebar-nav">
+        <a class="nav-item active" data-page="overview" onclick="showPage('overview')">
+          <i class="fas fa-chart-pie"></i> Overview
+        </a>
+        <a class="nav-item" data-page="workers" onclick="showPage('workers');loadWorkers()">
+          <i class="fas fa-server"></i> Workers
+        </a>
+        <a class="nav-item" data-page="dlq" onclick="showPage('dlq');loadDLQ()">
+          <i class="fas fa-list"></i> DLQ Table
+        </a>
+      </div>
+      <div class="sidebar-footer">
+        <span class="user"><i class="fas fa-user-circle"></i> Admin</span>
+        <button onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
+      </div>
+    </nav>
+
+    <!-- Main -->
+    <div id="main">
+      <div id="topbar">
+        <div class="left">
+          <button onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
+          <div class="title-section">
+            <h3 id="page-title">DLQ Overview</h3>
+            <p id="page-desc">Dead letter queue management console</p>
+          </div>
         </div>
+        <div class="right">
+          <span id="refresh-status" style="font-size:12px;color:var(--muted);">
+            <span class="status-dot yellow"></span> Auto-refresh Off
+          </span>
+          <button id="toggle-refresh" class="btn-secondary btn-sm">
+            <i class="fas fa-sync"></i> Toggle Refresh
+          </button>
+          <button class="btn-secondary btn-sm" onclick="logout()"><i class="fas fa-sign-out-alt"></i></button>
+        </div>
+      </div>
+      <div id="content">
+
+        <!-- Page: Overview -->
+        <div id="page-overview" class="page active">
+          <div class="stats-grid">
+            <div class="stat-card"><div class="stat-label">Failed Jobs</div><div id="stat-failed" class="stat-value">0</div><div class="stat-desc">Current DLQ depth</div></div>
+            <div class="stat-card"><div class="stat-label">Queues</div><div id="stat-queues" class="stat-value">0</div><div class="stat-desc">Distinct job types</div></div>
+            <div class="stat-card"><div class="stat-label">Tenants</div><div id="stat-tenants" class="stat-value">0</div><div class="stat-desc">Affected tenants</div></div>
+            <div class="stat-card"><div class="stat-label">Workers</div><div id="stat-workers" class="stat-value">0</div><div class="stat-desc">Active heartbeats</div></div>
+          </div>
+          <div class="section-card slide-up">
+            <div class="section-title"><i class="fas fa-tools"></i> Quick Actions</div>
+            <div class="toolbar">
+              <button class="btn-primary btn-sm" onclick="loadDLQ()"><i class="fas fa-sync"></i> Refresh DLQ</button>
+              <button class="btn-secondary btn-sm" onclick="exportDLQ()"><i class="fas fa-download"></i> Export</button>
+              <button class="btn-secondary btn-sm" onclick="showPage('workers');loadWorkers()"><i class="fas fa-server"></i> Workers</button>
+              <button class="btn-secondary btn-sm" onclick="showPage('dlq');loadDLQ()"><i class="fas fa-list"></i> DLQ Table</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Page: Workers -->
+        <div id="page-workers" class="page">
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-server"></i> Active Workers</div>
+            <div id="workers-list" class="grid-2" style="margin-top:10px;">
+              <div class="worker-card"><div class="w-info"><i class="fas fa-circle" style="font-size:6px;color:var(--muted);"></i><span style="color:var(--muted);">No active workers</span></div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Page: DLQ Table -->
+        <div id="page-dlq" class="page">
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-filter"></i> Filters</div>
+            <div class="grid-3" style="margin-bottom:12px;">
+              <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Queue</label><input id="filter-queue" value="email" placeholder="Filter by queue..." /></div>
+              <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Tenant</label><input id="filter-tenant" value="tenant-a" placeholder="Filter by tenant..." /></div>
+              <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Search</label><input id="search-dlq" placeholder="Search in results..." /></div>
+            </div>
+            <div class="toolbar">
+              <button class="btn-primary btn-sm" onclick="loadDLQ()"><i class="fas fa-sync"></i> Refresh</button>
+              <button class="btn-secondary btn-sm" onclick="exportDLQ()"><i class="fas fa-download"></i> Export</button>
+            </div>
+          </div>
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-list"></i> Failed Jobs</div>
+            <div id="loading" style="display:none;padding:20px;text-align:center;color:var(--muted);">Loading...</div>
+            <div style="overflow-x:auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Tenant</th>
+                    <th>Error</th>
+                    <th>Attempts</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="dlq-table-body">
+                  <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;">No failed jobs found. Load the DLQ to see results.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div>
     </div>
+  </div>
+  </div>
 
-    <!-- Dashboard -->
-    <div id="app" class="flex flex-col h-full" style="display:none;">
+  <script>
+    const API_BASE='/api/v1';
+    const TOKEN_KEY='task_queue_api_key';
+    let refreshTimer=null;
 
-    <!-- Header -->
-    <header class="glass sticky top-0 z-50 px-6 py-4 flex items-center justify-between shadow-2xl">
-        <div class="flex items-center space-x-3">
-            <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-            </div>
-            <div>
-                <h1 class="text-xl font-bold tracking-tight">TaskQueue <span class="text-indigo-400">DLQ</span></h1>
-                <p class="text-xs text-gray-400 font-medium uppercase tracking-widest">Management Console</p>
-            </div>
-        </div>
-        <div class="flex items-center space-x-4">
-            <div class="flex items-center space-x-2 bg-gray-800/50 rounded-full px-4 py-1.5 border border-white/5">
-                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                <span id="refresh-status" class="text-xs font-semibold text-gray-300">Auto-refresh Off</span>
-                <button id="toggle-refresh" class="ml-2 p-1 hover:bg-gray-700 rounded transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                </button>
-            </div>
-            <button onclick="logout()" class="p-2 hover:bg-red-500/10 hover:text-red-400 text-gray-400 rounded-full transition-all">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-            </button>
-        </div>
-    </header>
+    function toast(msg){
+      const t=document.getElementById('toast');t.textContent=msg;
+      t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);
+    }
+    function getToken(){return localStorage.getItem(TOKEN_KEY)||'';}
+    async function api(path,options={}){
+      try{
+        const t=getToken();
+        const res=await fetch(path,{...options,headers:{...options.headers,'Content-Type':'application/json',...(t?{'X-API-Key':t}:{})}});
+        if(res.status===204)return null;
+        return res.json();
+      }catch(_){return null;}
+    }
 
-    <main class="flex-1 overflow-auto p-6 space-y-6">
-        <!-- Overview -->
-        <section class="grid gap-4 md:grid-cols-4">
-            <div class="glass rounded-xl p-4">
-                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Failed jobs</p>
-                <div id="stat-failed" class="mt-2 text-3xl font-bold text-white">0</div>
-                <p class="text-sm text-gray-400 mt-1">Current DLQ depth</p>
-            </div>
-            <div class="glass rounded-xl p-4">
-                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Queues</p>
-                <div id="stat-queues" class="mt-2 text-3xl font-bold text-white">0</div>
-                <p class="text-sm text-gray-400 mt-1">Distinct failed job types</p>
-            </div>
-            <div class="glass rounded-xl p-4">
-                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Tenants</p>
-                <div id="stat-tenants" class="mt-2 text-3xl font-bold text-white">0</div>
-                <p class="text-sm text-gray-400 mt-1">Tenants represented in DLQ</p>
-            </div>
-            <div class="glass rounded-xl p-4">
-                <p class="text-xs uppercase tracking-widest text-gray-500 font-bold">Workers</p>
-                <div id="stat-workers" class="mt-2 text-3xl font-bold text-white">0</div>
-                <p class="text-sm text-gray-400 mt-1">Active worker heartbeats</p>
-            </div>
-        </section>
+    function toggleSidebar(){
+      document.getElementById('sidebar').classList.toggle('open');
+    }
+    document.getElementById('sidebar').addEventListener('click',function(){
+      if(window.innerWidth<=768)this.classList.remove('open');
+    });
 
-        <!-- Toolbar -->
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass p-4 rounded-xl">
-            <div class="flex flex-col lg:flex-row lg:items-center gap-3">
-                <div class="relative group">
-                    <input type="text" id="filter-queue" placeholder="Filter by queue..." value="email"
-                        class="bg-gray-800 border-white/5 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-56 pl-10 pr-3 py-2 placeholder-gray-500 transition-all">
-                    <svg class="w-4 h-4 text-gray-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                </div>
-                <div class="relative group">
-                    <input type="text" id="filter-tenant" placeholder="Filter by tenant..." value="tenant-a"
-                        class="bg-gray-800 border-white/5 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-56 pl-10 pr-3 py-2 placeholder-gray-500 transition-all">
-                    <svg class="w-4 h-4 text-gray-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-5-3.87M12 20H7v-2a4 4 0 015-3.87m0 0A4 4 0 1012 4a4 4 0 000 8.13z"></path></svg>
-                </div>
-            </div>
-            <div class="flex items-center gap-3">
-                <input type="text" id="search-dlq" placeholder="Search in results..."
-                    class="bg-gray-800 border-white/5 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-48 px-3 py-2 placeholder-gray-500">
-                <button onclick="loadDLQ()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-semibold transition-colors">Refresh</button>
-            </div>
-        </div>
+    function logout(){
+      localStorage.removeItem(TOKEN_KEY);
+      window.location.href='/login';
+    }
+    if(!getToken()){
+      window.location.href='/login';
+    }
 
-        <!-- Workers -->
-        <div class="glass rounded-xl p-4">
-            <h2 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-4">Active Workers</h2>
-            <div id="workers-list" class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                <div class="text-sm text-gray-500 italic">No active workers reported</div>
-            </div>
-        </div>
+    function showPage(name){
+      const titles={overview:'DLQ Overview',workers:'Workers',dlq:'DLQ Table'};
+      const descs={overview:'Dead letter queue management console',workers:'Active worker instances',dlq:'Failed jobs detail table'};
+      document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+      const p=document.getElementById('page-'+name);if(p)p.classList.add('active');
+      const nav=document.querySelector('.nav-item[data-page="'+name+'"]');if(nav)nav.classList.add('active');
+      document.getElementById('page-title').textContent=titles[name]||name;
+      document.getElementById('page-desc').textContent=descs[name]||'';
+    }
 
-        <!-- DLQ Table -->
-        <div class="glass rounded-xl overflow-hidden">
-            <div id="loading" class="hidden p-8 text-center text-gray-400 text-sm">Loading failed jobs...</div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-white/5 text-gray-400 uppercase tracking-wider text-[10px]">
-                            <th class="text-left p-4 font-semibold">ID</th>
-                            <th class="text-left p-4 font-semibold">Type</th>
-                            <th class="text-left p-4 font-semibold">Status</th>
-                            <th class="text-left p-4 font-semibold">Tenant</th>
-                            <th class="text-left p-4 font-semibold">Error</th>
-                            <th class="text-left p-4 font-semibold">Attempts</th>
-                            <th class="text-left p-4 font-semibold">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="dlq-table-body">
-                        <tr><td colspan="7" class="p-8 text-center text-gray-500">No failed jobs found. Load the DLQ to see results.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </main>
-    </div>
+    async function loadDLQ(){
+      const loading=document.getElementById('loading');loading.style.display='block';
+      try{
+        const queue=document.getElementById('filter-queue').value;
+        const tenant=document.getElementById('filter-tenant').value;
+        const data=await api(API_BASE+'/dlq?queue='+encodeURIComponent(queue));
+        const filtered=(data||[]).filter(j=>!tenant||(j.tenant_id||'').includes(tenant));
+        renderSummary(filtered);
+        renderTable(filtered);
+      }catch(e){console.error(e);}finally{loading.style.display='none';}
+    }
+    async function loadWorkers(){
+      try{
+        const workers=await api('/workers');
+        renderWorkers(workers||[]);
+      }catch(e){console.error(e);}
+    }
+    function renderSummary(jobs){
+      const tenants=new Set(),queues=new Set();
+      (jobs||[]).forEach(j=>{if(j.tenant_id)tenants.add(j.tenant_id);if(j.type)queues.add(j.type);});
+      document.getElementById('stat-failed').innerText=String((jobs||[]).length);
+      document.getElementById('stat-queues').innerText=String(queues.size);
+      document.getElementById('stat-tenants').innerText=String(tenants.size);
+    }
+    function renderWorkers(workers){
+      document.getElementById('stat-workers').innerText=String((workers||[]).length);
+      const list=document.getElementById('workers-list');
+      if(!workers||workers.length===0){
+        list.innerHTML='<div class="worker-card"><div class="w-info"><i class="fas fa-circle" style="font-size:6px;color:var(--muted);"></i><span style="color:var(--muted);">No active workers</span></div></div>';
+        return;
+      }
+      list.innerHTML=workers.map(function(w){
+        return '<div class="worker-card"><div class="w-info"><i class="fas fa-circle" style="font-size:8px;color:var(--good);"></i>'+
+          '<div><div class="w-id">'+w.id+'</div><div class="w-time">'+(w.last_heartbeat?new Date(w.last_heartbeat).toLocaleString():'Just now')+'</div></div></div>'+
+          '<span class="pill green">Live</span></div>';
+      }).join('');
+    }
+    function renderTable(jobs){
+      const tbody=document.getElementById('dlq-table-body');
+      if(!jobs||jobs.length===0){
+        tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px;">No failed jobs found.</td></tr>';
+        return;
+      }
+      tbody.innerHTML=jobs.map(function(j){
+        return '<tr><td style="font-size:12px;font-family:monospace;color:var(--muted);">'+j.id.substring(0,12)+'...</td>'+
+          '<td><span class="pill blue">'+j.type+'</span></td>'+
+          '<td><span class="pill red">'+j.status+'</span></td>'+
+          '<td style="font-size:12px;color:var(--muted);">'+(j.tenant_id||'-')+'</td>'+
+          '<td style="font-size:12px;color:#f87171;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+(j.last_error||j.result||'').substring(0,50)+'</td>'+
+          '<td style="font-size:12px;color:var(--muted);">'+(j.attempts||0)+'</td>'+
+          '<td style="white-space:nowrap;">'+
+          '<button class="btn-primary btn-sm" onclick="replayDLQ(\''+j.id+'\')" style="margin-right:4px;">Replay</button>'+
+          '<button class="btn-danger btn-sm" onclick="purgeDLQ(\''+j.id+'\')">Purge</button></td></tr>';
+      }).join('');
+    }
 
-    <script>
-        const API_BASE = '/api/v1';
-        const TOKEN_KEY = 'task_queue_api_key';
-        let refreshTimer = null;
+    window.replayDLQ=async function(id){
+      await api(API_BASE+'/dlq/'+id+'/replay',{method:'POST'});
+      loadDLQ();toast('Replayed job: '+id);
+    };
+    window.purgeDLQ=async function(id){
+      await api(API_BASE+'/dlq/'+id,{method:'DELETE'});
+      loadDLQ();toast('Purged job: '+id);
+    };
+    async function exportDLQ(){
+      const raw=document.getElementById('dlq-table-body').innerText;
+      const queue=document.getElementById('filter-queue').value;
+      const data=await api(API_BASE+'/dlq?queue='+encodeURIComponent(queue));
+      const blob=new Blob([JSON.stringify(data||[],null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob);const a=document.createElement('a');
+      a.href=url;a.download='dlq-export.json';a.click();URL.revokeObjectURL(url);
+    }
 
-        function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+    async function loadDashboard(){
+      await Promise.all([loadDLQ().catch(function(){}),loadWorkers().catch(function(){})]);
+    }
+    if(getToken())loadDashboard();
 
-        async function api(path, options = {}) {
-            try {
-                const t = getToken();
-                const res = await fetch(path, {
-                    ...options,
-                    headers: { ...options.headers, 'Content-Type': 'application/json', ...(t ? {'X-API-Key': t} : {}) }
-                });
-                if (res.status === 204) return null;
-                return res.json();
-            } catch (_) { return null; }
-        }
-
-        async function login() {
-            const user = document.getElementById('login-user').value.trim();
-            const pass = document.getElementById('login-pass').value.trim();
-            if (!user || !pass) { document.getElementById('login-error').classList.remove('hidden'); return; }
-            const res = await api('/api/v1/login', {
-                method: 'POST',
-                body: JSON.stringify({username: user, password: pass}),
-                headers: { 'Content-Type': 'application/json' }
-            });
-            if (res && res.api_key) {
-                localStorage.setItem(TOKEN_KEY, res.api_key);
-                document.getElementById('login-overlay').style.display = 'none';
-                document.getElementById('app').style.display = 'flex';
-                loadDashboard();
-            } else {
-                document.getElementById('login-error').classList.remove('hidden');
-            }
-        }
-
-        function logout() {
-            localStorage.removeItem(TOKEN_KEY);
-            document.getElementById('app').style.display = 'none';
-            document.getElementById('login-overlay').style.display = 'flex';
-        }
-
-        document.getElementById('login-pass').addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') login();
-        });
-
-        if (getToken()) {
-            document.getElementById('login-overlay').style.display = 'none';
-            document.getElementById('app').style.display = 'flex';
-        }
-
-        async function loadDLQ() {
-            const loading = document.getElementById('loading');
-            loading.classList.remove('hidden');
-            try {
-                const queue = document.getElementById('filter-queue').value;
-                const tenant = document.getElementById('filter-tenant').value;
-                const data = await api(API_BASE + '/dlq?queue=' + queue);
-                const filtered = (data || []).filter(j => {
-                    if (!tenant) return true;
-                    return (j.tenant_id || '').includes(tenant);
-                });
-                renderSummary(filtered);
-                renderTable(filtered);
-            } catch (e) {
-                console.error(e);
-            } finally {
-                loading.classList.add('hidden');
-            }
-        }
-
-        async function loadWorkers() {
-            try {
-                const workers = await api(API_BASE + '/workers');
-                renderWorkers(workers || []);
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
-        function renderSummary(jobs) {
-            const tenants = new Set();
-            const queues = new Set();
-            (jobs || []).forEach(j => {
-                if (j.tenant_id) tenants.add(j.tenant_id);
-                if (j.type) queues.add(j.type);
-            });
-            document.getElementById('stat-failed').innerText = String((jobs || []).length);
-            document.getElementById('stat-queues').innerText = String(queues.size);
-            document.getElementById('stat-tenants').innerText = String(tenants.size);
-        }
-
-        function renderWorkers(workers) {
-            document.getElementById('stat-workers').innerText = String((workers || []).length);
-            const list = document.getElementById('workers-list');
-            if (!workers || workers.length === 0) {
-                list.innerHTML = '<div class="text-sm text-gray-500 italic">No active workers reported</div>';
-                return;
-            }
-            list.innerHTML = workers.map(function(w) { return '<div class="bg-gray-950/60 border border-white/5 rounded-xl p-4">' +
-                '<div class="flex items-start justify-between gap-3">' +
-                '<div>' +
-                '<div class="font-mono text-sm text-white">' + w.id + '</div>' +
-                '<div class="text-xs text-gray-500 mt-1">Last heartbeat</div>' +
-                '</div>' +
-                '<span class="px-2 py-1 rounded-full text-[10px] uppercase tracking-widest bg-green-500/10 text-green-400 border border-green-500/20">Live</span>' +
-                '</div>' +
-                '<div class="mt-3 text-sm text-gray-300">' + new Date(w.last_heartbeat).toLocaleString() + '</div>' +
-                '</div>'; }).join('');
-        }
-
-        function renderTable(jobs) {
-            const tbody = document.getElementById('dlq-table-body');
-            if (!jobs || jobs.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-500">No failed jobs found.</td></tr>';
-                return;
-            }
-            tbody.innerHTML = jobs.map(function(j) { return '<tr class="border-b border-white/5 hover:bg-white/5 transition-colors">' +
-                '<td class="p-4 font-mono text-xs text-gray-300">' + j.id + '</td>' +
-                '<td class="p-4"><span class="px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">' + j.type + '</span></td>' +
-                '<td class="p-4"><span class="px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider bg-red-500/10 text-red-300 border border-red-500/20">' + j.status + '</span></td>' +
-                '<td class="p-4 text-xs text-gray-400">' + (j.tenant_id || '-') + '</td>' +
-                '<td class="p-4 text-xs text-red-300 max-w-[200px] truncate">' + (j.last_error || j.result || '').substring(0, 60) + '</td>' +
-                '<td class="p-4 text-xs text-gray-400">' + (j.attempts || 0) + '</td>' +
-                '<td class="p-4">' +
-                '<button onclick="replayDLQ(\'' + j.id + '\')" class="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-[10px] font-semibold transition-colors">Replay</button>' +
-                '<button onclick="purgeDLQ(\'' + j.id + '\')" class="ml-1 px-3 py-1 bg-red-600/50 hover:bg-red-500 rounded text-[10px] font-semibold transition-colors">Purge</button>' +
-                '</td>' +
-                '</tr>'; }).join('');
-        }
-
-        window.replayDLQ = async function(id) {
-            await api(API_BASE + '/dlq/' + id + '/replay', { method: 'POST' });
-            loadDLQ();
-        };
-
-        window.purgeDLQ = async function(id) {
-            await api(API_BASE + '/dlq/' + id, { method: 'DELETE' });
-            loadDLQ();
-        };
-
-        async function loadDashboard() {
-            await Promise.all([
-                loadDLQ().catch(function(){}),
-                loadWorkers().catch(function(){})
-            ]);
-        }
-
-        if (getToken()) loadDashboard();
-
-        document.getElementById('toggle-refresh').addEventListener('click', () => {
-            const status = document.getElementById('refresh-status');
-            if (refreshTimer) {
-                clearInterval(refreshTimer);
-                refreshTimer = null;
-                status.innerText = 'Auto-refresh Off';
-                status.classList.replace('text-indigo-400', 'text-gray-300');
-            } else {
-                refreshTimer = setInterval(loadDLQ, 10000);
-                status.innerText = 'Auto-refresh On (10s)';
-                status.classList.replace('text-gray-300', 'text-indigo-400');
-                loadDashboard();
-            }
-        });
-
-        document.getElementById('search-dlq').addEventListener('input', function() {
-            const q = this.value.toLowerCase();
-            document.querySelectorAll('#dlq-table-body tr').forEach(tr => {
-                tr.style.display = tr.innerText.toLowerCase().includes(q) ? '' : 'none';
-            });
-        });
-    </script>
+    document.getElementById('toggle-refresh').addEventListener('click',()=>{
+      const status=document.getElementById('refresh-status');
+      if(refreshTimer){
+        clearInterval(refreshTimer);refreshTimer=null;
+        status.innerHTML='<span class="status-dot yellow"></span> Auto-refresh Off';
+      }else{
+        refreshTimer=setInterval(loadDLQ,10000);
+        status.innerHTML='<span class="status-dot green"></span> Auto-refresh On (10s)';
+        loadDashboard();
+      }
+    });
+    document.getElementById('search-dlq').addEventListener('input',function(){
+      const q=this.value.toLowerCase();
+      document.querySelectorAll('#dlq-table-body tr').forEach(tr=>{
+        tr.style.display=tr.innerText.toLowerCase().includes(q)?'':'none';
+      });
+    });
+  </script>
 </body>
-</html>
-`
+</html>`

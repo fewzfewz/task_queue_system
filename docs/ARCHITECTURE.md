@@ -46,11 +46,15 @@ The task queue system is composed of four independent binaries that coordinate t
 
 ### cmd/api — HTTP API Server (port 8080)
 - Accepts job submissions (`POST /jobs`)
-- Serves browser UI (`GET /`, `/ui`, `/admin/dlq`)
+- Serves browser UI (`GET /` or `/ui`) — sidebar dashboard with jobs, stats, DAG, CB, DLQ, webhooks
+- Serves DLQ admin console (`GET /admin/dlq`) — focused dead-letter queue management
+- Auth login (`POST /api/v1/login`) — returns API key for UI localStorage
 - Exposes metrics and worker health (`GET /metrics`, `/workers`)
+- SSE event stream (`GET /events`) — real-time job status updates
 - DLQ management endpoints (`/api/v1/dlq/*`)
+- Webhooks CRUD (`/api/v1/webhooks/*`)
 - Swagger UI at `/swagger/`
-- Auth: JWT (RS256) or X-API-Key with Vault/env fallback
+- Auth: `X-API-Key` header on all endpoints except `/healthz`, `/readyz`, `/api/v1/login`
 
 ### cmd/worker — Job Executor (port 8081)
 - Runs N concurrent worker goroutines (configurable via `WORKER_POOL_SIZE`)
@@ -133,11 +137,11 @@ Each priority level has 3 hash-based partitions for concurrency.
 ## Security Model
 
 - `/healthz`, `/readyz`: No auth (health checks)
-- `/`, `/ui`, `/admin/dlq`: No auth (UI pages, API key injected from server)
+- `/api/v1/login`: No auth (accepts username/password, returns API key)
+- `/`, `/ui`, `/admin/dlq`: No auth (UI pages, login overlay triggers `/api/v1/login`)
 - `/metrics`: No auth (Prometheus scraping)
-- `POST /jobs`: Auth required (X-API-Key header)
-- `/api/v1/dlq/*`: Auth required
-- `/api/v1/webhooks/*`: Auth required
+- All other endpoints: Auth required (`X-API-Key` header)
+- UI login flow: Browser shows login overlay → user submits credentials → server returns `api_key` → stored in `localStorage` → sent as `X-API-Key` on all subsequent `fetch()` calls
 
 ## Observability
 

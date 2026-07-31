@@ -216,20 +216,53 @@ make docker-build
 
 ## UI
 
-Open the browser UI at `http://localhost:8080/`. The UI prompts for credentials (defaults: `admin` / `admin123`), then stores the returned API key in `localStorage` for subsequent requests.
+The system has two browser-based interfaces, both accessed via the API server (port `8080`).
 
-Tabs:
+### Main Operator Dashboard — `GET /` or `GET /ui`
 
-- Create / Search Jobs
-- Workers / Health
-- DLQ / Admin
+A full-featured sidebar layout with pages for every operation:
+
+| Sidebar Page | Description |
+|-------------|-------------|
+| **Dashboard** | Stats cards (pending jobs, workers, DLQ, circuit breakers) + quick actions |
+| **Create Jobs** | Submit new jobs with type, priority, tenant, dedup key, shard key, payload, scheduling |
+| **Search Jobs** | Filter by type/status/tenant with pagination |
+| **Stats** | Queue breakdown and system statistics |
+| **DAG Dependencies** | Lookup upstream/downstream dependency chains |
+| **Workers & Health** | Active workers, Prometheus metrics, health check status |
+| **Circuit Breaker** | Per-plugin breaker states with reset action |
+| **Dead Letter Queue** | Browse, search, filter, export, replay, purge, bulk purge |
+| **Webhooks** | Register and list event-driven HTTP callbacks |
+
+### DLQ Admin Console — `GET /admin/dlq`
+
+A focused dead-letter queue management console:
+
+| Sidebar Page | Description |
+|-------------|-------------|
+| **Overview** | Stats cards (failed count, queues, tenants, workers) |
+| **Workers** | Active worker heartbeat cards |
+| **DLQ Table** | Sortable/filterable table with replay/purge per row, auto-refresh toggle |
+
+### Auth flow
+
+Both pages show a login overlay on first load. Credentials default to `admin` / `admin123`. On success the server returns the API key, which is stored in `localStorage` and sent as `X-API-Key` on all subsequent `fetch()` calls. Only `POST /api/v1/login` is unauthenticated.
 
 ## Terminal Examples
 
-Set a token first if you use Bearer or legacy API key auth:
+Set an API key:
 
 ```bash
 export API_KEY=secret-api-key
+```
+
+Or get one via the login endpoint:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+# Returns: {"api_key":"secret-api-key"}
 ```
 
 Create a job:
