@@ -243,6 +243,19 @@ default-deny (ingress+egress) for the namespace and then allows exactly:
 If you enable `OTEL_EXPORTER_OTLP_ENDPOINT` pointing outside the cluster, add an
 egress rule for the collector address (see §13).
 
+### 4.1 Pod Security Standards
+
+`deploy/k8s/namespace.yaml` labels the namespace with Pod Security
+Standards: `enforce: baseline` (with `warn`/`audit: restricted`). The API,
+worker, and scheduler pods satisfy the `restricted` profile — their images
+run as a non-root user (`appuser`, uid 10001) and each container sets
+`allowPrivilegeEscalation: false`, `runAsNonRoot: true`,
+`runAsUser: 10001`, drops all capabilities, and uses the `RuntimeDefault`
+seccomp profile. The stock `redis`/`postgres` images run as root, so
+`enforce` stays at `baseline`; `kubectl get events` / audit logs surface
+their restricted violations, and they must be hardened or moved to a
+separate namespace before you can raise `enforce` to `restricted`.
+
 ---
 
 ## 5. Storage: Redis and Postgres

@@ -7,8 +7,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api ./cmd/api
 
 FROM alpine:latest
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && \
+    adduser -D -u 10001 appuser
 WORKDIR /app
 COPY --from=builder /api /app/api
+USER appuser
 EXPOSE 8080
 CMD ["./api"]

@@ -7,8 +7,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /scheduler ./cmd/scheduler
 
 FROM alpine:latest
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata && \
+    adduser -D -u 10001 appuser
 WORKDIR /app
 COPY --from=builder /scheduler /app/scheduler
+USER appuser
 EXPOSE 8082
 CMD ["./scheduler"]

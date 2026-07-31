@@ -2,3 +2,13 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: task-queue
+  labels:
+    # Pod Security Standards: the application workloads satisfy `restricted`
+    # (non-root, no privilege escalation, all capabilities dropped, seccomp
+    # RuntimeDefault). `enforce` stays at `baseline` because the stock
+    # redis/postgres images run as root; `warn`/`audit` surface their
+    # restricted-profile violations without breaking the deployment.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
