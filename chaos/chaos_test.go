@@ -16,7 +16,7 @@ import (
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -60,7 +60,7 @@ func TestRedisCrashMidTransition(t *testing.T) {
 		t.Fatalf("failed to kill redis container: %v", err)
 	}
 	time.Sleep(5 * time.Second)
-	if err := cli.ContainerStart(ctx, containerID, types.ContainerStartOptions{}); err != nil {
+	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		t.Fatalf("failed to restart redis container: %v", err)
 	}
 
@@ -240,10 +240,10 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		t.Fatalf("failed to mark fresh job processing: %v", err)
 	}
 
-	if err := rdb.ZAdd(ctx, "task_queue:in_flight", &redis.Z{Score: float64(time.Now().Add(-2 * time.Hour).Unix()), Member: staleJob.ID}).Err(); err != nil {
+	if err := rdb.ZAdd(ctx, "task_queue:in_flight", redis.Z{Score: float64(time.Now().Add(-2 * time.Hour).Unix()), Member: staleJob.ID}).Err(); err != nil {
 		t.Fatalf("failed to add stale in-flight job: %v", err)
 	}
-	if err := rdb.ZAdd(ctx, "task_queue:in_flight", &redis.Z{Score: float64(time.Now().Add(30 * time.Second).Unix()), Member: freshJob.ID}).Err(); err != nil {
+	if err := rdb.ZAdd(ctx, "task_queue:in_flight", redis.Z{Score: float64(time.Now().Add(30 * time.Second).Unix()), Member: freshJob.ID}).Err(); err != nil {
 		t.Fatalf("failed to add fresh in-flight job: %v", err)
 	}
 	start := time.Now()
@@ -261,7 +261,6 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		t.Fatalf("expected 1 stale job reclaimed, got %d", reclaimed)
 	}
 
-	isStaleInFlight := rdb.ZScore(ctx, "task_queue:in_flight", staleJob.ID).Val()
 	isFreshInFlight := rdb.ZScore(ctx, "task_queue:in_flight", freshJob.ID).Val()
 
 	if isFreshInFlight == 0 {

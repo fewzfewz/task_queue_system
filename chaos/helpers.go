@@ -18,8 +18,8 @@ import (
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/storage/models"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	docker "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
@@ -157,7 +157,7 @@ func newRedisContainer(t *testing.T, cli *docker.Client) (string, string, func()
 			nat.Port("6379/tcp"): struct{}{},
 		},
 	}
-	reader, err := cli.ImagePull(ctx, "docker.io/library/redis:7-alpine", types.ImagePullOptions{})
+	reader, err := cli.ImagePull(ctx, "docker.io/library/redis:7-alpine", image.PullOptions{})
 	if err != nil {
 		t.Fatalf("failed to pull redis image: %v", err)
 	}
@@ -172,9 +172,9 @@ func newRedisContainer(t *testing.T, cli *docker.Client) (string, string, func()
 		t.Fatalf("failed to create redis container: %v", err)
 	}
 	cleanup := func() {
-		_ = cli.ContainerRemove(context.Background(), resp.ID, types.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+		_ = cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true, RemoveVolumes: true})
 	}
-	if err := cli.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		cleanup()
 		t.Fatalf("failed to start redis container: %v", err)
 	}

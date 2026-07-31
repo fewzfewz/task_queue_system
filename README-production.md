@@ -276,6 +276,114 @@ existing dev server.
 `test.yml` runs a dedicated `test-vault` job with a `hashicorp/vault:1.18`
 service container (dev mode, unsealed) on `:8200`.
 
+## Chaos CLI
+
+`cmd/chaos` is a standalone binary that runs failure-injection scenarios
+against a **live** deployment and writes a structured JSON report with an
+SLO-based pass/fail verdict. It complements the build-tagged in-process suite
+in `chaos/` (which boots its own ephemeral stack via `go test -tags chaos`).
+
+### Build
+
+```sh
+go build -o bin/chaos ./cmd/chaos/
+```
+
+### Scenarios
+
+| Scenario         | Fault injected                                                   |
+| ---------------- | ---------------------------------------------------------------- |
+| `redis-crash`    | Stop (SIGTERM) or kill (SIGKILL) the Redis container, restart it after a fault window |
+| `worker-kill`    | Stop a worker container mid-processing; the rest of the pool and the scheduler's in-flight reclaim finish the jobs |
+| `redis-partition`| Isolate Redis from the compose network (or drop packets via iptables on a root host), restore after a fault window |
+| `orphan-reclaim` | Forge stale (`now - 2h`) and fresh (`now + 30s`) in-flight visibility scores; the scheduler must reclaim only the stale job |
+
+### Usage
+
+```sh
+chaos list                                   # list scenarios
+chaos run <scenario> [flags]                 # run one scenario
+chaos run <scenario> --dry-run               # validate config + reachability, no fault
+chaos run <scenario> --output report.json    # write report to a file (default: stdout)
+```
+
+Every option is a flag with a `CHAOS_*` environment fallback; run
+`chaos run --help` for the full list. Common ones:
+
+| Flag                | Env                    | Default                     |
+| ------------------- | ---------------------- | --------------------------- |
+| `--api-url`         | `CHAOS_API_URL`        | `http://localhost:8080`     |
+| `--api-key`         | `CHAOS_API_KEY`        | `secret-api-key`            |
+| `--redis-addr`      | `CHAOS_REDIS_ADDR`     | `localhost:6379`            |
+| `--redis-container` | `CHAOS_REDIS_CONTAINER`| `task_queue_redis` (auto-detect workers via compose labels) |
+| `--worker-container`| `CHAOS_WORKER_CONTAINER`| empty (first compose worker auto-detected) |
+| `--jobs`            |                        | `20`                        |
+| `--fault-duration`  |                        | `5s`                        |
+| `--sla-timeout`     |                        | `120s`                      |
+| `--slo-success`     |                        | `1.0`                       |
+| `--slo-max-dlq`     |                        | `0`                         |
+
+Examples:
+
+```sh
+# sanity-check reachability against the deployed stack, no fault injected
+bin/chaos run redis-crash --dry-run
+
+# crash Redis hard for 10s and require 95% of jobs to survive
+bin/chaos run redis-crash --crash-kind kill --fault-duration 10s \
+  --slo-success 0.95 --output /tmp/redis-crash.json
+
+# stop one worker and confirm the pool + reclaim finish the batch
+bin/chaos run worker-kill --output /tmp/worker-kill.json
+
+# forge an orphan and confirm the scheduler reclaims it within the SLO
+bin/chaos run orphan-reclaim --output /tmp/reclaim.json
+```
+
+`--dry-run` probes the API, Redis, and container targets without injecting any
+fault; run it before every scenario against a new deployment.
+
+### Report format
+
+The report is a single JSON object (indented, written to `--output` or stdout):
+
+```json
+{
+  "scenario": "orphan-reclaim",
+  "started_at": "2026-07-31T14:56:43Z",
+  "ended_at": "2026-07-31T14:56:47Z",
+  "duration_ms": 4369,
+  "config": { "api_url": "...", "redis_addr": "...", "jobs": 20, "...": "..." },
+  "fault": { "type": "forge-in-flight-visibility", "target": "...", "injected_at": "...", "cleared_at": "..." },
+  "observations": { "jobs_enqueued": 20, "jobs_completed": 20, "recovery_time_ms": 3025, "...": "..." },
+  "slo": { "job_success_ratio": 1, "recovery_timeout_ms": 120000, "max_dlq_growth": 0 },
+  "verdict": "pass",
+  "failures": ["..."]
+}
+```
+
+Key fields:
+
+- `config` — the flags/env that produced the run (reproducibility).
+- `fault` — what was injected, the target container, and inject/clear timestamps.
+- `observations` — enqueued/completed/failed/dropped counts, DLQ growth,
+  recovery time, API unavailability, queue lengths before/after, stale
+  reclaimed, worker endpoint health.
+- `slo` — the thresholds the run was measured against.
+- `verdict` — `pass` when no SLO check failed, `fail` otherwise.
+- `failures` — human-readable SLO violations (present only on `fail`).
+
+Notes:
+
+- `redis-partition --partition-method iptables` requires a root host with
+  `iptables`; the `docker` method (default) uses the compose network instead.
+- The CLI never changes job payloads or queue keys beyond the scenario's own
+  enqueue and the forged in-flight scores; each scenario waits for jobs to
+  reach a terminal state before finishing.
+- Exit code is `0` for completed runs (pass or fail) and non-zero only for
+  execution errors (config, unreachable targets, docker failures). Use the
+  report `verdict` to drive CI gates.
+
 ## Deploy Order
 
 1. Create namespace.
