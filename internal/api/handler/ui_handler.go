@@ -31,7 +31,13 @@ const appHTML = `<!DOCTYPE html>
     :root {
       --bg:#0a0f1e; --bg2:#111827; --surface:#1a2236; --surface2:#1f2a40;
       --border:#2a3555; --text:#e2e8f0; --muted:#94a3b8; --muted2:#64748b;
-      --accent:#6366f1; --accent2:#818cf8; --good:#22c55e; --bad:#ef4444; --warn:#f59e0b;
+      --accent:#6366f1; --accent2:#818cf8;
+      /* severity palette — consistent everywhere */
+      --sev-ok:#34d399; --sev-ok-bg:rgba(52,211,153,.12); --sev-ok-border:rgba(52,211,153,.35);
+      --sev-warn:#fbbf24; --sev-warn-bg:rgba(251,191,36,.12); --sev-warn-border:rgba(251,191,36,.35);
+      --sev-crit:#f87171; --sev-crit-bg:rgba(248,113,113,.12); --sev-crit-border:rgba(248,113,113,.4);
+      --sev-info:#93c5fd; --sev-info-bg:rgba(147,197,253,.1); --sev-info-border:rgba(147,197,253,.3);
+      --good:var(--sev-ok); --bad:var(--sev-crit); --warn:var(--sev-warn);
       --sidebar-w:250px; --header-h:64px;
     }
     body {
@@ -153,7 +159,13 @@ const appHTML = `<!DOCTYPE html>
       border-radius:10px; padding:11px 14px; color:var(--text); font-size:13px;
       outline:none; transition:border-color .2s;
     }
-    input:focus, select:focus, textarea:focus { border-color:var(--accent); }
+    input:focus, select:focus, textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(99,102,241,.25); }
+    button:focus-visible, .btn:focus-visible, .nav-item:focus-visible {
+      outline:2px solid var(--accent2); outline-offset:2px;
+    }
+    input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline:2px solid var(--accent2); outline-offset:0;
+    }
     textarea { min-height:90px; resize:vertical; font-family:'Inter',monospace; }
     button, .btn {
       padding:10px 18px; border-radius:10px; font-size:13px; font-weight:600;
@@ -182,10 +194,10 @@ const appHTML = `<!DOCTYPE html>
     tr:hover td { background:rgba(255,255,255,.02); }
 
     .pill { display:inline-block; padding:3px 10px; border-radius:999px;
-      font-size:11px; font-weight:500; background:rgba(99,102,241,.12); color:var(--accent2); }
-    .pill.good { background:rgba(34,197,94,.12); color:#4ade80; }
-    .pill.bad { background:rgba(239,68,68,.12); color:#f87171; }
-    .pill.warn { background:rgba(245,158,11,.12); color:#fbbf24; }
+      font-size:11px; font-weight:600; background:var(--sev-info-bg); color:var(--sev-info); border:1px solid var(--sev-info-border); }
+    .pill.good { background:var(--sev-ok-bg); color:var(--sev-ok); border-color:var(--sev-ok-border); }
+    .pill.bad { background:var(--sev-crit-bg); color:var(--sev-crit); border-color:var(--sev-crit-border); }
+    .pill.warn { background:var(--sev-warn-bg); color:var(--sev-warn); border-color:var(--sev-warn-border); }
     .badge { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
     .badge.green { background:var(--good); }
     .badge.red { background:var(--bad); }
@@ -224,8 +236,71 @@ const appHTML = `<!DOCTYPE html>
     .feed-item .kind.job { background:rgba(99,102,241,.12); color:var(--accent2); }
     .feed-item .kind.rate_limit { background:rgba(245,158,11,.12); color:#fbbf24; }
     .feed-item .kind.circuit_breaker { background:rgba(239,68,68,.12); color:#f87171; }
-    .feed-item .kind.dlq { background:rgba(34,197,94,.12); color:#4ade80; }
-    .feed-item .msg { flex:1; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .feed-item .kind.dlq { background:var(--sev-crit-bg); color:var(--sev-crit); }
+
+    /* ── Standard states ── */
+    .state-box {
+      display:flex; align-items:center; gap:10px; padding:14px 16px;
+      border-radius:12px; font-size:13px; border:1px solid var(--border);
+      background:var(--bg2); color:var(--muted);
+    }
+    .state-box.loading { border-color:var(--sev-info-border); color:var(--sev-info); }
+    .state-box.empty { border-style:dashed; }
+    .state-box.error { border-color:var(--sev-crit-border); background:var(--sev-crit-bg); color:var(--sev-crit); }
+    .state-box .spinner-sm {
+      width:16px; height:16px; border:2px solid rgba(147,197,253,.3);
+      border-top-color:var(--sev-info); border-radius:50%;
+      animation:spin .7s linear infinite; flex-shrink:0;
+    }
+    @keyframes spin { to{transform:rotate(360deg)} }
+
+    /* ── Health banner ── */
+    #health-banner {
+      border-radius:16px; padding:16px 20px; margin-bottom:16px;
+      border:1px solid var(--border); background:var(--surface);
+      transition:border-color .3s, background .3s;
+    }
+    #health-banner.sev-ok { border-color:var(--sev-ok-border); }
+    #health-banner.sev-warn { border-color:var(--sev-warn-border); background:rgba(251,191,36,.04); }
+    #health-banner.sev-crit { border-color:var(--sev-crit-border); background:rgba(248,113,113,.05); }
+    .health-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .health-head .health-title { font-size:15px; font-weight:700; display:flex; align-items:center; gap:10px; }
+    .health-head .health-title i { font-size:18px; }
+    .health-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+    .health-metric {
+      background:var(--bg2); border:1px solid var(--border); border-radius:12px;
+      padding:10px 12px; min-width:0;
+    }
+    .health-metric .hm-label { font-size:10px; color:var(--muted2); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+    .health-metric .hm-value { font-size:22px; font-weight:700; margin-top:2px; line-height:1.1; }
+    .health-metric .hm-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+    .health-metric.crit .hm-value { color:var(--sev-crit); }
+    .health-metric.warn .hm-value { color:var(--sev-warn); }
+    .health-metric.ok .hm-value { color:var(--sev-ok); }
+    .tier-bars { display:flex; gap:6px; margin-top:6px; height:6px; border-radius:999px; overflow:hidden; background:var(--border); }
+    .tier-bars span { display:block; height:100%; border-radius:999px; min-width:2px; }
+    .tier-bars .t-high { background:var(--sev-crit); }
+    .tier-bars .t-med { background:var(--sev-warn); }
+    .tier-bars .t-low { background:var(--sev-info); }
+
+    /* ── SSE status bar ── */
+    #sse-bar {
+      display:none; align-items:center; gap:10px; padding:10px 16px;
+      border-radius:10px; margin-bottom:16px; font-size:13px; font-weight:500;
+    }
+    #sse-bar.show { display:flex; }
+    #sse-bar.connected { background:var(--sev-ok-bg); border:1px solid var(--sev-ok-border); color:var(--sev-ok); }
+    #sse-bar.reconnecting { background:var(--sev-warn-bg); border:1px solid var(--sev-warn-border); color:var(--sev-warn); }
+    #sse-bar.disconnected { background:var(--sev-crit-bg); border:1px solid var(--sev-crit-border); color:var(--sev-crit); }
+    #sse-bar .sse-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    #sse-bar.connected .sse-dot { background:var(--sev-ok); box-shadow:0 0 8px var(--sev-ok); }
+    #sse-bar.reconnecting .sse-dot { background:var(--sev-warn); animation:pulse 1.5s ease-in-out infinite; }
+    #sse-bar.disconnected .sse-dot { background:var(--sev-crit); }
+
+    .stat-card.sev-warn { border-color:var(--sev-warn-border); }
+    .stat-card.sev-crit { border-color:var(--sev-crit-border); }
+    .stat-card.sev-warn .stat-value { color:var(--sev-warn); }
+    .stat-card.sev-crit .stat-value { color:var(--sev-crit); }
 
     /* ── Modal ── */
     #modal-overlay {
@@ -273,8 +348,13 @@ const appHTML = `<!DOCTYPE html>
       #topbar .left button { display:block; }
       .grid-2, .grid-3 { grid-template-columns:1fr; }
       .stats-grid { grid-template-columns:repeat(2,1fr); }
+      .health-metrics { grid-template-columns:repeat(2,1fr); }
       #content { padding:16px; }
       #sidebar { width:280px; }
+      table { display:block; overflow-x:auto; white-space:nowrap; }
+    }
+    @media(max-width:1100px) and (min-width:769px) {
+      .health-metrics { grid-template-columns:repeat(3,1fr); }
     }
     @media(min-width:769px) {
       #sidebar { transform:translateX(0) !important; }
@@ -354,8 +434,8 @@ const appHTML = `<!DOCTYPE html>
           </div>
         </div>
         <div class="right">
-          <span id="status-indicator"><span class="status-dot green"></span> Live</span>
-          <button onclick="loadEverything()"><i class="fas fa-sync-alt"></i> Refresh</button>
+          <span id="status-indicator" title="SSE connection status"><span class="status-dot yellow"></span> <span id="status-label">Connecting</span></span>
+          <button onclick="loadEverything()" aria-label="Refresh all data"><i class="fas fa-sync-alt"></i> Refresh</button>
         </div>
       </div>
       <div id="content">
@@ -366,38 +446,48 @@ const appHTML = `<!DOCTYPE html>
 
         <!-- Page: Dashboard -->
         <div id="page-dashboard" class="page active">
+          <div id="sse-bar" class="reconnecting" role="status" aria-live="polite">
+            <span class="sse-dot"></span>
+            <span id="sse-bar-text">Connecting to live event stream…</span>
+          </div>
+
+          <div id="health-banner" class="sev-ok" role="status" aria-live="polite">
+            <div class="health-head">
+              <div class="health-title"><i class="fas fa-heart-pulse" id="health-icon"></i> <span id="health-summary">Assessing system health…</span></div>
+              <span id="health-updated" style="font-size:11px;color:var(--muted2);">—</span>
+            </div>
+            <div class="health-metrics" id="health-metrics">
+              <div class="health-metric" id="hm-pending"><div class="hm-label">Queue Depth</div><div class="hm-value">—</div><div class="hm-sub" id="hm-tier-sub">high / med / low</div><div class="tier-bars" id="hm-tier-bars"><span class="t-high" style="width:33%"></span><span class="t-med" style="width:33%"></span><span class="t-low" style="width:34%"></span></div></div>
+              <div class="health-metric" id="hm-dlq"><div class="hm-label">DLQ Failed</div><div class="hm-value">—</div><div class="hm-sub">permanent failures</div></div>
+              <div class="health-metric" id="hm-cb"><div class="hm-label">Circuits Open</div><div class="hm-value">—</div><div class="hm-sub">plugin breakers</div></div>
+              <div class="health-metric" id="hm-rl"><div class="hm-label">Rate Limited</div><div class="hm-value">—</div><div class="hm-sub">tenants at cap</div></div>
+              <div class="health-metric" id="hm-workers"><div class="hm-label">Workers</div><div class="hm-value">—</div><div class="hm-sub">active heartbeats</div></div>
+              <div class="health-metric" id="hm-api"><div class="hm-label">API Health</div><div class="hm-value">—</div><div class="hm-sub">/healthz · /readyz</div></div>
+            </div>
+          </div>
+
           <div class="stats-grid">
-            <div class="stat-card"><div class="stat-label">Status</div><div id="stat-status" class="stat-value" style="font-size:18px;">Online</div><div class="stat-desc">API reachable</div></div>
-            <div class="stat-card"><div class="stat-label">Pending Jobs</div><div id="stat-pending" class="stat-value">-</div><div class="stat-desc">Queued work</div></div>
-            <div class="stat-card"><div class="stat-label">Active Workers</div><div id="stat-workers" class="stat-value">-</div><div class="stat-desc">Heartbeat received</div></div>
-            <div class="stat-card"><div class="stat-label">Failed Jobs</div><div id="stat-dlq" class="stat-value">-</div><div class="stat-desc">Dead letter queue</div></div>
-            <div class="stat-card"><div class="stat-label">Open Circuits</div><div id="stat-cb" class="stat-value">0</div><div class="stat-desc">Circuit breakers open</div></div>
-            <div class="stat-card"><div class="stat-label">Rate Limited</div><div id="stat-rl" class="stat-value">0</div><div class="stat-desc">Tenants at limit</div></div>
+            <div class="stat-card" id="card-pending"><div class="stat-label">Pending Jobs</div><div id="stat-pending" class="stat-value">—</div><div class="stat-desc">Queued work</div></div>
+            <div class="stat-card" id="card-dlq"><div class="stat-label">Failed Jobs</div><div id="stat-dlq" class="stat-value">—</div><div class="stat-desc">Dead letter queue</div></div>
+            <div class="stat-card" id="card-cb"><div class="stat-label">Open Circuits</div><div id="stat-cb" class="stat-value">—</div><div class="stat-desc">Circuit breakers open</div></div>
+            <div class="stat-card" id="card-rl"><div class="stat-label">Rate Limited</div><div id="stat-rl" class="stat-value">—</div><div class="stat-desc">Tenants at limit</div></div>
           </div>
 
           <div class="grid-2" style="align-items:start;">
             <div>
               <div class="section-card slide-up">
                 <div class="section-title"><i class="fas fa-gauge-high"></i> Rate Limits <span style="text-transform:none;font-size:11px;">(fixed window)</span></div>
-                <div id="rl-note" style="font-size:13px;color:var(--muted);">Rate limiting is disabled (unlimited).</div>
-                <div style="display:none;" id="rl-wrap">
-                  <table><thead><tr><th>Tenant</th><th>Current</th><th>Limit</th><th>Window</th><th>Status</th></tr></thead>
-                  <tbody id="rl-body"><tr><td colspan="5" style="text-align:center;color:var(--muted);">No tenants yet</td></tr></tbody></table>
-                </div>
+                <div id="rl-state"><div class="state-box loading"><span class="spinner-sm"></span> Loading rate limits…</div></div>
               </div>
               <div class="section-card slide-up">
                 <div class="section-title"><i class="fas fa-shield-halved"></i> Circuit Breakers</div>
-                <div class="cb-chips" id="dash-cb-body"><span style="font-size:13px;color:var(--muted);">No circuit breakers active.</span></div>
-              </div>
-              <div class="section-card slide-up">
-                <div class="section-title"><i class="fas fa-layer-group"></i> Priority Tiers <span style="text-transform:none;font-size:11px;">(70/20/10 dequeue weights)</span></div>
-                <div id="priority-body" style="font-size:13px;color:var(--muted);">Load stats to see tier depths.</div>
+                <div id="cb-state"><div class="state-box loading"><span class="spinner-sm"></span> Loading circuit breakers…</div></div>
               </div>
             </div>
             <div>
               <div class="section-card slide-up">
-                <div class="section-title"><i class="fas fa-bolt"></i> Live Activity <span id="feed-status" class="pill" style="float:right;">connecting</span></div>
-                <div id="feed-body"><div style="font-size:13px;color:var(--muted);">Waiting for events…</div></div>
+                <div class="section-title"><i class="fas fa-bolt"></i> Live Activity <span id="feed-status" class="pill warn" style="float:right;" aria-live="polite">connecting</span></div>
+                <div id="feed-body"><div class="state-box empty"><i class="fas fa-satellite-dish"></i> Waiting for events…</div></div>
               </div>
               <div class="section-card slide-up">
                 <div class="section-title"><i class="fas fa-bolt"></i> Quick Actions</div>
@@ -467,7 +557,7 @@ const appHTML = `<!DOCTYPE html>
             </div>
             <table>
               <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Priority</th><th>Tenant</th><th>Retries</th><th>Deps</th><th>Created</th><th></th></tr></thead>
-              <tbody id="search-body"><tr><td colspan="9" style="text-align:center;color:var(--muted);">Run a search to see jobs.</td></tr></tbody>
+              <tbody id="search-body"><tr><td colspan="9"><div class="state-box empty"><i class="fas fa-search"></i> Run a search to see jobs.</div></td></tr></tbody>
             </table>
           </div>
         </div>
@@ -476,11 +566,11 @@ const appHTML = `<!DOCTYPE html>
         <div id="page-stats" class="page">
           <div class="section-card">
             <div class="section-title"><i class="fas fa-layer-group"></i> Priority &amp; Partition Depths</div>
-            <div id="stats-priority-view" style="margin-bottom:16px;font-size:13px;color:var(--muted);">Loading…</div>
+            <div id="stats-priority-view"><div class="state-box loading"><span class="spinner-sm"></span> Loading priority breakdown…</div></div>
           </div>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-chart-bar"></i> Queue Statistics (raw)</div>
-            <pre id="stats-output">Click "Stats" to load</pre>
+            <pre id="stats-output"><span style="color:var(--muted);">Click Refresh or navigate here to load.</span></pre>
           </div>
         </div>
 
@@ -509,15 +599,15 @@ const appHTML = `<!DOCTYPE html>
         <div id="page-workers" class="page">
           <div class="section-card">
             <div class="section-title"><i class="fas fa-server"></i> Workers</div>
-            <pre id="workers-output">Click "Workers" to load</pre>
+            <pre id="workers-output"><span style="color:var(--muted);">Navigate here to load worker data.</span></pre>
           </div>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-chart-line"></i> Prometheus Metrics</div>
-            <pre id="metrics-output">Click "Metrics" to load</pre>
+            <pre id="metrics-output"><span style="color:var(--muted);">Navigate here to load metrics.</span></pre>
           </div>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-heartbeat"></i> Health Checks</div>
-            <div id="health-status"></div>
+            <div id="health-status"><div class="state-box empty"><i class="fas fa-stethoscope"></i> Health checks not run yet.</div></div>
           </div>
         </div>
 
@@ -525,7 +615,7 @@ const appHTML = `<!DOCTYPE html>
         <div id="page-cb" class="page">
           <div class="section-card">
             <div class="section-title"><i class="fas fa-shield-alt"></i> Circuit Breaker Status</div>
-            <table><thead><tr><th>Plugin Type</th><th>State</th><th>Action</th></tr></thead><tbody id="cb-body"><tr><td colspan="3" style="text-align:center;color:var(--muted);">No data</td></tr></tbody></table>
+            <table><thead><tr><th>Plugin Type</th><th>State</th><th>Action</th></tr></thead><tbody id="cb-body"><tr><td colspan="3"><div class="state-box empty"><i class="fas fa-shield-alt"></i> No circuit breaker data loaded.</div></td></tr></tbody></table>
           </div>
         </div>
 
@@ -547,7 +637,7 @@ const appHTML = `<!DOCTYPE html>
             </div>
             <table>
               <thead><tr><th>ID</th><th>Type</th><th>Tenant</th><th>Error</th><th>Retries</th><th>Failed At</th><th></th></tr></thead>
-              <tbody id="dlq-body"><tr><td colspan="7" style="text-align:center;color:var(--muted);">Load DLQ to see failed jobs</td></tr></tbody>
+              <tbody id="dlq-body"><tr><td colspan="7"><div class="state-box empty"><i class="fas fa-trash-alt"></i> Load DLQ to see failed jobs.</div></td></tr></tbody>
             </table>
             <div class="grid-2" style="margin-top:12px;">
               <div class="form-row">
@@ -581,7 +671,7 @@ const appHTML = `<!DOCTYPE html>
             <div class="section-title"><i class="fas fa-list"></i> Registered Webhooks</div>
             <table>
               <thead><tr><th>ID</th><th>URL</th><th>Events</th><th>Created</th><th></th></tr></thead>
-              <tbody id="wh-body"><tr><td colspan="5" style="text-align:center;color:var(--muted);">Click "Webhooks" to load</td></tr></tbody>
+              <tbody id="wh-body"><tr><td colspan="5"><div class="state-box empty"><i class="fas fa-globe"></i> No webhooks loaded yet.</div></td></tr></tbody>
             </table>
           </div>
         </div>
@@ -595,23 +685,42 @@ const appHTML = `<!DOCTYPE html>
     const API_BASE = '/api/v1';
     const IDLE_TIMEOUT = 15 * 60 * 1000;
     const PAGE_NAMES = {
-      dashboard:'Dashboard','jobs':'Create Jobs','search':'Search Jobs','stats':'Queue Statistics',
-      dag:'DAG Dependencies','workers':'Workers & Health','cb':'Circuit Breaker',
-      dlq:'Dead Letter Queue','webhooks':'Webhooks'
+      dashboard: 'Dashboard',
+      jobs: 'Create Jobs',
+      search: 'Search Jobs',
+      stats: 'Queue Statistics',
+      dag: 'DAG Dependencies',
+      workers: 'Workers \u0026 Health',
+      cb: 'Circuit Breaker',
+      dlq: 'Dead Letter Queue',
+      webhooks: 'Webhooks'
     };
     const PAGE_DESCS = {
-      dashboard:'System overview and real-time statistics','jobs':'Submit new tasks to the queue',
-      search:'Find and inspect queued jobs','stats':'Detailed queue performance metrics',
-      dag:'Visualize job dependency chains','workers':'Monitor worker processes and health endpoints',
-      'cb':'Track circuit breaker states per plugin','dlq':'Manage failed jobs and retries',
-      webhooks:'Configure event-driven HTTP callbacks'
+      dashboard: 'System overview and real-time statistics',
+      jobs: 'Submit new tasks to the queue',
+      search: 'Find and inspect queued jobs',
+      stats: 'Detailed queue performance metrics',
+      dag: 'Visualize job dependency chains',
+      workers: 'Monitor worker processes and health endpoints',
+      cb: 'Track circuit breaker states per plugin',
+      dlq: 'Manage failed jobs and retries',
+      webhooks: 'Configure event-driven HTTP callbacks'
     };
     let SESSION = { authenticated:false, username:'', role:'', csrf_token:'' };
     let idleTimer = null;
+    let sseState = 'connecting'; // connecting | connected | reconnecting | disconnected
+    let healthCache = { pending:0, dlq:0, cb:0, rl:0, workers:0, apiOk:false, tiers:{high:0,medium:0,low:0} };
 
-    function toast(msg) {
-      const t=document.getElementById('toast'); t.textContent=msg;
-      t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500);
+    /* ── Standard state renderers ── */
+    function stateLoading(msg){ return '<div class="state-box loading"><span class="spinner-sm"></span> '+esc(msg||'Loading…')+'</div>'; }
+    function stateEmpty(icon,msg){ return '<div class="state-box empty"><i class="fas '+icon+'"></i> '+esc(msg)+'</div>'; }
+    function stateError(msg){ return '<div class="state-box error"><i class="fas fa-exclamation-triangle"></i> '+esc(msg)+'</div>'; }
+
+    function toast(msg, type) {
+      const t=document.getElementById('toast');
+      t.textContent=msg;
+      t.style.borderColor=type==='error'?'var(--sev-crit-border)':type==='warn'?'var(--sev-warn-border)':'var(--border)';
+      t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3000);
     }
     function esc(s) {
       return String(s==null?'':s).replace(/[&<>"']/g,function(c){
@@ -627,10 +736,113 @@ const appHTML = `<!DOCTYPE html>
       if(method!=='GET'&&method!=='HEAD'&&SESSION.csrf_token){headers['X-CSRF-Token']=SESSION.csrf_token;}
       try {
         const res=await fetch(path,Object.assign({},options,{headers:headers,credentials:'same-origin'}));
-        if(res.status===204)return null;
+        if(res.status===204)return {_ok:true,_status:204};
         const text=await res.text();
-        try{return JSON.parse(text)}catch(_){return text}
-      }catch(_){return null}
+        let data;
+        try{data=JSON.parse(text);}catch(_){data=text}
+        if(!res.ok){
+          const errMsg=(data&&data.error)?data.error:('HTTP '+res.status);
+          return {_ok:false,_status:res.status,_error:errMsg,data:data};
+        }
+        if(typeof data==='object'&&data!==null){data._ok=true;data._status=res.status;}
+        return data;
+      }catch(e){return {_ok:false,_status:0,_error:'Network error — check connection'};}
+    }
+
+    /* ── SSE status ── */
+    function setSSEState(state) {
+      sseState=state;
+      const bar=document.getElementById('sse-bar');
+      const barText=document.getElementById('sse-bar-text');
+      const feedPill=document.getElementById('feed-status');
+      const dot=document.querySelector('#status-indicator .status-dot');
+      const label=document.getElementById('status-label');
+      bar.className='show '+state;
+      if(state==='connected'){
+        barText.textContent='Live — data updates automatically via SSE';
+        feedPill.textContent='live'; feedPill.className='pill good';
+        dot.className='status-dot green'; label.textContent='Live';
+      }else if(state==='reconnecting'){
+        barText.textContent='Reconnecting — data may be stale. Click Refresh to update manually.';
+        feedPill.textContent='reconnecting'; feedPill.className='pill warn';
+        dot.className='status-dot yellow'; label.textContent='Reconnecting';
+      }else if(state==='disconnected'){
+        barText.textContent='Disconnected — showing last known data. Click Refresh.';
+        feedPill.textContent='offline'; feedPill.className='pill bad';
+        dot.className='status-dot red'; label.textContent='Offline';
+      }else{
+        barText.textContent='Connecting to live event stream…';
+        feedPill.textContent='connecting'; feedPill.className='pill warn';
+        dot.className='status-dot yellow'; label.textContent='Connecting';
+      }
+    }
+
+    /* ── Health banner ── */
+    function setMetricSeverity(id, val, warnAt, critAt) {
+      const el=document.getElementById(id);
+      if(!el)return;
+      el.classList.remove('ok','warn','crit');
+      if(val>=critAt)el.classList.add('crit');
+      else if(val>=warnAt)el.classList.add('warn');
+      else el.classList.add('ok');
+    }
+    function setStatCardSeverity(cardId, sev) {
+      const el=document.getElementById(cardId);
+      if(!el)return;
+      el.classList.remove('sev-warn','sev-crit');
+      if(sev)el.classList.add('sev-'+sev);
+    }
+    function updateHealthBanner() {
+      const h=healthCache;
+      const issues=[];
+      if(h.dlq>0)issues.push(h.dlq+' failed in DLQ');
+      if(h.cb>0)issues.push(h.cb+' circuit'+(h.cb>1?'s':'')+' open');
+      if(h.rl>0)issues.push(h.rl+' tenant'+(h.rl>1?'s':'')+' rate-limited');
+      if(h.workers===0)issues.push('no active workers');
+      if(!h.apiOk)issues.push('API health check failing');
+      if(sseState==='disconnected'||sseState==='reconnecting')issues.push('live feed '+sseState);
+
+      const banner=document.getElementById('health-banner');
+      const icon=document.getElementById('health-icon');
+      const summary=document.getElementById('health-summary');
+      if(issues.length===0){
+        banner.className='sev-ok';
+        icon.className='fas fa-heart-pulse'; icon.style.color='var(--sev-ok)';
+        summary.textContent='All systems operational';
+      }else if(h.dlq>10||h.cb>0||!h.apiOk||h.workers===0){
+        banner.className='sev-crit';
+        icon.className='fas fa-triangle-exclamation'; icon.style.color='var(--sev-crit)';
+        summary.textContent='Critical: '+issues.join(' · ');
+      }else{
+        banner.className='sev-warn';
+        icon.className='fas fa-circle-exclamation'; icon.style.color='var(--sev-warn)';
+        summary.textContent='Attention: '+issues.join(' · ');
+      }
+      document.getElementById('health-updated').textContent='Updated '+new Date().toLocaleTimeString();
+
+      document.querySelector('#hm-pending .hm-value').textContent=String(h.pending);
+      document.querySelector('#hm-dlq .hm-value').textContent=String(h.dlq);
+      document.querySelector('#hm-cb .hm-value').textContent=String(h.cb);
+      document.querySelector('#hm-rl .hm-value').textContent=String(h.rl);
+      document.querySelector('#hm-workers .hm-value').textContent=String(h.workers);
+      document.querySelector('#hm-api .hm-value').textContent=h.apiOk?'OK':'FAIL';
+      document.querySelector('#hm-api .hm-value').style.color=h.apiOk?'var(--sev-ok)':'var(--sev-crit)';
+
+      const tierSub=document.getElementById('hm-tier-sub');
+      tierSub.textContent='H:'+h.tiers.high+' M:'+h.tiers.medium+' L:'+h.tiers.low;
+      const total=h.tiers.high+h.tiers.medium+h.tiers.low||1;
+      document.getElementById('hm-tier-bars').innerHTML=
+        '<span class="t-high" style="width:'+Math.round(h.tiers.high/total*100)+'%"></span>'+
+        '<span class="t-med" style="width:'+Math.round(h.tiers.medium/total*100)+'%"></span>'+
+        '<span class="t-low" style="width:'+Math.round(h.tiers.low/total*100)+'%"></span>';
+
+      setMetricSeverity('hm-dlq',h.dlq,1,10);
+      setMetricSeverity('hm-cb',h.cb,1,1);
+      setMetricSeverity('hm-rl',h.rl,1,1);
+      setMetricSeverity('hm-workers',h.workers===0?1:0,1,1);
+      setStatCardSeverity('card-dlq',h.dlq>=10?'crit':h.dlq>0?'warn':null);
+      setStatCardSeverity('card-cb',h.cb>0?'crit':null);
+      setStatCardSeverity('card-rl',h.rl>0?'warn':null);
     }
 
     async function loadSession() {
@@ -723,7 +935,7 @@ const appHTML = `<!DOCTYPE html>
       try{body.payload=JSON.parse(document.getElementById('create-payload').value.trim()||'{}');}catch(_){}
       const out=await api('/jobs',{method:'POST',body:JSON.stringify(body)});
       document.getElementById('create-output').innerText=JSON.stringify(out,null,2);
-      if(out&&out.id){toast('Job created: '+out.id);}else{toast('Create failed');}
+      if(out&&out._ok&&out.id){toast('Job created: '+out.id);}else{toast((out&&out._error)||'Create failed','error');}
     }
 
     // ── Search Jobs ──
@@ -743,10 +955,12 @@ const appHTML = `<!DOCTYPE html>
       if(type)p.set('type',type);
       if(status)p.set('status',status);
       if(tenant)p.set('tenant_id',tenant);
-      const out=await api('/jobs?'+p.toString());
-      const jobs=(out&&(out.jobs||out.items))?out.jobs||out.items:(Array.isArray(out)?out:[]);
       const body=document.getElementById('search-body');
-      if(!jobs.length){body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);">No jobs found.</td></tr>';}
+      body.innerHTML='<tr><td colspan="9">'+stateLoading('Searching jobs…')+'</td></tr>';
+      const out=await api('/jobs?'+p.toString());
+      if(!out||!out._ok){body.innerHTML='<tr><td colspan="9">'+stateError((out&&out._error)||'Search failed')+'</td></tr>';return;}
+      const jobs=(out.jobs||out.items||(Array.isArray(out)?out:[]));
+      if(!jobs.length){body.innerHTML='<tr><td colspan="9">'+stateEmpty('fa-inbox','No jobs match these filters.')+'</td></tr>';}
       else{
         body.innerHTML=jobs.map(j=>'<tr>'+
           '<td>'+esc(j.id)+'</td>'+
@@ -767,6 +981,7 @@ const appHTML = `<!DOCTYPE html>
 
     async function openJobDetail(id) {
       const out=await api(API_BASE+'/jobs/'+encodeURIComponent(id));
+      if(!out||out._ok===false){toast('Job not found','error');return;}
       let depsHTML='<tr><td colspan="2" style="text-align:center;color:var(--muted);">No dependencies.</td></tr>';
       let blocked=false;
       if(out&&out.dependencies&&out.dependencies.length){
@@ -828,32 +1043,53 @@ const appHTML = `<!DOCTYPE html>
       return html;
     }
     async function loadStats() {
+      const pv=document.getElementById('stats-priority-view');
+      pv.innerHTML=stateLoading('Loading priority breakdown…');
       const out=await api(API_BASE+'/stats');
+      if(!out||!out._ok){pv.innerHTML=stateError((out&&out._error)||'Failed to load stats');return;}
       document.getElementById('stats-output').innerText=JSON.stringify(out,null,2);
-      const pb=out&&out.priority_breakdown;
-      document.getElementById('stats-priority-view').innerHTML=renderPriorityBreakdown(pb);
-      document.getElementById('priority-body').innerHTML=renderPriorityBreakdown(pb);
-      if(out){
-        document.getElementById('stat-pending').innerText=String(out.total_pending||0);
-        document.getElementById('stat-workers').innerText=String(out.worker_count||0);
+      const pb=out.priority_breakdown;
+      pv.innerHTML=renderPriorityBreakdown(pb);
+      healthCache.pending=out.total_pending||0;
+      healthCache.workers=out.worker_count||0;
+      if(pb&&pb.by_priority){
+        healthCache.tiers={
+          high:(pb.by_priority.high&&pb.by_priority.high.total)||0,
+          medium:(pb.by_priority.medium&&pb.by_priority.medium.total)||0,
+          low:(pb.by_priority.low&&pb.by_priority.low.total)||0
+        };
       }
+      document.getElementById('stat-pending').innerText=String(healthCache.pending);
+      updateHealthBanner();
     }
 
     // ── Workers ──
     async function loadWorkers() {
+      const el=document.getElementById('workers-output');
+      el.innerHTML=stateLoading('Loading workers…');
       const out=await api('/workers');
-      document.getElementById('workers-output').innerText=JSON.stringify(out,null,2);
+      if(!out||out._ok===false){el.innerHTML=stateError((out&&out._error)||'Failed to load workers');return;}
+      el.innerText=JSON.stringify(out,null,2);
     }
     async function loadMetrics() {
+      const el=document.getElementById('metrics-output');
+      el.innerHTML=stateLoading('Loading metrics…');
       const out=await api('/metrics');
-      document.getElementById('metrics-output').innerText=typeof out==='string'?out.substring(0,2000):JSON.stringify(out,null,2);
+      if(!out||out._ok===false){el.innerHTML=stateError((out&&out._error)||'Failed to load metrics');return;}
+      el.innerText=typeof out==='string'?out.substring(0,2000):JSON.stringify(out,null,2);
     }
     async function checkHealth() {
+      const el=document.getElementById('health-status');
+      el.innerHTML=stateLoading('Running health checks…');
       const healthz=await api('/healthz');
       const readyz=await api('/readyz');
-      const el=document.getElementById('health-status');
-      el.innerHTML='<p><span class="badge '+(healthz?'green':'red')+'"></span> /healthz '+(healthz?'OK':'FAIL')+'</p>'+
-        '<p><span class="badge '+(readyz?'green':'red')+'"></span> /readyz '+(readyz?'OK':'FAIL')+'</p>';
+      const hzOk=healthz&&healthz._ok!==false;
+      const rdOk=readyz&&readyz._ok!==false;
+      healthCache.apiOk=hzOk&&rdOk;
+      el.innerHTML=
+        '<p style="margin-bottom:8px;"><span class="badge '+(hzOk?'green':'red')+'"></span> /healthz '+(hzOk?'<span class="pill good">OK</span>':'<span class="pill bad">FAIL</span>')+'</p>'+
+        '<p><span class="badge '+(rdOk?'green':'red')+'"></span> /readyz '+(rdOk?'<span class="pill good">OK</span>':'<span class="pill bad">FAIL</span>')+'</p>';
+      updateHealthBanner();
     }
 
     // ── DAG ──
@@ -875,58 +1111,70 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Rate Limits ──
     async function loadRateLimits() {
+      const container=document.getElementById('rl-state');
+      container.innerHTML=stateLoading('Loading rate limits…');
       const out=await api(API_BASE+'/rate-limits');
-      if(!out)return;
+      if(!out||!out._ok){container.innerHTML=stateError((out&&out._error)||'Failed to load rate limits');return;}
       const tenants=out.tenants||[];
       const limited=tenants.filter(t=>t.limited).length;
+      healthCache.rl=limited;
       document.getElementById('stat-rl').innerText=String(limited);
-      const wrap=document.getElementById('rl-wrap');
-      const note=document.getElementById('rl-note');
       if(out.unlimited){
-        note.style.display='';wrap.style.display='none';
-        note.textContent='Rate limiting is disabled (unlimited).';
-        return;
+        container.innerHTML=stateEmpty('fa-infinity','Rate limiting is disabled (unlimited).');
+        updateHealthBanner();return;
       }
-      note.style.display='none';wrap.style.display='';
-      const body=document.getElementById('rl-body');
-      if(!tenants.length){body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);">No tenants have submitted requests yet.</td></tr>';}
-      else{
-        body.innerHTML=tenants.map(t=>
-          '<tr>'+
-          '<td>'+esc(t.tenant)+'</td>'+
-          '<td>'+esc(t.current)+'</td>'+
-          '<td>'+esc(t.limit)+'</td>'+
+      if(!tenants.length){
+        container.innerHTML=stateEmpty('fa-users','No tenants have submitted requests yet.');
+        updateHealthBanner();return;
+      }
+      container.innerHTML='<table><thead><tr><th>Tenant</th><th>Current</th><th>Limit</th><th>Window</th><th>Status</th></tr></thead><tbody>'+
+        tenants.map(t=>'<tr>'+
+          '<td>'+esc(t.tenant)+'</td><td>'+esc(t.current)+'</td><td>'+esc(t.limit)+'</td>'+
           '<td>'+esc(t.window_seconds)+'s</td>'+
-          '<td>'+(t.limited?'<span class="pill bad">limited</span>':'<span class="pill good">ok</span>')+'</td>'+
-          '</tr>').join('');
-      }
+          '<td>'+(t.limited?'<span class="pill bad">limited</span>':'<span class="pill good">ok</span>')+'</td></tr>').join('')+
+        '</tbody></table>';
+      updateHealthBanner();
     }
 
     // ── Circuit Breaker ──
     async function loadCircuitBreakers() {
+      const dashContainer=document.getElementById('cb-state');
+      const pageBody=document.getElementById('cb-body');
+      dashContainer.innerHTML=stateLoading('Loading circuit breakers…');
       const out=await api(API_BASE+'/circuit-breakers');
-      const map=out||{};
+      if(!out||out._ok===false){
+        const err=stateError((out&&out._error)||'Failed to load circuit breakers');
+        dashContainer.innerHTML=err;
+        pageBody.innerHTML='<tr><td colspan="3">'+err+'</td></tr>';
+        return;
+      }
+      const map={};
+      if(out&&typeof out==='object'){
+        Object.entries(out).forEach(function(e){if(e[0][0]!=='_')map[e[0]]=e[1];});
+      }
       const open=Object.entries(map).filter(([,v])=>/open/.test(v)).length;
+      healthCache.cb=open;
       document.getElementById('stat-cb').innerText=String(open);
       const rows=Object.entries(map).map(([k,v])=>{
         const cls=v.startsWith('open')?'bad':v==='closed'?'good':'warn';
-        const action=isAdmin()?'<td><button class="btn-secondary btn-sm" data-reset="'+esc(k)+'">Reset</button></td>':'';
+        const action=isAdmin()?'<td><button class="btn-secondary btn-sm" data-reset="'+esc(k)+'">Reset</button></td>':'<td></td>';
         return '<tr><td>'+esc(k)+'</td><td><span class="pill '+cls+'">'+esc(v)+'</span></td>'+action+'</tr>';
       }).join('');
-      document.getElementById('cb-body').innerHTML=rows||'<tr><td colspan="3" style="text-align:center;color:var(--muted);">No circuit breakers active.</td></tr>';
+      pageBody.innerHTML=rows||'<tr><td colspan="3">'+stateEmpty('fa-shield-alt','No circuit breakers registered.')+'</td></tr>';
       const chips=Object.entries(map).map(([k,v])=>{
         const cls=v.startsWith('open')?'open':v==='closed'?'closed':'half';
         return '<div class="cb-chip '+cls+'"><span class="dot"></span>'+esc(k)+' <span style="color:var(--muted);font-size:11px;">'+esc(v)+'</span>'+
           (isAdmin()?'<span class="actions"><button class="btn-secondary btn-sm" data-reset="'+esc(k)+'">Reset</button></span>':'')+
           '</div>';
       }).join('');
-      document.getElementById('dash-cb-body').innerHTML=chips||'<span style="font-size:13px;color:var(--muted);">No circuit breakers active.</span>';
+      dashContainer.innerHTML=chips?'<div class="cb-chips">'+chips+'</div>':stateEmpty('fa-shield-alt','No circuit breakers active.');
+      updateHealthBanner();
     }
     document.getElementById('cb-body').addEventListener('click',function(e){
       const b=e.target.closest('[data-reset]');
       if(b)resetBreaker(b.getAttribute('data-reset'));
     });
-    document.getElementById('dash-cb-body').addEventListener('click',function(e){
+    document.getElementById('cb-state').addEventListener('click',function(e){
       const b=e.target.closest('[data-reset]');
       if(b)resetBreaker(b.getAttribute('data-reset'));
     });
@@ -942,16 +1190,19 @@ const appHTML = `<!DOCTYPE html>
       const queue=document.getElementById('dlq-queue').value.trim();
       const tenant=document.getElementById('dlq-tenant').value.trim();
       dlqState.page=parseInt(document.getElementById('dlq-page').value)||1;
+      const body=document.getElementById('dlq-body');
+      body.innerHTML='<tr><td colspan="7">'+stateLoading('Loading dead letter queue…')+'</td></tr>';
       const p=new URLSearchParams({page:dlqState.page,limit:dlqState.limit});
       if(queue)p.set('queue',queue);
       const out=await api(API_BASE+'/dlq?'+p.toString());
-      const list=Array.isArray(out)?out:(out&&out.jobs)||[];
+      if(!out||out._ok===false){body.innerHTML='<tr><td colspan="7">'+stateError((out&&out._error)||'Failed to load DLQ')+'</td></tr>';return;}
+      const list=Array.isArray(out)?out:(out.jobs||[]);
       dlqState.cache=list;
-      dlqState.total=(out&&out.total!=null)?out.total:list.length;
+      dlqState.total=(out.total!=null)?out.total:list.length;
+      healthCache.dlq=dlqState.total;
       document.getElementById('dlq-page-info').innerText='Page '+dlqState.page+' · '+dlqState.total+' total';
       const filtered=list.filter(j=>!tenant||(j.tenant_id||'').includes(tenant));
-      const body=document.getElementById('dlq-body');
-      if(!filtered.length){body.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);">No failed jobs on this page.</td></tr>';}
+      if(!filtered.length){body.innerHTML='<tr><td colspan="7">'+stateEmpty('fa-check-circle','No failed jobs on this page.')+'</td></tr>';}
       else{
         body.innerHTML=filtered.map(j=>{
           const err=((j.error_history&&j.error_history.length)?j.error_history[j.error_history.length-1].error:j.error)||'';
@@ -963,12 +1214,12 @@ const appHTML = `<!DOCTYPE html>
             '<td>'+(j.retries||0)+'</td>'+
             '<td style="font-size:11px;color:var(--muted);">'+esc((j.updated_at||'').slice(0,19).replace('T',' '))+'</td>'+
             '<td><button class="btn-secondary btn-sm" onclick="openDLQDetail(\''+esc(j.id)+'\')">Details</button>'+
-            (isAdmin()?' <button class="btn-primary btn-sm" onclick="replayDLQId(\''+esc(j.id)+'\')"><i class="fas fa-redo"></i></button>':'')+
-            '</td>'+
-            '</tr>';
+            (isAdmin()?' <button class="btn-primary btn-sm" onclick="replayDLQId(\''+esc(j.id)+'\')" aria-label="Replay job"><i class="fas fa-redo"></i></button>':'')+
+            '</td></tr>';
         }).join('');
       }
       document.getElementById('stat-dlq').innerText=String(dlqState.total);
+      updateHealthBanner();
       return filtered;
     }
     function dlqPrevPage(){if(dlqState.page>1){dlqState.page--;document.getElementById('dlq-page').value=dlqState.page;loadDLQ();}}
@@ -976,7 +1227,7 @@ const appHTML = `<!DOCTYPE html>
 
     async function openDLQDetail(id) {
       const j=await api(API_BASE+'/dlq/'+encodeURIComponent(id));
-      if(!j){toast('Job not found');return;}
+      if(!j||j._ok===false){toast('Job not found','error');return;}
       const lastErr=(j.error_history&&j.error_history.length)?j.error_history[j.error_history.length-1].error:(j.error||'Unknown failure');
       const history=(j.error_history||[]).map(h=>
         '<tr><td>'+(h.attempt!=null?'#'+h.attempt:'')+'</td><td>'+esc(h.timestamp||'')+'</td><td>'+esc(h.error)+'</td></tr>'
@@ -1042,22 +1293,20 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Webhooks ──
     async function loadWebhooks() {
-      try{
-        const out=await api(API_BASE+'/webhooks');
-        const list=Array.isArray(out)?out:[];
-        const body=document.getElementById('wh-body');
-        if(!list.length){body.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);">No webhooks registered.</td></tr>';}
-        else{
-          body.innerHTML=list.map(w=>
-            '<tr>'+
-            '<td style="font-family:monospace;font-size:12px;">'+esc(w.id)+'</td>'+
-            '<td style="color:var(--muted);">'+esc(w.url)+'</td>'+
-            '<td>'+(w.events||[]).map(e=>'<span class="pill">'+esc(e)+'</span>').join(' ')+'</td>'+
-            '<td style="font-size:11px;color:var(--muted);">'+esc((w.created_at||'').slice(0,19).replace('T',' '))+'</td>'+
-            '<td><button class="btn-secondary btn-sm" onclick="openWhHistory(\''+esc(w.id)+'\',\''+esc(w.url)+'\')"><i class="fas fa-history"></i> History</button></td>'+
-            '</tr>').join('');
-        }
-      }catch(e){document.getElementById('wh-body').innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--muted);">Failed to load webhooks.</td></tr>';}
+      const body=document.getElementById('wh-body');
+      body.innerHTML='<tr><td colspan="5">'+stateLoading('Loading webhooks…')+'</td></tr>';
+      const out=await api(API_BASE+'/webhooks');
+      if(!out||out._ok===false){body.innerHTML='<tr><td colspan="5">'+stateError((out&&out._error)||'Failed to load webhooks')+'</td></tr>';return;}
+      const list=Array.isArray(out)?out:[];
+      if(!list.length){body.innerHTML='<tr><td colspan="5">'+stateEmpty('fa-globe','No webhooks registered.')+'</td></tr>';return;}
+      body.innerHTML=list.map(w=>
+        '<tr>'+
+        '<td style="font-family:monospace;font-size:12px;">'+esc(w.id)+'</td>'+
+        '<td style="color:var(--muted);">'+esc(w.url)+'</td>'+
+        '<td>'+(w.events||[]).map(e=>'<span class="pill">'+esc(e)+'</span>').join(' ')+'</td>'+
+        '<td style="font-size:11px;color:var(--muted);">'+esc((w.created_at||'').slice(0,19).replace('T',' '))+'</td>'+
+        '<td><button class="btn-secondary btn-sm" onclick="openWhHistory(\''+esc(w.id)+'\',\''+esc(w.url)+'\')"><i class="fas fa-history"></i> History</button></td>'+
+        '</tr>').join('');
     }
     async function registerWebhook() {
       const body={
@@ -1065,9 +1314,9 @@ const appHTML = `<!DOCTYPE html>
         secret:document.getElementById('wh-secret').value.trim(),
         events:(document.getElementById('wh-events').value.trim()||'completed,failed').split(',').map(s=>s.trim())
       };
-      if(!body.url){toast('URL is required');return;}
+      if(!body.url){toast('URL is required','warn');return;}
       const out=await api(API_BASE+'/webhooks',{method:'POST',body:JSON.stringify(body)});
-      if(!out){toast('Register failed');return;}
+      if(!out||out._ok===false){toast((out&&out._error)||'Register failed','error');return;}
       loadWebhooks(); toast('Webhook registered');
     }
     async function openWhHistory(id,url) {
@@ -1093,16 +1342,31 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Live Activity (SSE) ──
     let eventSource=null;
+    let sseDisconnectTimer=null;
     function connectEvents() {
+      if(eventSource){eventSource.close();eventSource=null;}
+      setSSEState('connecting');
       try{
         eventSource=new EventSource(API_BASE+'/events');
-      }catch(e){document.getElementById('feed-status').textContent='offline';return;}
-      eventSource.onopen=function(){document.getElementById('feed-status').textContent='connected';document.getElementById('feed-status').className='pill good';};
+      }catch(e){setSSEState('disconnected');return;}
+      eventSource.onopen=function(){
+        clearTimeout(sseDisconnectTimer);
+        setSSEState('connected');
+      };
       eventSource.onerror=function(){
-        document.getElementById('feed-status').textContent='reconnecting';
-        document.getElementById('feed-status').className='pill warn';
+        if(sseState==='connected'||sseState==='connecting'){
+          setSSEState('reconnecting');
+        }
+        clearTimeout(sseDisconnectTimer);
+        sseDisconnectTimer=setTimeout(function(){
+          if(eventSource&&eventSource.readyState===EventSource.CLOSED){
+            setSSEState('disconnected');
+          }
+        },8000);
       };
       eventSource.onmessage=function(e){
+        clearTimeout(sseDisconnectTimer);
+        if(sseState!=='connected')setSSEState('connected');
         let data={};
         try{data=JSON.parse(e.data);}catch(_){}
         pushFeed(data);
@@ -1112,7 +1376,7 @@ const appHTML = `<!DOCTYPE html>
         else if(data.kind==='dlq'){loadDLQ().catch(function(){});}
       };
       eventSource.addEventListener('session_expired',function(){
-        toast('Session expired — redirecting to login');
+        toast('Session expired — redirecting to login','warn');
         setTimeout(function(){window.location.href='/login';},1500);
       });
     }
@@ -1136,8 +1400,7 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Init ──
     async function loadEverything() {
-      const page=localStorage.getItem('task_queue_page')||'dashboard';
-      showPage(page);
+      setSSEState(sseState==='connected'?sseState:'connecting');
       await Promise.all([
         loadDLQ().catch(function(){}),
         loadWorkers().catch(function(){}),
@@ -1148,8 +1411,16 @@ const appHTML = `<!DOCTYPE html>
         loadRateLimits().catch(function(){}),
         loadWebhooks().catch(function(){})
       ]);
+      updateHealthBanner();
     }
-    loadSession().then(function(ok){if(ok){loadEverything();connectEvents();}});
+    loadSession().then(function(ok){
+      if(ok){
+        const page=localStorage.getItem('task_queue_page')||'dashboard';
+        showPage(page);
+        loadEverything();
+        connectEvents();
+      }
+    });
   </script>
 </body>
 </html>`

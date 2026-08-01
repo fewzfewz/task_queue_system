@@ -614,3 +614,59 @@ The checked-in spec files (`docs/swagger.yaml`, `docs/swagger.json`, `docs/docs.
 - The scheduler is responsible for moving delayed jobs into active queues and reclaiming timed-out jobs.
 - The `chaos/` package is build-tagged and intentionally excluded from normal `go test ./...` runs.
 - Request logs now include a lightweight trace ID so the project is ready for a future OTEL exporter without changing the call sites.
+
+## Client Integration Guide (How to Use This System)
+
+If you are a developer integrating a separate application with this Task Queue, you will interact exclusively with the HTTP API, not the browser UI.
+
+### 1. Authentication
+All requests must include the `X-API-Key` header. Do not use session cookies for machine-to-machine communication.
+```http
+X-API-Key: secret-api-key
+```
+
+### 2. Submitting a Job
+To hand off a background task, send a POST request to `/jobs` with your payload:
+```bash
+curl -X POST http://localhost:8080/jobs \
+  -H "X-API-Key: secret-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "email",
+    "payload": {"to": "user@example.com", "subject": "Welcome"},
+    "priority": "high",
+    "tenant_id": "my-backend-service"
+  }'
+```
+The system will return a `job_id`. Your application can now safely return a response to the user while the worker processes the email in the background.
+
+### 3. Receiving Webhooks (Callbacks)
+Instead of polling the API to see if your job finished, register a webhook. The Task Queue will POST to your application when the job succeeds or fails.
+```bash
+curl -X POST http://localhost:8080/api/v1/webhooks \
+  -H "X-API-Key: secret-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://my-backend-service.com/webhooks/task-queue",
+    "events": ["job.completed", "job.failed"],
+    "tenant_id": "my-backend-service"
+  }'
+```
+When your endpoint receives the webhook, it should verify the HMAC signature included in the headers to ensure the payload is securely coming from the Task Queue.
+
+## Project Roadmap & Remaining Work
+
+While the core functionality is stable, the following items remain to be completed for a fully hardened production release:
+
+- **Deployment & Infrastructure:**
+  - Create a unified, end-to-end production deployment guide.
+  - Document TLS / Ingress setup for Kubernetes deployments.
+  - Finalize production-grade Namespace, Service Account, and RBAC hardening.
+  - Document secret management workflow (Vault rotation) for production clusters.
+- **Testing & Tooling:**
+  - Build a standalone Chaos CLI to execute failure scenarios outside of the `go test` runner.
+  - Create an automated JSON report exporter for CI dashboards for the chaos suite.
+  - Add integration tests for HashiCorp Vault tenant-level secret rotation and cache invalidation behaviors.
+- **Features:**
+  - Add more built-in worker plugins beyond the current `email` and `image` examples.
+  - OpenTelemetry (OTEL) gRPC exporter integration (trace IDs are currently logged, but the exporter is pending).
