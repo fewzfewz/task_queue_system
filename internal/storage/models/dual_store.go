@@ -120,5 +120,18 @@ func (s *DualStore) GetQueueLengths(ctx context.Context) (map[string]map[string]
 	return s.Primary.GetQueueLengths(ctx)
 }
 
+func (s *DualStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error {
+	_ = s.Secondary.RegisterClient(ctx, tenantID, apiKeyHash)
+	return s.Primary.RegisterClient(ctx, tenantID, apiKeyHash)
+}
+
+func (s *DualStore) VerifyClient(ctx context.Context, apiKeyHash string) (string, error) {
+	return s.Primary.VerifyClient(ctx, apiKeyHash)
+}
+
+func (s *DualStore) ListClients(ctx context.Context) ([]*ClientRecord, error) {
+	return s.Primary.ListClients(ctx)
+}
+
 
 

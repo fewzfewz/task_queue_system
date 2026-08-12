@@ -23,6 +23,11 @@ func AuthRequired(cfg *config.Config) func(http.Handler) http.Handler {
 	}
 }
 
+// SendJSONError writes a JSON error response. Exported for use in handlers.
+func SendJSONError(w http.ResponseWriter, status int, code, err string) {
+	sendJSONError(w, status, code, err)
+}
+
 func sendJSONError(w http.ResponseWriter, status int, code, err string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

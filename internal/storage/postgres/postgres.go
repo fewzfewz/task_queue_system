@@ -560,7 +560,54 @@ func (s *PostgresStore) GetQueueLengths(ctx context.Context) (map[string]map[str
 	return results, nil
 }
 
+func (s *PostgresStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO clients (tenant_id, api_key_hash) VALUES ($1, $2)`,
+		tenantID, apiKeyHash)
+	return err
+}
 
+func (s *PostgresStore) VerifyClient(ctx context.Context, apiKeyHash string) (string, error) {
+	var tenantID string
+	err := s.pool.QueryRow(ctx,
+		`SELECT tenant_id FROM clients WHERE api_key_hash = $1`,
+		apiKeyHash).Scan(&tenantID)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return "", models.ErrClientNotFound
+		}
+		return "", err
+	}
+	return tenantID, nil
+}
+
+func (s *PostgresStore) ListClients(ctx context.Context) ([]*models.ClientRecord, error) {
+	rows, err := s.pool.Query(ctx, `SELECT tenant_id, created_at FROM clients ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("postgres_store: failed to list clients: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.ClientRecord
+	seen := make(map[string]bool)
+
+	for rows.Next() {
+		var r models.ClientRecord
+		if err := rows.Scan(&r.TenantID, &r.CreatedAt); err != nil {
+			return nil, fmt.Errorf("postgres_store: failed to scan client record: %w", err)
+		}
+		if !seen[r.TenantID] {
+			seen[r.TenantID] = true
+			out = append(out, &r)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres_store: error iterating clients: %w", err)
+	}
+
+	return out, nil
+}
 func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 	var results []*jobs.Job
 	for rows.Next() {

@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"task-queue-system/internal/api/middleware"
 )
 
 // ServeAdminDLQ renders the single-page HTML management console for the Dead
@@ -13,24 +16,40 @@ func (h *JobHandler) ServeAdminDLQ(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, adminHTML)
 }
 
+// ListClients returns a JSON list of all registered clients (tenants).
+func (h *JobHandler) ListClients(w http.ResponseWriter, r *http.Request) {
+	clients, err := h.service.Store().ListClients(r.Context())
+	if err != nil {
+		h.logger.Error("failed to list clients", "error", err)
+		middleware.SendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to fetch clients")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"clients": clients,
+	})
+}
+
 const adminHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TaskQueue | DLQ Console</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     :root {
-      --bg:#0a0f1e; --bg2:#111827; --surface:#1a2236; --surface2:#1f2a40;
-      --border:#2a3555; --text:#e2e8f0; --muted:#94a3b8; --muted2:#64748b;
-      --accent:#6366f1; --accent2:#818cf8; --good:#22c55e; --bad:#ef4444; --warn:#f59e0b;
-      --sidebar-w:250px; --header-h:64px;
+      --bg:#070a14; --bg2:#0f1629; --surface:rgba(26,34,54,0.65); --surface2:rgba(31,42,64,0.8);
+      --border:rgba(255,255,255,0.08); --border-hover:rgba(255,255,255,0.15); --text:#f8fafc; --muted:#94a3b8; --muted2:#64748b;
+      --accent:#6366f1; --accent2:#818cf8; --accent3:#c084fc;
+      --good:#34d399; --bad:#f87171; --warn:#fbbf24;
+      --sidebar-w:260px; --header-h:70px;
     }
     body {
-      font-family:'Inter',-apple-system,sans-serif; background:var(--bg); color:var(--text);
+      font-family:'Outfit','Inter',-apple-system,sans-serif; background:var(--bg); color:var(--text);
       min-height:100vh; overflow-x:hidden;
     }
     ::-webkit-scrollbar { width:6px; }
@@ -41,9 +60,10 @@ const adminHTML = `<!DOCTYPE html>
 
     .layout { display:flex; min-height:100vh; }
     #sidebar {
-      width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
+      width:var(--sidebar-w); background:rgba(21,27,43,0.85); border-right:1px solid var(--border);
       position:fixed; top:0; left:0; height:100vh; z-index:100;
-      display:flex; flex-direction:column; transition:transform .3s ease;
+      display:flex; flex-direction:column; transition:transform .3s cubic-bezier(0.4, 0, 0.2, 1);
+      backdrop-filter:blur(20px);
     }
     #sidebar.closed { transform:translateX(-100%); }
     .sidebar-brand {
@@ -51,9 +71,9 @@ const adminHTML = `<!DOCTYPE html>
       display:flex; align-items:center; gap:12px;
     }
     .sidebar-brand .brand-icon {
-      width:40px; height:40px; background:linear-gradient(135deg,#ef4444,#f87171);
+      width:44px; height:44px; background:linear-gradient(135deg,#ef4444,#f87171);
       border-radius:12px; display:flex; align-items:center; justify-content:center;
-      box-shadow:0 4px 12px rgba(239,68,68,.3);
+      box-shadow:0 8px 24px rgba(239,68,68,.3), inset 0 2px 4px rgba(255,255,255,.2);
     }
     .sidebar-brand .brand-icon i { color:#fff; font-size:18px; }
     .sidebar-brand h2 { font-size:16px; font-weight:700; }
@@ -115,20 +135,24 @@ const adminHTML = `<!DOCTYPE html>
     .page { display:none; }
     .page.active { display:block; animation:fadeIn .25s ease; }
 
-    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:24px; }
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:24px; }
     .stat-card {
-      background:var(--surface); border:1px solid var(--border); border-radius:16px;
-      padding:18px 20px; transition:border-color .2s;
+      background:var(--surface); border:1px solid var(--border); border-radius:20px;
+      padding:20px 24px; transition:transform 0.3s ease, box-shadow 0.3s ease, border-color 0.2s;
+      backdrop-filter:blur(16px);
+      box-shadow:0 4px 24px rgba(0,0,0,0.1);
     }
-    .stat-card:hover { border-color:#ef4444; }
-    .stat-card .stat-label { font-size:11px; color:var(--muted2); text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
-    .stat-card .stat-value { font-size:28px; font-weight:700; margin-top:6px; }
-    .stat-card .stat-desc { font-size:12px; color:var(--muted); margin-top:2px; }
+    .stat-card:hover { transform:translateY(-2px); box-shadow:0 8px 32px rgba(0,0,0,0.2); border-color:#ef4444; }
+    .stat-card .stat-label { font-size:12px; color:var(--muted2); text-transform:uppercase; letter-spacing:.1em; font-weight:700; }
+    .stat-card .stat-value { font-size:32px; font-weight:800; margin-top:8px; }
+    .stat-card .stat-desc { font-size:13px; color:var(--muted); margin-top:4px; }
 
     .section-card {
-      background:var(--surface); border:1px solid var(--border); border-radius:16px;
-      padding:20px; margin-bottom:16px;
+      background:var(--surface); border:1px solid var(--border); border-radius:20px;
+      padding:24px; margin-bottom:20px; backdrop-filter:blur(16px);
+      box-shadow:0 4px 24px rgba(0,0,0,0.1); transition:transform 0.3s ease, box-shadow 0.3s ease;
     }
+    .section-card:hover { transform:translateY(-1px); box-shadow:0 8px 32px rgba(0,0,0,0.15); border-color:var(--border-hover); }
     .section-card .section-title {
       font-size:13px; font-weight:600; color:var(--muted2); text-transform:uppercase;
       letter-spacing:.08em; margin-bottom:14px;

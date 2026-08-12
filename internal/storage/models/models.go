@@ -92,6 +92,17 @@ type Store interface {
 
 	// GetQueueLengths returns pending job counts segmented by queue and tenant.
 	GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error)
+
+	// Client Management
+	RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error
+	VerifyClient(ctx context.Context, apiKeyHash string) (string, error)
+	ListClients(ctx context.Context) ([]*ClientRecord, error)
+}
+
+// ClientRecord represents a registered tenant in the system.
+type ClientRecord struct {
+	TenantID  string    `json:"tenant_id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 
@@ -100,18 +111,25 @@ type Store interface {
 // ErrJobNotFound is returned when a job ID does not exist in the store.
 var ErrJobNotFound = fmt.Errorf("job not found")
 
+// ErrClientNotFound is returned when an API key hash is not found.
+var ErrClientNotFound = fmt.Errorf("client not found")
+
 // ─── In-Memory Store ──────────────────────────────────────────────────────────
 
 // InMemoryStore is a goroutine-safe, map-backed Store.
 // Use it for local development, integration tests, and as a drop-in mock.
 type InMemoryStore struct {
-	mu   sync.RWMutex
-	data map[string]*jobs.Job
+	mu      sync.RWMutex
+	data    map[string]*jobs.Job
+	clients map[string]string // apiKeyHash -> tenantID
 }
 
 // NewInMemoryStore returns an initialised InMemoryStore.
 func NewInMemoryStore() *InMemoryStore {
-	return &InMemoryStore{data: make(map[string]*jobs.Job)}
+	return &InMemoryStore{
+		data:    make(map[string]*jobs.Job),
+		clients: make(map[string]string),
+	}
 }
 
 // Save adds or replaces the job record. Stores a shallow copy to prevent
@@ -391,8 +409,41 @@ func (s *InMemoryStore) GetQueueLengths(_ context.Context) (map[string]map[strin
 	return results, nil
 }
 
+func (s *InMemoryStore) RegisterClient(_ context.Context, tenantID, apiKeyHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clients[apiKeyHash] = tenantID
+	return nil
+}
 
+func (s *InMemoryStore) VerifyClient(_ context.Context, apiKeyHash string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tenantID, ok := s.clients[apiKeyHash]
+	if !ok {
+		return "", ErrClientNotFound
+	}
+	return tenantID, nil
+}
 
+func (s *InMemoryStore) ListClients(_ context.Context) ([]*ClientRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	
+	// Deduplicate tenants
+	seen := make(map[string]bool)
+	var out []*ClientRecord
+	for _, tenantID := range s.clients {
+		if !seen[tenantID] {
+			seen[tenantID] = true
+			out = append(out, &ClientRecord{
+				TenantID:  tenantID,
+				CreatedAt: time.Now(), // InMemory doesn't track creation time
+			})
+		}
+	}
+	return out, nil
+}
 
 // ─── Redis Store ──────────────────────────────────────────────────────────────
 
@@ -731,3 +782,67 @@ func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string
 	return results, nil
 }
 
+func (s *RedisStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error {
+	key := fmt.Sprintf("task_queue:clients:%s", apiKeyHash)
+	err := s.client.Set(ctx, key, tenantID, 0).Err()
+	if err != nil {
+		return fmt.Errorf("redis_store: failed to register client: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStore) VerifyClient(ctx context.Context, apiKeyHash string) (string, error) {
+	key := fmt.Sprintf("task_queue:clients:%s", apiKeyHash)
+	tenantID, err := s.client.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", ErrClientNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("redis_store: failed to verify client: %w", err)
+	}
+	return tenantID, nil
+}
+
+func (s *RedisStore) ListClients(ctx context.Context) ([]*ClientRecord, error) {
+	var keys []string
+	var cursor uint64
+	for {
+		var batch []string
+		var err error
+		batch, cursor, err = s.client.Scan(ctx, cursor, "task_queue:clients:*", 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redis_store: failed to scan clients: %w", err)
+		}
+		keys = append(keys, batch...)
+		if cursor == 0 {
+			break
+		}
+	}
+
+	if len(keys) == 0 {
+		return []*ClientRecord{}, nil
+	}
+
+	vals, err := s.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis_store: failed to mget clients: %w", err)
+	}
+
+	seen := make(map[string]bool)
+	var out []*ClientRecord
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		tenantID := v.(string)
+		if !seen[tenantID] {
+			seen[tenantID] = true
+			out = append(out, &ClientRecord{
+				TenantID:  tenantID,
+				CreatedAt: time.Now(), // Redis schema doesn't track creation time natively
+			})
+		}
+	}
+
+	return out, nil
+}

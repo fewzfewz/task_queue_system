@@ -2,26 +2,91 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"sync"
+	"time"
 
 	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/storage/models"
 )
 
 // SessionCookieName is the httpOnly cookie that carries the session ID.
 const SessionCookieName = "tq_session"
 
-// RequireAuth authenticates a request either with the shared X-API-Key header
-// (machine clients) or a valid session cookie (the operator UI). It injects the
-// auth type and role into the request context and rejects everything else.
-func RequireAuth(cfg *config.Config, sessions *session.Store) func(http.Handler) http.Handler {
+// apiKeyCacheEntry caches a verified API key so we don't hit the DB on every request.
+type apiKeyCacheEntry struct {
+	tenantID  string
+	expiresAt time.Time
+}
+
+// apiKeyCache is a short-lived in-memory cache for verified API keys (hash -> tenantID).
+type apiKeyCache struct {
+	mu    sync.RWMutex
+	store map[string]apiKeyCacheEntry
+}
+
+func newAPIKeyCache() *apiKeyCache {
+	return &apiKeyCache{store: make(map[string]apiKeyCacheEntry)}
+}
+
+func (c *apiKeyCache) get(hash string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.store[hash]
+	if !ok || time.Now().After(e.expiresAt) {
+		return "", false
+	}
+	return e.tenantID, true
+}
+
+func (c *apiKeyCache) set(hash, tenantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.store[hash] = apiKeyCacheEntry{tenantID: tenantID, expiresAt: time.Now().Add(60 * time.Second)}
+}
+
+// RequireAuth authenticates a request either with a dynamic per-tenant X-API-Key header
+// (machine clients, verified against the DB) or a valid session cookie (the operator UI).
+// It injects the auth type, role, and tenant_id into the request context.
+func RequireAuth(cfg *config.Config, sessions *session.Store, store models.Store) func(http.Handler) http.Handler {
+	cache := newAPIKeyCache()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			if key := r.Header.Get("X-API-Key"); key != "" && key == cfg.ApiKey {
+			if rawKey := r.Header.Get("X-API-Key"); rawKey != "" {
+				// Fast-path: operator's own static API key grants admin access
+				// without a DB round-trip.
+				if cfg.ApiKey != "" && rawKey == cfg.ApiKey {
+					ctx = context.WithValue(ctx, ContextKeyAuthType, AuthTypeAPIKey)
+					ctx = context.WithValue(ctx, ContextKeyRole, RoleAdmin)
+					ctx = context.WithValue(ctx, ContextKeyTenantID, "operator")
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+
+				// Hash the incoming key for safe DB lookup
+				sum := sha256.Sum256([]byte(rawKey))
+				hashHex := hex.EncodeToString(sum[:])
+
+				// Check cache first to avoid hitting DB every request
+				tenantID, cached := cache.get(hashHex)
+				if !cached {
+					var err error
+					tenantID, err = store.VerifyClient(ctx, hashHex)
+					if err != nil {
+						sendJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid API key")
+						return
+					}
+					cache.set(hashHex, tenantID)
+				}
+
 				ctx = context.WithValue(ctx, ContextKeyAuthType, AuthTypeAPIKey)
 				ctx = context.WithValue(ctx, ContextKeyRole, RoleAdmin)
+				ctx = context.WithValue(ctx, ContextKeyTenantID, tenantID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}

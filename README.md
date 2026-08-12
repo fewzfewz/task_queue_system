@@ -226,7 +226,7 @@ make docker-build
 
 ## UI
 
-The system has two browser-based interfaces, both accessed via the API server (port `8080`).
+The system has three browser-based interfaces, all accessed via the API server (port `8080`).
 
 ### Main Operator Dashboard — `GET /` or `GET /ui`
 
@@ -254,9 +254,21 @@ A focused dead-letter queue management console:
 | **Workers** | Active worker heartbeat cards |
 | **DLQ Table** | Sortable/filterable table with replay/purge per row, auto-refresh toggle |
 
+### Client Portal — `/client/login`, `/client/register`, `/client/dashboard`
+
+A dedicated, styled single-page application for tenants to register, view their API keys, and manage their specific jobs.
+
+| Page | Description |
+|-------------|-------------|
+| **Register** | Register a new tenant to generate a one-time API key |
+| **Login** | Log in with the API key (stored in `localStorage`) |
+| **Dashboard** | View tenant-specific jobs, submit new jobs, and monitor status in a modern UI |
+
 ### Auth flow
 
-Both pages show a login overlay on first load. `POST /api/v1/login` validates the credentials and starts a server-side session (an `HttpOnly` session cookie plus a per-session CSRF token). The API key is never returned to the browser and nothing is stored in `localStorage`; the session cookie is sent with every request and the CSRF token rides in the `X-CSRF-Token` header on mutating calls. Sessions expire after `SESSION_TTL_SECONDS` and are revoked by `POST /api/v1/logout` or after 15 minutes of idle.
+For operator pages, they show a login overlay on first load. `POST /api/v1/login` validates the credentials and starts a server-side session (an `HttpOnly` session cookie plus a per-session CSRF token). The API key is never returned to the browser and nothing is stored in `localStorage`; the session cookie is sent with every request and the CSRF token rides in the `X-CSRF-Token` header on mutating calls. Sessions expire after `SESSION_TTL_SECONDS` and are revoked by `POST /api/v1/logout` or after 15 minutes of idle.
+
+For the **Client Portal**, authentication is stateless. The client registers their tenant, receives a one-time API key, and that key is stored purely on the client-side (in `localStorage`). It is sent in the `X-API-Key` header for all dashboard requests.
 
 ## Terminal Examples
 
@@ -617,42 +629,82 @@ The checked-in spec files (`docs/swagger.yaml`, `docs/swagger.json`, `docs/docs.
 
 ## Client Integration Guide (How to Use This System)
 
-If you are a developer integrating a separate application with this Task Queue, you will interact exclusively with the HTTP API, not the browser UI.
+If you are a developer integrating a separate application with this Task Queue, you can either interact exclusively with the HTTP API using your machine client, or use the **Client Portal UI**. Each application gets its own unique API key tied to its own `tenant_id`.
 
-### 1. Authentication
-All requests must include the `X-API-Key` header. Do not use session cookies for machine-to-machine communication.
-```http
-X-API-Key: secret-api-key
+### Option A: Use the Client Portal UI (Recommended for Users)
+
+1. Navigate to `http://localhost:8080/client/register`.
+2. Enter your desired tenant name.
+3. The system will provide your **API Key**. Save this immediately! It will be automatically saved to your browser's `localStorage` for the current session.
+4. You will be redirected to the **Client Dashboard** (`/client/dashboard`) where you can submit jobs, view your task queue, and check statuses using a rich, modern UI.
+5. In the future, you can return and access the dashboard by entering your API key at `http://localhost:8080/client/login`.
+
+### Option B: Use the HTTP API (For Application Backends)
+
+#### Step 1: Register and get your API key
+
+Call the open `/api/v1/register` endpoint with your service's name. No prior credentials are needed.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/register \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "my-backend-service"}'
 ```
 
-### 2. Submitting a Job
-To hand off a background task, send a POST request to `/jobs` with your payload:
+You will get a response containing your unique, one-time API key:
+
+```json
+{
+  "tenant_id": "my-backend-service",
+  "api_key": "tq_live_a3f...c8d",
+  "message": "Store this API key safely. It will not be shown again."
+}
+```
+
+> ⚠️ **Save this key immediately.** Only the hash is stored on the server. The raw key cannot be retrieved again.
+
+### Step 2: Authenticate every request
+
+Include your key in the `X-API-Key` header on every request:
+
+```http
+X-API-Key: tq_live_a3f...c8d
+```
+
+### Step 3: Submit a job
+
+Hand off a background task by posting to `/jobs`:
+
 ```bash
 curl -X POST http://localhost:8080/jobs \
-  -H "X-API-Key: secret-api-key" \
+  -H "X-API-Key: tq_live_a3f...c8d" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "email",
-    "payload": {"to": "user@example.com", "subject": "Welcome"},
+    "payload": {"to": "user@example.com", "subject": "Welcome!"},
     "priority": "high",
     "tenant_id": "my-backend-service"
   }'
 ```
-The system will return a `job_id`. Your application can now safely return a response to the user while the worker processes the email in the background.
 
-### 3. Receiving Webhooks (Callbacks)
-Instead of polling the API to see if your job finished, register a webhook. The Task Queue will POST to your application when the job succeeds or fails.
+The system returns a `job_id`. Your application can immediately return a response to your user — the work happens in the background.
+
+### Step 4: Get notified when the job finishes (Webhooks)
+
+Instead of polling, register a webhook. The Task Queue will call your application when a job succeeds or fails:
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/webhooks \
-  -H "X-API-Key: secret-api-key" \
+  -H "X-API-Key: tq_live_a3f...c8d" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://my-backend-service.com/webhooks/task-queue",
+    "url": "https://my-backend-service.com/hooks/task-queue",
     "events": ["job.completed", "job.failed"],
     "tenant_id": "my-backend-service"
   }'
 ```
-When your endpoint receives the webhook, it should verify the HMAC signature included in the headers to ensure the payload is securely coming from the Task Queue.
+
+Verify the HMAC signature on the incoming webhook payload to ensure it genuinely came from the Task Queue.
 
 ## Project Roadmap & Remaining Work
 
@@ -670,3 +722,4 @@ While the core functionality is stable, the following items remain to be complet
 - **Features:**
   - Add more built-in worker plugins beyond the current `email` and `image` examples.
   - OpenTelemetry (OTEL) gRPC exporter integration (trace IDs are currently logged, but the exporter is pending).
+  - Admin UI page to view and revoke registered client API keys.

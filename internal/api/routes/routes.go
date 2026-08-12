@@ -37,14 +37,22 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	// ── Public routes ────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/v1/login", h.Login)
 	mux.HandleFunc("GET /api/v1/session", h.GetSession)
-	mux.HandleFunc("GET /", h.ServeAppUI)
-	mux.HandleFunc("GET /ui", h.ServeAppUI)
+	mux.HandleFunc("GET /", h.ServeLandingPage)      // public landing + registration
+	mux.HandleFunc("GET /ui", h.ServeAppUI)           // operator dashboard
 	mux.HandleFunc("GET /login", h.ServeLoginPage)
 	mux.HandleFunc("GET /metrics", h.GetMetrics) // Prometheus scrape target
 	mux.HandleFunc("GET /admin/dlq", h.ServeAdminDLQ)
 
+	// ── Client Portal UI (auth handled client-side via localStorage) ──────────
+	mux.HandleFunc("GET /client/register", h.ServeClientRegisterPage)
+	mux.HandleFunc("GET /client/login", h.ServeClientLoginPage)
+	mux.HandleFunc("GET /client/dashboard", h.ServeClientDashboard)
+
+	// ── Client registration API (open, no auth required) ──────────────────────
+	mux.HandleFunc("POST /api/v1/register", h.RegisterClient)
+
 	// ── Authenticated routes (API key or session cookie) ──────────────────────
-	auth := middleware.RequireAuth(cfg, sessions)
+	auth := middleware.RequireAuth(cfg, sessions, store)
 	csrf := middleware.CSRFProtect()
 
 	// read registers an authenticated GET route. Any authenticated principal
@@ -72,6 +80,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	read("GET /api/v1/dlq/{id}", h.GetFailedJobDetail)
 	read("GET /api/v1/circuit-breakers", h.GetCircuitBreakers)
 	read("GET /api/v1/rate-limits", h.GetRateLimits)
+	read("GET /api/v1/clients", h.ListClients)
 
 	write("POST /jobs", h.CreateJob)
 	write("POST /jobs/batch", h.CreateJobBatch)

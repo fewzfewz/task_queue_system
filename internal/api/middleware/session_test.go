@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,12 +12,49 @@ import (
 
 	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/storage/models"
 )
 
+// mockStore is a minimal Store that only implements RegisterClient / VerifyClient.
+type mockStore struct {
+	models.Store // embed to satisfy the interface for unused methods
+	clients      map[string]string
+}
+
+func newMockStore(clients map[string]string) *mockStore {
+	return &mockStore{clients: clients}
+}
+
+func (m *mockStore) VerifyClient(_ context.Context, hash string) (string, error) {
+	if t, ok := m.clients[hash]; ok {
+		return t, nil
+	}
+	return "", models.ErrClientNotFound
+}
+
+func (m *mockStore) RegisterClient(_ context.Context, tenantID, hash string) error {
+	m.clients[hash] = tenantID
+	return nil
+}
+
+// hashKey hashes a raw key the same way the middleware does.
+func hashKey(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
 func TestRequireAuth_APIKey(t *testing.T) {
-	cfg := &config.Config{ApiKey: "key"}
+	rawKey := "test-key"
+
+	// Pre-register the key in the mock store.
+	sum := sha256.Sum256([]byte(rawKey))
+	hashHex := hex.EncodeToString(sum[:])
+
+	store := newMockStore(map[string]string{hashHex: "tenant-a"})
+	cfg := &config.Config{}
 	sessions := session.NewStore(time.Hour)
-	h := RequireAuth(cfg, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := RoleFromContext(r.Context()); got != RoleAdmin {
 			t.Errorf("expected role admin, got %q", got)
 		}
@@ -23,7 +62,7 @@ func TestRequireAuth_APIKey(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest("GET", "/jobs", nil)
-	req.Header.Set("X-API-Key", "key")
+	req.Header.Set("X-API-Key", rawKey)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -31,12 +70,31 @@ func TestRequireAuth_APIKey(t *testing.T) {
 	}
 }
 
+func TestRequireAuth_InvalidAPIKey(t *testing.T) {
+	store := newMockStore(map[string]string{})
+	cfg := &config.Config{}
+	sessions := session.NewStore(time.Hour)
+
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not run")
+	}))
+
+	req := httptest.NewRequest("GET", "/jobs", nil)
+	req.Header.Set("X-API-Key", "unknown-key")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
 func TestRequireAuth_SessionCookie(t *testing.T) {
-	cfg := &config.Config{ApiKey: "key"}
+	store := newMockStore(map[string]string{})
+	cfg := &config.Config{}
 	sessions := session.NewStore(time.Hour)
 	sess, _ := sessions.Create("alice", RoleViewer)
 
-	h := RequireAuth(cfg, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := SessionFromContext(r.Context())
 		if got == nil || got.ID != sess.ID {
 			t.Error("expected session in context")
@@ -57,9 +115,10 @@ func TestRequireAuth_SessionCookie(t *testing.T) {
 }
 
 func TestRequireAuth_RejectsAnonymous(t *testing.T) {
-	cfg := &config.Config{ApiKey: "key"}
+	store := newMockStore(map[string]string{})
+	cfg := &config.Config{}
 	sessions := session.NewStore(time.Hour)
-	h := RequireAuth(cfg, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not run")
 	}))
 
@@ -72,11 +131,12 @@ func TestRequireAuth_RejectsAnonymous(t *testing.T) {
 }
 
 func TestRequireAuth_RejectsExpiredSession(t *testing.T) {
-	cfg := &config.Config{ApiKey: "key"}
+	store := newMockStore(map[string]string{})
+	cfg := &config.Config{}
 	sessions := session.NewStore(10 * time.Millisecond)
 	sess, _ := sessions.Create("alice", RoleAdmin)
 
-	h := RequireAuth(cfg, sessions)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("handler should not run")
 	}))
 

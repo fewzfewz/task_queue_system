@@ -6,7 +6,7 @@ command. The system is the four Go binaries in this repository:
 
 | Binary            | Role                                             | Port | Health endpoints                     |
 | ----------------- | ------------------------------------------------ | ---- | ------------------------------------ |
-| `cmd/api`         | HTTP API, browser UI, SSE stream, DLQ admin      | 8080 | `/healthz`, `/readyz`, `/metrics`    |
+| `cmd/api`         | HTTP API, Operator UI, Client Portal UI, SSE stream, DLQ admin | 8080 | `/healthz`, `/readyz`, `/metrics`    |
 | `cmd/worker`      | Executes jobs (email/image plugins), webhooks    | 8081 | `/healthz`, `/readyz`, `/metrics`, `/healthz/shutdown` |
 | `cmd/scheduler`   | Orphan/in-flight reclaim loop, health            | 8082 | `/healthz`, `/readyz`, `/metrics`    |
 | `cmd/cli`         | Maintenance CLI: `migrate-schema`, `migrate-jobs`, `migrate-down-schema` | - | - |

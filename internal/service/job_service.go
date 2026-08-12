@@ -57,6 +57,9 @@ func (s *JobService) SetWebhookStore(ws *webhooks.WebhookStore) {
 	s.webhookStore = ws
 }
 
+// Store returns the underlying models.Store.
+func (s *JobService) Store() models.Store { return s.store }
+
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
 func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error) {
 	if _, ok := allowedJobTypes[jobType]; !ok {

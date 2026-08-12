@@ -24,24 +24,24 @@ const appHTML = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Task Queue</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     :root {
-      --bg:#0a0f1e; --bg2:#111827; --surface:#1a2236; --surface2:#1f2a40;
-      --border:#2a3555; --text:#e2e8f0; --muted:#94a3b8; --muted2:#64748b;
-      --accent:#6366f1; --accent2:#818cf8;
+      --bg:#070a14; --bg2:#0f1629; --surface:rgba(26,34,54,0.65); --surface2:rgba(31,42,64,0.8);
+      --border:rgba(255,255,255,0.08); --border-hover:rgba(255,255,255,0.15); --text:#f8fafc; --muted:#94a3b8; --muted2:#64748b;
+      --accent:#6366f1; --accent2:#818cf8; --accent3:#c084fc;
       /* severity palette — consistent everywhere */
       --sev-ok:#34d399; --sev-ok-bg:rgba(52,211,153,.12); --sev-ok-border:rgba(52,211,153,.35);
       --sev-warn:#fbbf24; --sev-warn-bg:rgba(251,191,36,.12); --sev-warn-border:rgba(251,191,36,.35);
       --sev-crit:#f87171; --sev-crit-bg:rgba(248,113,113,.12); --sev-crit-border:rgba(248,113,113,.4);
       --sev-info:#93c5fd; --sev-info-bg:rgba(147,197,253,.1); --sev-info-border:rgba(147,197,253,.3);
       --good:var(--sev-ok); --bad:var(--sev-crit); --warn:var(--sev-warn);
-      --sidebar-w:250px; --header-h:64px;
+      --sidebar-w:260px; --header-h:70px;
     }
     body {
-      font-family:'Inter',-apple-system,sans-serif; background:var(--bg); color:var(--text);
+      font-family:'Outfit','Inter',-apple-system,sans-serif; background:var(--bg); color:var(--text);
       min-height:100vh; overflow-x:hidden;
     }
     ::-webkit-scrollbar { width:6px; }
@@ -51,9 +51,10 @@ const appHTML = `<!DOCTYPE html>
     /* ── Layout ── */
     .layout { display:flex; min-height:100vh; }
     #sidebar {
-      width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
+      width:var(--sidebar-w); background:rgba(21,27,43,0.85); border-right:1px solid var(--border);
       position:fixed; top:0; left:0; height:100vh; z-index:100;
-      display:flex; flex-direction:column; transition:transform .3s ease;
+      display:flex; flex-direction:column; transition:transform .3s cubic-bezier(0.4, 0, 0.2, 1);
+      backdrop-filter:blur(20px);
     }
     #sidebar.closed { transform:translateX(-100%); }
     .sidebar-brand {
@@ -61,9 +62,9 @@ const appHTML = `<!DOCTYPE html>
       display:flex; align-items:center; gap:12px;
     }
     .sidebar-brand .brand-icon {
-      width:40px; height:40px; background:linear-gradient(135deg,var(--accent),#a78bfa);
+      width:44px; height:44px; background:linear-gradient(135deg,var(--accent),var(--accent3));
       border-radius:12px; display:flex; align-items:center; justify-content:center;
-      box-shadow:0 4px 12px rgba(99,102,241,.3);
+      box-shadow:0 8px 24px rgba(99,102,241,.3), inset 0 2px 4px rgba(255,255,255,.2);
     }
     .sidebar-brand .brand-icon i { color:#fff; font-size:18px; }
     .sidebar-brand h2 { font-size:16px; font-weight:700; }
@@ -130,24 +131,28 @@ const appHTML = `<!DOCTYPE html>
     @keyframes fadeIn { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
 
     /* ── Stats Cards ── */
-    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin-bottom:24px; }
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; margin-bottom:24px; }
     .stat-card {
-      background:var(--surface); border:1px solid var(--border); border-radius:16px;
-      padding:18px 20px; transition:border-color .2s;
+      background:var(--surface); border:1px solid var(--border); border-radius:20px;
+      padding:20px 24px; transition:transform 0.3s ease, box-shadow 0.3s ease, border-color 0.2s;
+      backdrop-filter:blur(16px);
+      box-shadow:0 4px 24px rgba(0,0,0,0.1);
     }
-    .stat-card:hover { border-color:var(--accent); }
-    .stat-card .stat-label { font-size:11px; color:var(--muted2); text-transform:uppercase;
-      letter-spacing:.08em; font-weight:600; }
-    .stat-card .stat-value { font-size:28px; font-weight:700; margin-top:6px; }
-    .stat-card .stat-desc { font-size:12px; color:var(--muted); margin-top:2px; }
+    .stat-card:hover { transform:translateY(-2px); box-shadow:0 8px 32px rgba(0,0,0,0.2); border-color:var(--border-hover); }
+    .stat-card .stat-label { font-size:12px; color:var(--muted2); text-transform:uppercase;
+      letter-spacing:.1em; font-weight:700; }
+    .stat-card .stat-value { font-size:32px; font-weight:800; margin-top:8px; }
+    .stat-card .stat-desc { font-size:13px; color:var(--muted); margin-top:4px; }
 
     /* ── Cards & Sections ── */
     .section-card {
-      background:var(--surface); border:1px solid var(--border); border-radius:16px;
-      padding:20px; margin-bottom:16px;
+      background:var(--surface); border:1px solid var(--border); border-radius:20px;
+      padding:24px; margin-bottom:20px; backdrop-filter:blur(16px);
+      box-shadow:0 4px 24px rgba(0,0,0,0.1); transition:transform 0.3s ease, box-shadow 0.3s ease;
     }
+    .section-card:hover { transform:translateY(-1px); box-shadow:0 8px 32px rgba(0,0,0,0.15); border-color:var(--border-hover); }
     .section-card .section-title {
-      font-size:13px; font-weight:600; color:var(--muted2); text-transform:uppercase;
+      font-size:14px; font-weight:700; color:var(--accent2); text-transform:uppercase;
       letter-spacing:.08em; margin-bottom:14px;
     }
     .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
@@ -413,6 +418,9 @@ const appHTML = `<!DOCTYPE html>
           <i class="fas fa-trash-alt"></i> Dead Letter Queue
         </a>
         <div class="nav-label">Settings</div>
+        <a class="nav-item" data-page="clients" data-admin onclick="showPage('clients');loadClients()">
+          <i class="fas fa-users"></i> Clients
+        </a>
         <a class="nav-item" data-page="webhooks" data-admin onclick="showPage('webhooks');loadWebhooks()">
           <i class="fas fa-globe"></i> Webhooks
         </a>
@@ -547,13 +555,10 @@ const appHTML = `<!DOCTYPE html>
               <div class="form-group"><label>Page</label><input id="search-page" type="number" value="1" /></div>
               <div class="form-group"><label>Limit</label><input id="search-limit" type="number" value="20" /></div>
               <div style="display:flex;align-items:flex-end;gap:8px;">
-                <button class="btn-primary" onclick="searchJobs()" style="flex:1;"><i class="fas fa-search"></i> Search</button>
+                <button class="btn-primary" onclick="searchJobs()"><i class="fas fa-search"></i> Search</button>
                 <button class="btn-secondary" onclick="prevPage()"><i class="fas fa-chevron-left"></i></button>
                 <button class="btn-secondary" onclick="nextPage()"><i class="fas fa-chevron-right"></i></button>
               </div>
-            </div>
-            <div class="pagination" style="justify-content:space-between;">
-              <span id="page-info" style="font-size:12px;color:var(--muted);">Page 1</span>
             </div>
             <table>
               <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Priority</th><th>Tenant</th><th>Retries</th><th>Deps</th><th>Created</th><th></th></tr></thead>
@@ -656,6 +661,24 @@ const appHTML = `<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Page: Clients -->
+        <div id="page-clients" class="page">
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-users"></i> Registered Clients (Tenants)</div>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">
+              This section lists all client API keys registered in the system along with their tenant IDs.
+            </p>
+            <div style="overflow-x:auto;">
+              <table style="margin:0;width:100%;">
+                <thead><tr><th>Tenant ID</th><th>Registration Date</th></tr></thead>
+                <tbody id="clients-body">
+                  <tr><td colspan="2" style="text-align:center;padding:30px;color:var(--muted);">Loading clients...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
         <!-- Page: Webhooks -->
         <div id="page-webhooks" class="page">
           <div class="section-card">
@@ -693,6 +716,7 @@ const appHTML = `<!DOCTYPE html>
       workers: 'Workers \u0026 Health',
       cb: 'Circuit Breaker',
       dlq: 'Dead Letter Queue',
+      clients: 'Clients',
       webhooks: 'Webhooks'
     };
     const PAGE_DESCS = {
@@ -704,6 +728,7 @@ const appHTML = `<!DOCTYPE html>
       workers: 'Monitor worker processes and health endpoints',
       cb: 'Track circuit breaker states per plugin',
       dlq: 'Manage failed jobs and retries',
+      clients: 'Manage tenant credentials',
       webhooks: 'Configure event-driven HTTP callbacks'
     };
     let SESSION = { authenticated:false, username:'', role:'', csrf_token:'' };
