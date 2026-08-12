@@ -70,7 +70,15 @@ func TestDispatcherSendSetsWebhookSignature(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", status)
 	}
 
-	expectedBody, err := json.Marshal(ev)
+	expectedPayload := WebhookPayload{
+		JobID:     ev.JobID,
+		TenantID:  ev.TenantID,
+		Status:    ev.Status,
+		Result:    ev.Result,
+		Error:     ev.Error,
+		Timestamp: ev.Timestamp,
+	}
+	expectedBody, err := json.Marshal(expectedPayload)
 	if err != nil {
 		t.Fatalf("failed to marshal expected body: %v", err)
 	}

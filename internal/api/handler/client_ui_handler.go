@@ -449,7 +449,10 @@ const landingHTML = `<!DOCTYPE html>
       generatedKey = data.api_key || '';
       document.getElementById('key-display').textContent = generatedKey;
       // Store key so dashboard auto-logs in
-      if (generatedKey) localStorage.setItem('tq_api_key', generatedKey);
+      if (generatedKey) {
+        localStorage.setItem('tq_api_key', generatedKey);
+        if (data.tenant_id) localStorage.setItem('tq_tenant_id', data.tenant_id);
+      }
 
       document.getElementById('register-form-wrap').style.display = 'none';
       const reveal = document.getElementById('key-reveal');
@@ -758,6 +761,8 @@ const clientRegisterHTML = `<!DOCTYPE html>
 
   function goToDashboard() {
     localStorage.setItem('tq_api_key', generatedKey);
+    const tid = document.getElementById('tenant-display').textContent.trim();
+    if (tid) localStorage.setItem('tq_tenant_id', tid);
     window.location.href = '/client/dashboard';
   }
 
@@ -884,12 +889,13 @@ const clientLoginHTML = `<!DOCTYPE html>
 
     try {
       // Verify key is valid by calling a protected endpoint
-      const res = await fetch('/api/v1/stats', {
+      const res = await fetch('/api/v1/client/me', {
         headers: {'X-API-Key': key}
       });
       if (!res.ok) throw new Error('Invalid API key. Please check and try again.');
-      // Key is valid — store and go
+      const me = await res.json();
       localStorage.setItem('tq_api_key', key);
+      if (me.tenant_id) localStorage.setItem('tq_tenant_id', me.tenant_id);
       window.location.href = '/client/dashboard';
     } catch(e) {
       showAlert(alert, e.message);
@@ -1194,10 +1200,10 @@ const clientDashboardHTML = `<!DOCTYPE html>
             <div id="submit-alert" class="hidden"></div>
             <div class="form-group">
               <label>Job Type</label>
-              <select id="job-type">
-                <option value="email">email — Send an email</option>
+              <select id="job-type" onchange="onJobTypeChange()">
+                <option value="email">email — Simulated email (logs only, no real SMTP)</option>
                 <option value="image">image — Process an image</option>
-                <option value="test">test — Test/no-op job</option>
+                <option value="http">http — HTTP callback to any URL</option>
               </select>
             </div>
             <div class="form-row">
@@ -1205,7 +1211,7 @@ const clientDashboardHTML = `<!DOCTYPE html>
                 <label>Priority</label>
                 <div class="priority-group" id="priority-group">
                   <div class="priority-btn selected" onclick="setPriority('low',this)">Low</div>
-                  <div class="priority-btn" onclick="setPriority('normal',this)">Normal</div>
+                  <div class="priority-btn" onclick="setPriority('medium',this)">Medium</div>
                   <div class="priority-btn" onclick="setPriority('high',this)">High</div>
                 </div>
               </div>
@@ -1233,8 +1239,17 @@ const clientDashboardHTML = `<!DOCTYPE html>
 
         <div>
           <div class="section-card" style="height:calc(100% - 16px)">
-            <div class="section-title"><i class="fas fa-code" style="color:var(--accent2);margin-right:6px"></i>Payload (JSON)</div>
-            <textarea id="job-payload" style="min-height:180px;font-family:'SF Mono','Fira Code',monospace;font-size:12px" placeholder='{"to": "user@example.com", "subject": "Hello"}'></textarea>
+            <div class="section-title" style="display:flex;align-items:center;justify-content:space-between">
+              <span><i class="fas fa-list-check" style="color:var(--accent2);margin-right:6px"></i><span id="payload-form-title">Job Payload</span></span>
+              <button type="button" class="btn btn-sm btn-secondary" id="payload-mode-toggle" onclick="togglePayloadMode()" style="font-size:11px;padding:4px 10px">
+                <i class="fas fa-code"></i> JSON editor
+              </button>
+            </div>
+            <p id="payload-form-desc" style="font-size:12px;color:var(--muted);margin-bottom:12px">Fill in the fields for the selected job type.</p>
+            <div id="payload-form-fields"></div>
+            <div id="payload-json-wrap" class="hidden">
+              <textarea id="job-payload" style="min-height:160px;font-family:'SF Mono','Fira Code',monospace;font-size:12px" placeholder='{"to": "user@example.com"}'></textarea>
+            </div>
             <div style="height:14px"></div>
             <div class="section-title"><i class="fas fa-bell" style="color:var(--accent2);margin-right:6px"></i>Webhook (optional)</div>
             <div class="form-group">
@@ -1318,9 +1333,10 @@ const clientDashboardHTML = `<!DOCTYPE html>
       <div class="section-card">
         <div class="section-title"><i class="fas fa-circle-info" style="color:var(--info);margin-right:6px"></i>How Webhooks Work</div>
         <p style="font-size:13px;color:var(--muted);line-height:1.7">
-          When a job in your tenant completes or fails, the Task Queue will send an HTTP <code style="color:var(--accent2)">POST</code> to your registered URL.
-          The request body is a JSON object with the full job record. Verify the HMAC-SHA256 signature in the
-          <code style="color:var(--accent2)">X-TQ-Signature</code> header using your webhook secret to ensure authenticity.
+          When a job in your tenant completes or fails, the Task Queue sends an HTTP <code style="color:var(--accent2)">POST</code> to your registered URL.
+          The JSON body contains <code>job_id</code>, <code>tenant_id</code>, <code>status</code>, <code>result</code>, and <code>error</code>.
+          Verify the HMAC-SHA256 signature in the
+          <code style="color:var(--accent2)">X-Webhook-Signature</code> header (format: <code>sha256=&lt;hex&gt;</code>) using your webhook secret.
         </p>
       </div>
     </div>
@@ -1355,16 +1371,41 @@ const clientDashboardHTML = `<!DOCTYPE html>
     <!-- ════ DOCS PAGE ════ -->
     <div class="page" id="page-docs">
       <div class="section-card">
-        <div class="section-title">Quick Reference</div>
-        <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Everything you can do from the terminal using your API key.</p>
+        <div class="section-title"><i class="fas fa-book" style="color:var(--accent2);margin-right:6px"></i>API Reference</div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:20px">Use your API key in the <code>X-API-Key</code> header. Jobs are scoped to your tenant automatically.</p>
 
-        <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;flex-direction:column;gap:18px">
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-paper-plane" style="margin-right:6px"></i>Submit a Job</div>
             <pre>curl -X POST http://your-host/jobs \
   -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"type":"email","payload":{"to":"user@example.com"},"priority":"high","tenant_id":"your-tenant"}'</pre>
+  -d '{"type":"email","payload":{"to":"user@example.com","subject":"Hello"},"priority":"high"}'</pre>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--warn);margin-bottom:6px"><i class="fas fa-circle-info" style="margin-right:6px"></i>Email Job Type</div>
+            <p style="font-size:12px;color:var(--muted);margin-bottom:8px">The <code>email</code> type <strong>simulates</strong> sending — it logs the message and returns success. It does <em>not</em> connect to SMTP. For real notifications, use the <code>http</code> type to call your own mail service, or register a custom type via the admin UI.</p>
+            <pre>{
+  "type": "email",
+  "payload": {
+    "to": "user@example.com",
+    "subject": "Welcome",
+    "body": "Hello from Task Queue"
+  },
+  "priority": "medium"
+}</pre>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-globe" style="margin-right:6px"></i>HTTP Callback Job</div>
+            <pre>{
+  "type": "http",
+  "payload": {
+    "url": "https://api.example.com/notify",
+    "method": "POST",
+    "headers": {"Authorization": "Bearer token"},
+    "body": {"message": "Job finished"}
+  }
+}</pre>
           </div>
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-eye" style="margin-right:6px"></i>Check Job Status</div>
@@ -1377,26 +1418,27 @@ const clientDashboardHTML = `<!DOCTYPE html>
   -H "X-API-Key: YOUR_KEY"</pre>
           </div>
           <div>
-            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-stop" style="margin-right:6px"></i>Cancel a Job</div>
-            <pre>curl -X POST http://your-host/jobs/{job_id}/cancel \
-  -H "X-API-Key: YOUR_KEY"</pre>
-          </div>
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-rotate" style="margin-right:6px"></i>Replay a Failed Job (DLQ)</div>
-            <pre>curl -X POST http://your-host/api/v1/dlq/{job_id}/replay \
-  -H "X-API-Key: YOUR_KEY"</pre>
-          </div>
-          <div>
             <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-webhook" style="margin-right:6px"></i>Register a Webhook</div>
             <pre>curl -X POST http://your-host/api/v1/webhooks \
   -H "X-API-Key: YOUR_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://my-app.com/hooks/tq","events":["job.completed","job.failed"],"tenant_id":"your-tenant"}'</pre>
+  -d '{"url":"https://my-app.com/hooks/tq","events":["completed","failed"]}'</pre>
+            <p style="font-size:11px;color:var(--muted);margin-top:6px">Events: <code>completed</code>, <code>failed</code>. Signature header: <code>X-Webhook-Signature: sha256=&lt;hex&gt;</code></p>
           </div>
           <div>
-            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-wave-square" style="margin-right:6px"></i>Subscribe to Live Events (SSE)</div>
-            <pre>curl -N http://your-host/api/v1/events \
-  -H "X-API-Key: YOUR_KEY"</pre>
+            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-code" style="margin-right:6px"></i>Webhook Payload Format</div>
+            <pre>{
+  "job_id": "abc-123",
+  "tenant_id": "your-tenant",
+  "status": "completed",
+  "result": "email sent to user@example.com",
+  "error": "",
+  "timestamp": "2026-08-12T10:00:00Z"
+}</pre>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px"><i class="fas fa-wave-square" style="margin-right:6px"></i>Live Events (SSE)</div>
+            <pre>curl -N "http://your-host/api/v1/events?api_key=YOUR_KEY"</pre>
           </div>
         </div>
       </div>
@@ -1422,13 +1464,13 @@ const clientDashboardHTML = `<!DOCTYPE html>
       <label>Events</label>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
-          <input type="checkbox" id="ev-completed" checked style="width:auto;accent-color:var(--accent)"> job.completed
+          <input type="checkbox" id="ev-completed" checked style="width:auto;accent-color:var(--accent)"> completed
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
-          <input type="checkbox" id="ev-failed" checked style="width:auto;accent-color:var(--accent)"> job.failed
+          <input type="checkbox" id="ev-failed" checked style="width:auto;accent-color:var(--accent)"> failed
         </label>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer">
-          <input type="checkbox" id="ev-created" style="width:auto;accent-color:var(--accent)"> job.created
+          <input type="checkbox" id="ev-created" style="width:auto;accent-color:var(--accent)"> created
         </label>
       </div>
     </div>
@@ -1461,25 +1503,188 @@ const KEY = localStorage.getItem('tq_api_key');
 if (!KEY) { window.location.href = '/client/login'; }
 
 const H = {'X-API-Key': KEY, 'Content-Type': 'application/json'};
-let currentTenant = '';
+let currentTenant = localStorage.getItem('tq_tenant_id') || '';
 let jobsPage = 0;
 const jobsPageSize = 20;
 let selectedPriority = 'low';
 let allJobs = [];
 let keyVisible = false;
+let jobTypeRegistry = {};
+let payloadFormMode = 'form'; // 'form' | 'json'
+
+const PAYLOAD_SCHEMAS = {
+  email: {
+    title: 'Email Details',
+    desc: 'Simulated email — logs the message; does not send real mail.',
+    fields: [
+      {id:'to', label:'Recipient Email', type:'email', required:true, placeholder:'user@example.com'},
+      {id:'subject', label:'Subject', type:'text', placeholder:'Hello from Task Queue'},
+      {id:'body', label:'Message Body', type:'textarea', placeholder:'Write your message here...'}
+    ]
+  },
+  image: {
+    title: 'Image Processing',
+    desc: 'Provide a source image URL and optional processing operation.',
+    fields: [
+      {id:'source_url', label:'Source Image URL', type:'url', required:true, placeholder:'https://example.com/photo.jpg'},
+      {id:'operation', label:'Operation', type:'select', options:['process','resize','compress','watermark'], default:'process'},
+      {id:'sleep_ms', label:'Processing delay (ms)', type:'number', placeholder:'100', hint:'Optional simulation delay'}
+    ]
+  },
+  http: {
+    title: 'HTTP Request',
+    desc: 'The worker will call this URL when the job runs.',
+    fields: [
+      {id:'url', label:'Target URL', type:'url', required:true, placeholder:'https://api.example.com/notify'},
+      {id:'method', label:'HTTP Method', type:'select', options:['POST','GET','PUT','PATCH','DELETE'], default:'POST'},
+      {id:'headers', label:'Headers', type:'text', placeholder:'Authorization: Bearer your-token', hint:'Optional — one header per line as Key: Value, or JSON object'},
+      {id:'body', label:'Request Body', type:'textarea', placeholder:'{"message":"hello"}', hint:'Optional JSON for POST/PUT/PATCH'}
+    ]
+  }
+};
+
+function resolvePayloadHandler(typeName) {
+  if (PAYLOAD_SCHEMAS[typeName]) return typeName;
+  const meta = jobTypeRegistry[typeName];
+  if (meta && meta.handler) return meta.handler;
+  return 'http';
+}
+
+function renderPayloadForm() {
+  const type = document.getElementById('job-type').value;
+  const handler = resolvePayloadHandler(type);
+  const schema = PAYLOAD_SCHEMAS[handler] || PAYLOAD_SCHEMAS.http;
+  document.getElementById('payload-form-title').textContent = schema.title;
+  document.getElementById('payload-form-desc').textContent = schema.desc;
+  const wrap = document.getElementById('payload-form-fields');
+  wrap.innerHTML = schema.fields.map(f => {
+    const req = f.required ? ' <span style="color:var(--bad)">*</span>' : '';
+    const hint = f.hint ? '<div style="font-size:11px;color:var(--muted2);margin-top:4px">'+f.hint+'</div>' : '';
+    let input = '';
+    if (f.type === 'textarea') {
+      input = '<textarea id="pf-'+f.id+'" rows="4" placeholder="'+(f.placeholder||'')+'"></textarea>';
+    } else if (f.type === 'select') {
+      input = '<select id="pf-'+f.id+'">' + (f.options||[]).map(o =>
+        '<option value="'+o+'"'+(o===f.default?' selected':'')+'>'+o+'</option>'
+      ).join('') + '</select>';
+    } else {
+      input = '<input id="pf-'+f.id+'" type="'+(f.type==='url'?'url':f.type==='email'?'email':f.type==='number'?'number':'text')+'" placeholder="'+(f.placeholder||'')+'"'+(f.required?' required':'')+'>';
+    }
+    return '<div class="form-group"><label>'+f.label+req+'</label>'+input+hint+'</div>';
+  }).join('');
+}
+
+function togglePayloadMode() {
+  payloadFormMode = payloadFormMode === 'form' ? 'json' : 'form';
+  const formEl = document.getElementById('payload-form-fields');
+  const jsonWrap = document.getElementById('payload-json-wrap');
+  const btn = document.getElementById('payload-mode-toggle');
+  if (payloadFormMode === 'json') {
+    const payload = collectPayloadFromForm();
+    document.getElementById('job-payload').value = JSON.stringify(payload, null, 2);
+    formEl.classList.add('hidden');
+    document.getElementById('payload-form-desc').classList.add('hidden');
+    jsonWrap.classList.remove('hidden');
+    btn.innerHTML = '<i class="fas fa-list-check"></i> Form view';
+  } else {
+    formEl.classList.remove('hidden');
+    document.getElementById('payload-form-desc').classList.remove('hidden');
+    jsonWrap.classList.add('hidden');
+    btn.innerHTML = '<i class="fas fa-code"></i> JSON editor';
+    renderPayloadForm();
+  }
+}
+
+function parseHeadersInput(raw) {
+  raw = (raw || '').trim();
+  if (!raw) return undefined;
+  if (raw.startsWith('{')) {
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  const out = {};
+  raw.split('\n').forEach(line => {
+    const idx = line.indexOf(':');
+    if (idx > 0) out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+  });
+  return Object.keys(out).length ? out : undefined;
+}
+
+function collectPayloadFromForm() {
+  const type = document.getElementById('job-type').value;
+  const handler = resolvePayloadHandler(type);
+  const schema = PAYLOAD_SCHEMAS[handler] || PAYLOAD_SCHEMAS.http;
+  const payload = {};
+  for (const f of schema.fields) {
+    const el = document.getElementById('pf-' + f.id);
+    if (!el) continue;
+    let val = (el.value || '').trim();
+    if (!val) continue;
+    if (f.id === 'headers') {
+      const parsed = parseHeadersInput(val);
+      if (parsed === null) throw new Error('Headers must be valid JSON or Key: Value lines');
+      if (parsed) payload.headers = parsed;
+      continue;
+    }
+    if (f.id === 'body' && handler === 'http') {
+      try { payload.body = JSON.parse(val); } catch { payload.body = val; }
+      continue;
+    }
+    if (f.type === 'number') payload[f.id] = Number(val);
+    else payload[f.id] = val;
+  }
+  return payload;
+}
+
+function validatePayload(payload, type) {
+  const handler = resolvePayloadHandler(type);
+  const schema = PAYLOAD_SCHEMAS[handler] || PAYLOAD_SCHEMAS.http;
+  for (const f of schema.fields) {
+    if (!f.required) continue;
+    const v = payload[f.id];
+    if (v === undefined || v === null || v === '') {
+      return f.label + ' is required';
+    }
+  }
+  if (handler === 'email' && payload.to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.to)) {
+    return 'Recipient must be a valid email address';
+  }
+  if (handler === 'http' && payload.url && !/^https?:\/\//i.test(payload.url)) {
+    return 'Target URL must start with http:// or https://';
+  }
+  if (handler === 'image' && payload.source_url && !/^https?:\/\//i.test(payload.source_url)) {
+    return 'Source URL must start with http:// or https://';
+  }
+  return null;
+}
+
+function onJobTypeChange() {
+  if (payloadFormMode === 'form') renderPayloadForm();
+  else {
+    const handler = resolvePayloadHandler(document.getElementById('job-type').value);
+    const examples = {email:{to:'user@example.com',subject:'Hello',body:'Hi there'}, image:{source_url:'https://example.com/photo.jpg',operation:'process'}, http:{url:'https://api.example.com/hook',method:'POST'}};
+    document.getElementById('job-payload').value = JSON.stringify(examples[handler] || examples.http, null, 2);
+  }
+}
 
 // ── Bootstrap ────────────────────────────────────────────────────────
 async function bootstrap() {
   try {
+    const meRes = await fetch('/api/v1/client/me', {headers: H});
+    if (meRes.status === 401) { logout(); return; }
+    if (meRes.ok) {
+      const me = await meRes.json();
+      currentTenant = me.tenant_id || currentTenant;
+      if (currentTenant) localStorage.setItem('tq_tenant_id', currentTenant);
+    }
     const res = await fetch('/api/v1/stats', {headers: H});
     if (res.status === 401) { logout(); return; }
     const data = await res.json();
-    // Derive tenant from stats or use placeholder
-    currentTenant = KEY.substring(8, 18) + '...';
-    document.getElementById('sidebar-tenant').textContent = 'Tenant: ' + currentTenant;
-    document.getElementById('avatar-initials').textContent = currentTenant[0].toUpperCase();
+    if (data.tenant_id) currentTenant = data.tenant_id;
+    document.getElementById('sidebar-tenant').textContent = 'Tenant: ' + (currentTenant || 'unknown');
+    document.getElementById('avatar-initials').textContent = (currentTenant || '?')[0].toUpperCase();
     updateStats(data);
-  } catch(e) { showToast('Could not connect to server', 'error'); }
+    loadJobTypes();
+  } catch(e) { showToast('Could not connect to server', 'error'); renderPayloadForm(); }
   loadRecentJobs();
   connectSSE();
   updateKeyPage();
@@ -1497,33 +1702,39 @@ function updateStats(d) {
 }
 
 async function refreshAll() {
+  await refreshStats();
+  showToast('Refreshed', 'success');
+}
+
+async function refreshStats() {
   try {
     const res = await fetch('/api/v1/stats', {headers: H});
-    if (!res.ok) throw new Error();
+    if (!res.ok) return;
     updateStats(await res.json());
-    showToast('Refreshed', 'success');
-  } catch { showToast('Refresh failed', 'error'); }
+  } catch {}
 }
 
 // ── SSE Live Events ────────────────────────────────────────────────────
 function connectSSE() {
   const box = document.getElementById('live-events');
   const badge = document.getElementById('conn-badge');
-  const url = '/api/v1/events';
-  const es = new EventSource(url, {headers: {'X-API-Key': KEY}});
-  // Note: EventSource doesn't support custom headers; use URL param fallback
-  const es2 = new EventSource(url + '?api_key=' + encodeURIComponent(KEY));
-  es2.onopen = () => { badge.className = 'live-badge'; badge.innerHTML = '<div class="live-dot"></div>Live'; };
-  es2.onerror = () => { badge.className = 'dead-badge'; badge.innerHTML = '<i class="fas fa-wifi-slash" style="font-size:10px"></i> Disconnected'; };
-  es2.onmessage = (e) => {
+  // EventSource cannot set custom request headers, so the API key rides in a
+  // query parameter; the server only honors it on the SSE endpoints.
+  const es = new EventSource('/api/v1/events?api_key=' + encodeURIComponent(KEY));
+  es.onopen = () => { badge.className = 'live-badge'; badge.innerHTML = '<div class="live-dot"></div>Live'; };
+  es.onerror = () => { badge.className = 'dead-badge'; badge.innerHTML = '<i class="fas fa-wifi-slash" style="font-size:10px"></i> Disconnected'; };
+  es.onmessage = (e) => {
     const line = document.createElement('div');
     try {
       const d = JSON.parse(e.data);
       const color = d.status === 'completed' ? 'var(--good)' : d.status === 'failed' ? 'var(--bad)' : 'var(--accent2)';
       line.innerHTML = '<span style="color:var(--muted2)">' + new Date().toLocaleTimeString() + '</span> '
         + '<span style="color:' + color + ';font-weight:600">' + (d.status || 'event') + '</span>'
-        + ' <span style="color:var(--muted)">' + (d.id || '') + '</span>'
+        + ' <span style="color:var(--muted)">' + (d.job_id || '') + '</span>'
         + (d.type ? ' <span style="color:var(--info)">[' + d.type + ']</span>' : '');
+      // Live-refresh the overview stats and recent jobs on each event.
+      refreshStats();
+      loadRecentJobs();
     } catch { line.textContent = e.data; line.style.color = 'var(--muted)'; }
     box.appendChild(line);
     box.scrollTop = box.scrollHeight;
@@ -1712,19 +1923,30 @@ async function submitJob() {
   alertEl.className = 'hidden';
   document.getElementById('submit-success').classList.add('hidden');
 
+  const jobType = document.getElementById('job-type').value;
   let payload = {};
-  const raw = document.getElementById('job-payload').value.trim();
-  if (raw) {
-    try { payload = JSON.parse(raw); }
-    catch { showSubmitAlert('Payload must be valid JSON.', 'error'); return; }
+  try {
+    if (payloadFormMode === 'json') {
+      const raw = document.getElementById('job-payload').value.trim();
+      if (!raw) { showSubmitAlert('Payload is required.', 'error'); return; }
+      try { payload = JSON.parse(raw); }
+      catch { showSubmitAlert('Payload must be valid JSON.', 'error'); return; }
+    } else {
+      payload = collectPayloadFromForm();
+    }
+    const err = validatePayload(payload, jobType);
+    if (err) { showSubmitAlert(err, 'error'); return; }
+  } catch(e) {
+    showSubmitAlert(e.message, 'error');
+    return;
   }
 
   const body = {
-    type: document.getElementById('job-type').value,
+    type: jobType,
     payload,
     priority: selectedPriority,
     max_retries: parseInt(document.getElementById('max-retries').value) || 3,
-    tenant_id: 'client-portal',
+    tenant_id: currentTenant,
   };
   const cid = document.getElementById('correlation-id').value.trim();
   if (cid) body.correlation_id = cid;
@@ -1733,7 +1955,7 @@ async function submitJob() {
   const ra = document.getElementById('run-at').value;
   if (ra) body.run_at = new Date(ra).toISOString();
   const wurl = document.getElementById('webhook-url').value.trim();
-  if (wurl) body.webhook = {url: wurl, events: ['job.completed','job.failed']};
+  if (wurl) body.webhook = {url: wurl, events: ['completed','failed']};
 
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Submitting...';
@@ -1760,7 +1982,13 @@ function showSubmitAlert(msg, type) {
 }
 
 function resetSubmitForm() {
+  payloadFormMode = 'form';
+  document.getElementById('payload-form-fields').classList.remove('hidden');
+  document.getElementById('payload-json-wrap').classList.add('hidden');
+  document.getElementById('payload-form-desc').classList.remove('hidden');
+  document.getElementById('payload-mode-toggle').innerHTML = '<i class="fas fa-code"></i> JSON editor';
   document.getElementById('job-payload').value = '';
+  renderPayloadForm();
   document.getElementById('correlation-id').value = '';
   document.getElementById('dedup-key').value = '';
   document.getElementById('run-at').value = '';
@@ -1797,10 +2025,10 @@ async function saveWebhook() {
   const alert = document.getElementById('wh-modal-alert');
   if (!url) { showModalAlert(alert, 'URL is required'); return; }
   const events = [];
-  if (document.getElementById('ev-completed').checked) events.push('job.completed');
-  if (document.getElementById('ev-failed').checked) events.push('job.failed');
-  if (document.getElementById('ev-created').checked) events.push('job.created');
-  const body = {url, events, tenant_id: 'client-portal'};
+  if (document.getElementById('ev-completed').checked) events.push('completed');
+  if (document.getElementById('ev-failed').checked) events.push('failed');
+  if (document.getElementById('ev-created').checked) events.push('created');
+  const body = {url, events};
   const sec = document.getElementById('wh-secret').value.trim();
   if (sec) body.secret = sec;
 
@@ -1834,7 +2062,28 @@ function updateKeyPage() {
   const box = document.getElementById('key-display-box');
   const snippet = document.getElementById('usage-snippet');
   if (box) box.innerHTML = '<span class="masked">' + '•'.repeat(40) + '</span><button class="btn btn-sm btn-secondary" style="position:absolute;top:10px;right:10px" onclick="toggleKeyVis()"><i class="fas fa-eye" id="key-vis-icon"></i></button>';
-  if (snippet) snippet.textContent = 'curl -X POST http://your-host/jobs \\\n  -H "X-API-Key: ' + KEY + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"type":"email","payload":{"to":"user@example.com"},"priority":"high","tenant_id":"my-service"}\'';
+  if (snippet) snippet.textContent = 'curl -X POST http://your-host/jobs \\\n  -H "X-API-Key: ' + KEY + '" \\\n  -H "Content-Type: application/json" \\\n  -d \'{"type":"email","payload":{"to":"user@example.com"},"priority":"high"}\'';
+}
+
+async function loadJobTypes() {
+  const sel = document.getElementById('job-type');
+  if (!sel) return;
+  try {
+    const res = await fetch('/api/v1/job-types', {headers: H});
+    if (!res.ok) return;
+    const data = await res.json();
+    const types = data.job_types || [];
+    jobTypeRegistry = {};
+    types.forEach(t => { jobTypeRegistry[t.name] = t; });
+    sel.innerHTML = types.map(t => {
+      const label = t.built_in && t.name === 'email'
+        ? t.name + ' — Simulated email (no real SMTP)'
+        : t.name + (t.description ? ' — ' + t.description : '');
+      return '<option value="'+t.name+'" data-handler="'+(t.handler||t.name)+'">'+label+'</option>';
+    }).join('');
+    sel.onchange = onJobTypeChange;
+    renderPayloadForm();
+  } catch {}
 }
 
 function toggleKeyVis() {
@@ -1889,6 +2138,7 @@ function showToast(msg, type='info') {
 }
 
 // ── Start ─────────────────────────────────────────────────────────────
+renderPayloadForm();
 bootstrap();
 </script>
 </body>

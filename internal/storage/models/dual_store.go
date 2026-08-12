@@ -93,6 +93,10 @@ func (s *DualStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.J
 	return s.Primary.SearchJobs(ctx, filter)
 }
 
+func (s *DualStore) CountJobs(ctx context.Context, filter JobFilter) (int64, error) {
+	return s.Primary.CountJobs(ctx, filter)
+}
+
 func (s *DualStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	// Recovery should happen on primary.
 	return s.Primary.RecoverOrphans(ctx, timeout)
@@ -133,5 +137,8 @@ func (s *DualStore) ListClients(ctx context.Context) ([]*ClientRecord, error) {
 	return s.Primary.ListClients(ctx)
 }
 
-
+func (s *DualStore) RevokeClient(ctx context.Context, tenantID string) error {
+	_ = s.Secondary.RevokeClient(ctx, tenantID)
+	return s.Primary.RevokeClient(ctx, tenantID)
+}
 

@@ -469,6 +469,18 @@ func (s *PostgresStore) SearchJobs(ctx context.Context, filter models.JobFilter)
 	return s.ListJobs(ctx, filter.TenantID, filter.Status, filter.Type, filter.Limit, filter.Offset)
 }
 
+func (s *PostgresStore) CountJobs(ctx context.Context, filter models.JobFilter) (int64, error) {
+	query := `
+		SELECT COUNT(*) FROM jobs
+		WHERE ($1 = '' OR tenant_id = $1)
+		  AND ($2 = '' OR status = $2)
+		  AND ($3 = '' OR type = $3)
+	`
+	var count int64
+	err := s.pool.QueryRow(ctx, query, filter.TenantID, filter.Status, filter.Type).Scan(&count)
+	return count, err
+}
+
 func (s *PostgresStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	cutoff := time.Now().UTC().Add(-timeout)
 	query := `
@@ -607,6 +619,11 @@ func (s *PostgresStore) ListClients(ctx context.Context) ([]*models.ClientRecord
 	}
 
 	return out, nil
+}
+
+func (s *PostgresStore) RevokeClient(ctx context.Context, tenantID string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM clients WHERE tenant_id = $1`, tenantID)
+	return err
 }
 func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 	var results []*jobs.Job

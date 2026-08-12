@@ -77,6 +77,9 @@ type Store interface {
 	// SearchJobs returns a filtered, paginated list of jobs.
 	SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.Job, error)
 
+	// CountJobs returns the number of jobs matching the filter without loading records.
+	CountJobs(ctx context.Context, filter JobFilter) (int64, error)
+
 	// RecoverOrphans resets jobs from crashed workers back to 'pending'.
 	RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error)
 
@@ -97,6 +100,7 @@ type Store interface {
 	RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error
 	VerifyClient(ctx context.Context, apiKeyHash string) (string, error)
 	ListClients(ctx context.Context) ([]*ClientRecord, error)
+	RevokeClient(ctx context.Context, tenantID string) error
 }
 
 // ClientRecord represents a registered tenant in the system.
@@ -328,6 +332,37 @@ func (s *InMemoryStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jo
 	return results[filter.Offset:end], nil
 }
 
+func (s *InMemoryStore) CountJobs(_ context.Context, filter JobFilter) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var count int64
+	for _, j := range s.data {
+		if filter.TenantID != "" && j.TenantID != filter.TenantID {
+			continue
+		}
+		if filter.Status != "" && string(j.Status) != filter.Status {
+			continue
+		}
+		if filter.Type != "" && j.Type != filter.Type {
+			continue
+		}
+		if filter.LabelKey != "" {
+			v, ok := j.Labels[filter.LabelKey]
+			if !ok || (filter.LabelValue != "" && v != filter.LabelValue) {
+				continue
+			}
+		}
+		if !filter.CreatedAfter.IsZero() && j.CreatedAt.Before(filter.CreatedAfter) {
+			continue
+		}
+		if !filter.CreatedBefore.IsZero() && j.CreatedAt.After(filter.CreatedBefore) {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
 func (s *InMemoryStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -443,6 +478,17 @@ func (s *InMemoryStore) ListClients(_ context.Context) ([]*ClientRecord, error) 
 		}
 	}
 	return out, nil
+}
+
+func (s *InMemoryStore) RevokeClient(_ context.Context, tenantID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hash, tid := range s.clients {
+		if tid == tenantID {
+			delete(s.clients, hash)
+		}
+	}
+	return nil
 }
 
 // ─── Redis Store ──────────────────────────────────────────────────────────────
@@ -660,6 +706,38 @@ func (s *RedisStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.
 	return s.ListJobs(ctx, filter.TenantID, filter.Status, filter.Type, filter.Limit, filter.Offset)
 }
 
+func (s *RedisStore) CountJobs(ctx context.Context, filter JobFilter) (int64, error) {
+	var count int64
+	var cursor uint64
+	for {
+		keys, nextCursor, err := s.client.HScan(ctx, jobStoreKey, cursor, "*", 100).Result()
+		if err != nil {
+			return 0, fmt.Errorf("redis_store: HSCAN failed: %w", err)
+		}
+		for i := 0; i+1 < len(keys); i += 2 {
+			var j jobs.Job
+			if err := json.Unmarshal([]byte(keys[i+1]), &j); err != nil {
+				continue
+			}
+			if filter.TenantID != "" && j.TenantID != filter.TenantID {
+				continue
+			}
+			if filter.Status != "" && string(j.Status) != filter.Status {
+				continue
+			}
+			if filter.Type != "" && j.Type != filter.Type {
+				continue
+			}
+			count++
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return count, nil
+}
+
 func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
 	if err != nil {
@@ -845,4 +923,28 @@ func (s *RedisStore) ListClients(ctx context.Context) ([]*ClientRecord, error) {
 	}
 
 	return out, nil
+}
+
+func (s *RedisStore) RevokeClient(ctx context.Context, tenantID string) error {
+	var cursor uint64
+	for {
+		batch, next, err := s.client.Scan(ctx, cursor, "task_queue:clients:*", 100).Result()
+		if err != nil {
+			return fmt.Errorf("redis_store: scan clients: %w", err)
+		}
+		for _, key := range batch {
+			val, err := s.client.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			if val == tenantID {
+				_ = s.client.Del(ctx, key).Err()
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
 }

@@ -12,24 +12,31 @@ import (
 	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage/models"
 	"task-queue-system/internal/webhooks"
 )
 
-func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, webhookStore *webhooks.WebhookStore) http.Handler {
+func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *config.Config, webhookStore *webhooks.WebhookStore, jobTypeStore *jobtypes.Store) http.Handler {
 	svc := service.New(q, store, logger, cfg.MaxQueueSize)
 	if webhookStore != nil {
 		svc.SetWebhookStore(webhookStore)
 	}
+	if jobTypeStore != nil {
+		svc.SetJobTypeStore(jobTypeStore)
+	}
 
 	sessions := session.NewStore(time.Duration(cfg.SessionTTLSeconds) * time.Second)
-	h := handler.New(svc, logger, cfg.ApiKey, cfg.AdminUsername, cfg.AdminPassword, sessions, cfg.WorkerAddr, cfg.LoginRateLimit)
+	h := handler.New(svc, logger, cfg.ApiKey, cfg.AdminUsername, cfg.AdminPassword, sessions, cfg.WorkerAddr, cfg.LoginRateLimit, cfg.RegisterRateLimit)
 	h.SetReadonlyCredentials(cfg.ReadonlyUsername, cfg.ReadonlyPassword)
 	svc.SetSSEBroker(h.SSEBroker())
 	if webhookStore != nil {
 		h.SetWebhookStore(webhookStore)
+	}
+	if jobTypeStore != nil {
+		h.SetJobTypeStore(jobTypeStore)
 	}
 
 	mux := http.NewServeMux()
@@ -81,6 +88,8 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	read("GET /api/v1/circuit-breakers", h.GetCircuitBreakers)
 	read("GET /api/v1/rate-limits", h.GetRateLimits)
 	read("GET /api/v1/clients", h.ListClients)
+	read("GET /api/v1/client/me", h.GetClientInfo)
+	read("GET /api/v1/job-types", h.ListJobTypes)
 
 	write("POST /jobs", h.CreateJob)
 	write("POST /jobs/batch", h.CreateJobBatch)
@@ -92,6 +101,10 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	write("DELETE /api/v1/dlq/{id}", h.DeleteFailedJob)
 	write("DELETE /api/v1/dlq", h.BulkPurgeDLQ)
 	write("POST /api/v1/circuit-breakers/reset/{type}", h.ResetCircuitBreaker)
+	write("POST /api/v1/job-types", h.CreateJobType)
+	write("DELETE /api/v1/job-types/{name}", h.DeleteJobType)
+	write("DELETE /api/v1/clients/{tenant_id}", h.RevokeClient)
+	write("POST /api/v1/clients/{tenant_id}/rotate", h.RotateClientKey)
 
 	// Logout is CSRF-protected but available to any authenticated session.
 	mux.Handle("POST /api/v1/logout", auth(csrf(http.HandlerFunc(h.Logout))))

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"task-queue-system/internal/api/dto"
+	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
@@ -148,7 +149,7 @@ func newTestHandler() (*JobHandler, *models.InMemoryStore) {
 	q := &mockQueue{}
 	svc := service.New(q, store, slog.Default(), 0)
 	sessions := session.NewStore(time.Hour)
-	return New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", 5), store
+	return New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", 5, 10), store
 }
 
 func TestCreateJob_Success(t *testing.T) {
@@ -231,7 +232,7 @@ func TestCreateJob_RateLimited(t *testing.T) {
 	}
 	svc := service.New(q, store, slog.Default(), 0)
 	sessions := session.NewStore(time.Hour)
-	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", 5)
+	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", 5, 10)
 
 	body := `{"type":"email","payload":{"to":"a@b.com"},"priority":"medium","tenant_id":"tenant-a"}`
 	req := httptest.NewRequest("POST", "/jobs", bytes.NewReader([]byte(body)))
@@ -294,8 +295,11 @@ func TestGetJobStatus_TenantFilter(t *testing.T) {
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
-	req := httptest.NewRequest("GET", "/jobs/"+job.ID+"?tenant_id=tenant-b", nil)
+	req := httptest.NewRequest("GET", "/jobs/"+job.ID, nil)
 	req.SetPathValue("id", job.ID)
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyTenantID, "tenant-b")
+	ctx = context.WithValue(ctx, middleware.ContextKeyAuthType, middleware.AuthTypeAPIKey)
+	req = req.WithContext(ctx)
 	w := httptest.NewRecorder()
 	h.GetJobStatus(w, req)
 
@@ -361,6 +365,55 @@ func TestBulkPurgeDLQ_MissingTimestamp(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestSSEEventMatchesTenant(t *testing.T) {
+	tests := []struct {
+		name       string
+		msg        string
+		tenantID   string
+		wantMatch  bool
+	}{
+		{
+			name:       "matching tenant",
+			msg:        "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"tenant-a\"}\n\n",
+			tenantID:   "tenant-a",
+			wantMatch:  true,
+		},
+		{
+			name:       "non-matching tenant",
+			msg:        "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"tenant-b\"}\n\n",
+			tenantID:   "tenant-a",
+			wantMatch:  false,
+		},
+		{
+			name:       "empty tenant in event matches nothing",
+			msg:        "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"\"}\n\n",
+			tenantID:   "tenant-a",
+			wantMatch:  false,
+		},
+		{
+			name:       "malformed message is delivered (lenient)",
+			msg:        `not valid json`,
+			tenantID:   "tenant-a",
+			wantMatch:  true,
+		},
+		{
+			name:       "rate_limit event with matching tenant",
+			msg:        "data: {\"kind\":\"rate_limit\",\"type\":\"rate_limit\",\"status\":\"rejected\",\"tenant_id\":\"tenant-a\"}\n\n",
+			tenantID:   "tenant-a",
+			wantMatch:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sseEventMatchesTenant(tt.msg, tt.tenantID)
+			if got != tt.wantMatch {
+				t.Errorf("sseEventMatchesTenant(%q, %q) = %v, want %v", tt.msg, tt.tenantID, got, tt.wantMatch)
+			}
+		})
 	}
 }
 

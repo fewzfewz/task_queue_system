@@ -19,6 +19,7 @@ import (
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage"
 	"task-queue-system/internal/tracing"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/webhooks"
 	"task-queue-system/internal/worker/executor"
 	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
@@ -110,7 +111,7 @@ func main() {
 	// ── 5. Initialise Job Executor ──────────────────────────────────────────
 	// The executor automatically picks up plugins registered via init() calls
 	// in the imported packages.
-	jobExec := executor.NewJobExecutor(log)
+	jobExec := executor.NewJobExecutor(log, jobtypes.NewStore(redisClient))
 
 	// ── 6. Setup Worker Pool ──────────────────────────────────────────────────
 	// Number of concurrent workers. We use 50 as a default for massive load testing.

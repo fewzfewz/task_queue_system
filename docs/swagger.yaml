@@ -211,6 +211,30 @@ definitions:
       last_heartbeat:
         type: string
     type: object
+  webhooks.DeliveryRecord:
+    properties:
+      attempt:
+        description: 1-based
+        type: integer
+      backoff_ms:
+        description: wait before this attempt (0 on first try)
+        type: integer
+      error:
+        type: string
+      job_id:
+        type: string
+      status_code:
+        description: 0 = transport error (no HTTP response)
+        type: integer
+      success:
+        type: boolean
+      tenant_id:
+        type: string
+      timestamp:
+        type: string
+      url:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -218,6 +242,42 @@ info:
   title: Task Queue API
   version: "1.0"
 paths:
+  /api/v1/circuit-breakers:
+    get:
+      description: Returns the current circuit-breaker state for every plugin.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List circuit breakers
+      tags:
+      - circuit-breaker
+  /api/v1/circuit-breakers/reset/{type}:
+    post:
+      description: Closes the circuit breaker for a plugin type.
+      parameters:
+      - description: Plugin type
+        in: path
+        name: type
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Reset a circuit breaker
+      tags:
+      - circuit-breaker
   /api/v1/dlq:
     delete:
       description: Deletes all failed jobs for a tenant/queue that are older than
@@ -486,7 +546,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Authenticates with operator credentials and starts a server-side session.
+      description: Authenticates with operator credentials and starts a server-side
+        session.
       parameters:
       - description: Login credentials
         in: body
@@ -505,14 +566,59 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties:
-              type: string
+            additionalProperties: true
             type: object
         "401":
           description: Unauthorized
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
       summary: Login
+      tags:
+      - auth
+  /api/v1/logout:
+    post:
+      description: Revokes the current session and clears the session cookie.
+      responses:
+        "204":
+          description: No Content
+      summary: Logout
+      tags:
+      - auth
+  /api/v1/rate-limits:
+    get:
+      description: Returns current fixed-window usage for every tenant that has submitted
+        jobs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get per-tenant rate limit status
+      tags:
+      - monitoring
+  /api/v1/session:
+    get:
+      description: Returns the current session state, role and CSRF token.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get current session
       tags:
       - auth
   /api/v1/stats:
@@ -638,6 +744,36 @@ paths:
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       summary: Update a webhook
+      tags:
+      - webhooks
+  /api/v1/webhooks/{id}/deliveries:
+    get:
+      description: Returns the last N delivery attempts (status codes, retry attempts,
+        backoff state) for a webhook endpoint.
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Max deliveries to return (default 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/webhooks.DeliveryRecord'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Get webhook delivery history
       tags:
       - webhooks
   /jobs:

@@ -39,3 +39,20 @@ func RoleFromContext(ctx context.Context) string {
 	role, _ := ctx.Value(ContextKeyRole).(string)
 	return role
 }
+
+// TenantIDFromContext returns the tenant associated with the authenticated principal.
+func TenantIDFromContext(ctx context.Context) string {
+	tenantID, _ := ctx.Value(ContextKeyTenantID).(string)
+	return tenantID
+}
+
+// AuthTypeFromContext returns how the request was authenticated (api_key or session).
+func AuthTypeFromContext(ctx context.Context) string {
+	authType, _ := ctx.Value(ContextKeyAuthType).(string)
+	return authType
+}
+
+// IsClientTenant reports whether the tenant belongs to a registered API-key client.
+func IsClientTenant(tenantID string) bool {
+	return tenantID != "" && tenantID != "operator"
+}

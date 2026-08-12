@@ -44,6 +44,14 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 - `GET /api/v1/session` — current session state (role + CSRF token)
 - `GET /api/v1/circuit-breakers` — worker circuit-breaker status (proxied)
 - `POST /api/v1/circuit-breakers/reset/{type}` — reset a circuit breaker
+- `POST /api/v1/register` — register a tenant and receive a one-time API key
+- `GET /api/v1/client/me` — return the authenticated client's tenant ID
+- `GET /api/v1/clients` — list registered tenants (operator)
+- `DELETE /api/v1/clients/{tenant_id}` — revoke a tenant API key (operator)
+- `POST /api/v1/clients/{tenant_id}/rotate` — rotate a tenant API key (operator)
+- `GET /api/v1/job-types` — list registered job types
+- `POST /api/v1/job-types` — register a custom job type (operator)
+- `DELETE /api/v1/job-types/{name}` — remove a custom job type (operator)
 - `POST /jobs` — create a job
 - `POST /jobs/batch` — batch create up to 100 jobs
 - `GET /jobs` — list/search jobs
@@ -97,13 +105,20 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 | `READONLY_PASSWORD` | `` | Password for the viewer login |
 | `SESSION_TTL_SECONDS` | `28800` | Operator UI session lifetime (seconds) |
 | `LOGIN_RATE_LIMIT` | `5` | Login attempts per IP per minute |
+| `REGISTER_RATE_LIMIT` | `10` | Client registration attempts per IP per minute |
 | `WORKER_ADDR` | `localhost:8081` | Worker address for the circuit-breaker proxy |
 | `SLA_TARGET_SECONDS` | `300` | SLA target in seconds |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `` | OpenTelemetry gRPC endpoint |
 | `POSTGRES_MIGRATIONS_DIR` | `db/migrations` | Postgres SQL migrations directory |
+| `SMTP_HOST` | `` | SMTP server for real email delivery (worker). When unset, email jobs are simulated. |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USER` | `` | SMTP username (optional) |
+| `SMTP_PASSWORD` | `` | SMTP password (optional) |
+| `SMTP_FROM` | `` | From address for outbound email |
 
 Auth:
-- Machine clients authenticate with the `X-API-Key` header set to the value of `API_KEY` on every request.
+- Machine clients authenticate with the `X-API-Key` header. Each registered tenant receives its own key via `POST /api/v1/register`.
+- Registered clients are scoped to their `tenant_id`: they can only read or mutate their own jobs, DLQ entries, and webhooks. Operator sessions and the static `API_KEY` are unrestricted.
 - Browsers authenticate via a server-side session: `POST /api/v1/login` returns an `HttpOnly` session cookie and a per-session CSRF token. The API key is never exposed to the browser.
 - Write endpoints (job control, DLQ replay/purge, webhooks, CB reset, logout) additionally require an admin role and the `X-CSRF-Token` header.
 - `GET /events` (SSE) and all job/DLQ/stats/worker endpoints require authentication.
@@ -242,7 +257,9 @@ A full-featured sidebar layout with pages for every operation:
 | **Workers & Health** | Active workers, Prometheus metrics, health check status |
 | **Circuit Breaker** | Per-plugin breaker states with reset action |
 | **Dead Letter Queue** | Browse, search, filter, export, replay, purge, bulk purge |
+| **Clients** | View registered tenants; revoke or rotate API keys |
 | **Webhooks** | Register and list event-driven HTTP callbacks |
+| **Job Types** | Register custom job types (delegates to http/email/image handlers) |
 
 ### DLQ Admin Console — `GET /admin/dlq`
 
@@ -262,13 +279,45 @@ A dedicated, styled single-page application for tenants to register, view their 
 |-------------|-------------|
 | **Register** | Register a new tenant to generate a one-time API key |
 | **Login** | Log in with the API key (stored in `localStorage`) |
-| **Dashboard** | View tenant-specific jobs, submit new jobs, and monitor status in a modern UI |
+| **Dashboard** | Tenant-scoped stats (pending, processing, completed, failed, DLQ, total) + live SSE feed |
+| **Submit Job** | Submit jobs with type, priority, JSON payload, optional webhook |
+| **My Jobs** | Paginated job list with detail modal |
+| **Webhooks** | Register HTTP callbacks for `created`, `completed`, and `failed` events |
+| **API Key** | View/copy key and quick-start curl snippet |
+| **Docs** | Full API reference with JSON payload examples |
 
 ### Auth flow
 
 For operator pages, they show a login overlay on first load. `POST /api/v1/login` validates the credentials and starts a server-side session (an `HttpOnly` session cookie plus a per-session CSRF token). The API key is never returned to the browser and nothing is stored in `localStorage`; the session cookie is sent with every request and the CSRF token rides in the `X-CSRF-Token` header on mutating calls. Sessions expire after `SESSION_TTL_SECONDS` and are revoked by `POST /api/v1/logout` or after 15 minutes of idle.
 
 For the **Client Portal**, authentication is stateless. The client registers their tenant, receives a one-time API key, and that key is stored purely on the client-side (in `localStorage`). It is sent in the `X-API-Key` header for all dashboard requests.
+
+### Built-in job types
+
+| Type | Handler | Description |
+|------|---------|-------------|
+| `email` | email | Sends mail via SMTP when `SMTP_HOST` is set on the worker; otherwise simulates delivery (logs only). |
+| `image` | image | Image processing pipeline (resize, transform) |
+| `http` | http | Makes an HTTP request to any URL. Payload: `url` (required), `method`, `headers`, `body`. |
+
+Admins can register additional job types via `POST /api/v1/job-types` or the operator UI **Job Types** page. Custom types specify a handler (`http`, `email`, or `image`) that the worker uses at execution time.
+
+### Webhook events
+
+Use canonical event names: `created`, `completed`, and `failed`. The dispatcher POSTs JSON to your URL:
+
+```json
+{
+  "job_id": "abc-123",
+  "tenant_id": "my-tenant",
+  "status": "completed",
+  "result": "...",
+  "error": "",
+  "timestamp": "2026-08-12T10:00:00Z"
+}
+```
+
+Verify the HMAC signature in the `X-Webhook-Signature: sha256=<hex>` header. The webhook secret is **never** included in the POST body.
 
 ## Terminal Examples
 
@@ -358,8 +407,11 @@ curl http://localhost:8080/workers -H "X-API-Key: secret-api-key"
 
 The built-in worker plugins currently support:
 
-- `email`
+- `email` (SMTP when configured, simulated otherwise)
 - `image`
+- `http`
+
+Admins can register additional types via the operator UI or `POST /api/v1/job-types`.
 
 The API also accepts several test job types used by the test suite:
 
@@ -699,8 +751,7 @@ curl -X POST http://localhost:8080/api/v1/webhooks \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://my-backend-service.com/hooks/task-queue",
-    "events": ["job.completed", "job.failed"],
-    "tenant_id": "my-backend-service"
+    "events": ["created", "completed", "failed"]
   }'
 ```
 
@@ -708,18 +759,12 @@ Verify the HMAC signature on the incoming webhook payload to ensure it genuinely
 
 ## Project Roadmap & Remaining Work
 
-While the core functionality is stable, the following items remain to be completed for a fully hardened production release:
+Core functionality is production-ready. Remaining items are optional hardening and polish:
 
 - **Deployment & Infrastructure:**
-  - Create a unified, end-to-end production deployment guide.
   - Document TLS / Ingress setup for Kubernetes deployments.
   - Finalize production-grade Namespace, Service Account, and RBAC hardening.
-  - Document secret management workflow (Vault rotation) for production clusters.
 - **Testing & Tooling:**
-  - Build a standalone Chaos CLI to execute failure scenarios outside of the `go test` runner.
-  - Create an automated JSON report exporter for CI dashboards for the chaos suite.
-  - Add integration tests for HashiCorp Vault tenant-level secret rotation and cache invalidation behaviors.
-- **Features:**
-  - Add more built-in worker plugins beyond the current `email` and `image` examples.
-  - OpenTelemetry (OTEL) gRPC exporter integration (trace IDs are currently logged, but the exporter is pending).
-  - Admin UI page to view and revoke registered client API keys.
+  - Integration tests for HashiCorp Vault tenant-level secret rotation.
+
+See [docs/ROADMAP.md](/home/fewzan/Projects/task-queue-system/docs/ROADMAP.md) for the full completed-feature history.

@@ -118,6 +118,10 @@ func (m *mockStore) SearchJobs(ctx context.Context, filter JobFilter) ([]*jobs.J
 	return nil, nil
 }
 
+func (m *mockStore) CountJobs(ctx context.Context, filter JobFilter) (int64, error) {
+	return int64(len(m.jobs)), nil
+}
+
 func (m *mockStore) RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error) {
 	m.recoverOrphansCalled++
 	return 0, nil
@@ -142,6 +146,13 @@ func (m *mockStore) GetByWorkerAndStatus(ctx context.Context, workerID string, s
 	m.getByWorkerCalled++
 	return nil, nil
 }
+
+func (m *mockStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error { return nil }
+func (m *mockStore) VerifyClient(ctx context.Context, apiKeyHash string) (string, error) {
+	return "", ErrClientNotFound
+}
+func (m *mockStore) ListClients(ctx context.Context) ([]*ClientRecord, error) { return nil, nil }
+func (m *mockStore) RevokeClient(ctx context.Context, tenantID string) error { return nil }
 
 func TestDualStoreSave(t *testing.T) {
 	primary := newMockStore()

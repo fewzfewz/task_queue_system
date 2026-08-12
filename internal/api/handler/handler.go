@@ -18,6 +18,7 @@ import (
 	"task-queue-system/internal/api/session"
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/sse"
 	"task-queue-system/internal/storage/models"
@@ -28,6 +29,7 @@ import (
 type JobHandler struct {
 	service            *service.JobService
 	webhookStore       *webhooks.WebhookStore
+	jobTypeStore       *jobtypes.Store
 	sseBroker          *sse.Broker
 	logger             *slog.Logger
 	apiKey             string
@@ -37,13 +39,14 @@ type JobHandler struct {
 	readonlyPassword   string
 	sessions           *session.Store
 	loginLimiter       *session.LoginLimiter
+	registerLimiter    *session.LoginLimiter
 	workerAddr         string
 	sseCheckInterval   time.Duration
 }
 
 // New creates a JobHandler. The session store backs the operator UI login; the
 // worker address is used to proxy circuit-breaker access through the API.
-func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string, sessions *session.Store, workerAddr string, loginRateLimit int) *JobHandler {
+func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string, sessions *session.Store, workerAddr string, loginRateLimit, registerRateLimit int) *JobHandler {
 	return &JobHandler{
 		service:          svc,
 		sseBroker:        sse.NewBroker(logger.With("component", "sse")),
@@ -53,6 +56,7 @@ func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, ad
 		adminPassword:    adminPassword,
 		sessions:         sessions,
 		loginLimiter:     session.NewLoginLimiter(loginRateLimit, time.Minute),
+		registerLimiter:  session.NewLoginLimiter(registerRateLimit, time.Minute),
 		workerAddr:       workerAddr,
 		sseCheckInterval: 15 * time.Second,
 	}
@@ -70,6 +74,14 @@ func (h *JobHandler) SSEBroker() *sse.Broker { return h.sseBroker }
 // SetWebhookStore attaches the persistent webhook store for CRUD endpoints.
 func (h *JobHandler) SetWebhookStore(ws *webhooks.WebhookStore) {
 	h.webhookStore = ws
+}
+
+// SetJobTypeStore attaches the dynamic job type registry.
+func (h *JobHandler) SetJobTypeStore(jts *jobtypes.Store) {
+	h.jobTypeStore = jts
+	if h.service != nil {
+		h.service.SetJobTypeStore(jts)
+	}
 }
 
 // CreateJob handles POST /jobs.
@@ -99,13 +111,18 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctxTenant := middleware.TenantIDFromContext(r.Context())
+	if req.TenantID == "" && middleware.IsClientTenant(ctxTenant) {
+		req.TenantID = ctxTenant
+	}
+
 	// ── Delegate to service ───────────────────────────────────────────────────
 	var webhookConfig *jobs.WebhookConfig
 	if req.Webhook != nil {
 		webhookConfig = &jobs.WebhookConfig{
 			URL:    req.Webhook.URL,
 			Secret: req.Webhook.Secret,
-			Events: req.Webhook.Events,
+			Events: webhooks.NormalizeEvents(req.Webhook.Events),
 		}
 		if len(webhookConfig.Events) == 0 {
 			webhookConfig.Events = []string{"completed", "failed"}
@@ -151,18 +168,24 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctxTenant := middleware.TenantIDFromContext(r.Context())
+
 	res := dto.BatchJobResponse{
 		Total:     len(req.Jobs),
 		Processed: len(req.Jobs),
 	}
 
 	for i, jr := range req.Jobs {
+		if jr.TenantID == "" && middleware.IsClientTenant(ctxTenant) {
+			req.Jobs[i].TenantID = ctxTenant
+			jr.TenantID = ctxTenant
+		}
 		var webhookConfig *jobs.WebhookConfig
 		if jr.Webhook != nil {
 			webhookConfig = &jobs.WebhookConfig{
 				URL:    jr.Webhook.URL,
 				Secret: jr.Webhook.Secret,
-				Events: jr.Webhook.Events,
+				Events: webhooks.NormalizeEvents(jr.Webhook.Events),
 			}
 			if len(webhookConfig.Events) == 0 {
 				webhookConfig.Events = []string{"completed", "failed"}
@@ -211,6 +234,16 @@ func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		LabelValue: r.URL.Query().Get("label_value"),
 	}
 
+	// API-key clients are scoped to their own tenant automatically.
+	ctxTenant := middleware.TenantIDFromContext(r.Context())
+	if middleware.IsClientTenant(ctxTenant) {
+		if filter.TenantID != "" && filter.TenantID != ctxTenant {
+			h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access denied for tenant")
+			return
+		}
+		filter.TenantID = ctxTenant
+	}
+
 	if after := r.URL.Query().Get("created_after"); after != "" {
 		if t, err := time.Parse(time.RFC3339, after); err == nil {
 			filter.CreatedAfter = t
@@ -249,11 +282,11 @@ func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	totalFilter := filter
 	totalFilter.Limit = 0
 	totalFilter.Offset = 0
-	totalJobs, _ := h.service.SearchJobs(r.Context(), totalFilter)
+	total, _ := h.service.CountJobs(r.Context(), totalFilter)
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"jobs":  res,
-		"total": len(totalJobs),
+		"total": total,
 		"page":  page,
 		"limit": filter.Limit,
 	})
@@ -293,12 +326,7 @@ func (h *JobHandler) GetJobStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ── Multi-tenancy Filter ────────────────────────────────────────────────
-	// If a tenant_id is provided in the query, we only return the job if it matches.
-	// In a real system, this would be extracted from an auth token.
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID != "" && job.TenantID != tenantID {
-		h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access to job denied for tenant")
+	if !h.checkJobTenantAccess(w, r, job) {
 		return
 	}
 
@@ -321,32 +349,58 @@ func (h *JobHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 	workers, _ := h.service.GetActiveWorkers(r.Context())
 
-	// Aggregate counts
+	// Scope stats to client tenant when authenticated via API key.
+	scopeTenant := ""
+	ctxTenant := middleware.TenantIDFromContext(r.Context())
+	if middleware.IsClientTenant(ctxTenant) {
+		scopeTenant = ctxTenant
+	}
+
 	totalPending := int64(0)
 	byQueue := make(map[string]int64)
 	for qtype, tenants := range queueLengths {
 		var queueTotal int64
-		for _, count := range tenants {
-			queueTotal += count
+		for tenant, count := range tenants {
+			if scopeTenant == "" || tenant == scopeTenant {
+				queueTotal += count
+			}
 		}
-		byQueue[qtype] = queueTotal
+		if queueTotal > 0 {
+			byQueue[qtype] = queueTotal
+		}
 		totalPending += queueTotal
 	}
 
-	// Count by status via search
-	completedJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Status: string(jobs.StatusCompleted), Limit: 1})
-	failedJobs, _ := h.service.SearchJobs(r.Context(), models.JobFilter{Status: string(jobs.StatusFailed), Limit: 1})
+	statusCounts, err := h.service.JobStatusCounts(r.Context(), scopeTenant)
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+
+	dlqCount, _ := h.service.CountFailedJobs(r.Context(), scopeTenant, "")
 
 	priorityDepths, _ := h.service.PriorityPartitionDepths(r.Context())
 
+	totalJobs := int64(0)
+	for _, c := range statusCounts {
+		totalJobs += c
+	}
+
 	stats := map[string]interface{}{
 		"total_pending":      totalPending,
+		"total_processing":   statusCounts[string(jobs.StatusProcessing)],
+		"total_completed":    statusCounts[string(jobs.StatusCompleted)],
+		"total_failed":       statusCounts[string(jobs.StatusFailed)],
+		"total_dlq":          dlqCount,
+		"total_jobs":         totalJobs,
 		"queue_breakdown":    queueLengths,
 		"priority_breakdown": priorityDepths,
 		"worker_count":       len(workers),
 		"workers":            workers,
-		"approx_completed":   len(completedJobs), // hacky but gives a sense
-		"approx_failed":      len(failedJobs),
+		"tenant_id":          scopeTenant,
+		// Legacy fields kept for backward compatibility
+		"approx_completed": statusCounts[string(jobs.StatusCompleted)],
+		"approx_failed":    statusCounts[string(jobs.StatusFailed)],
 	}
 	h.writeJSON(w, http.StatusOK, stats)
 }
@@ -406,6 +460,9 @@ func (h *JobHandler) GetJobDeps(w http.ResponseWriter, r *http.Request) {
 	job, err := h.service.GetJobStatus(r.Context(), jobID)
 	if err != nil {
 		h.writeAppError(w, err)
+		return
+	}
+	if !h.checkJobTenantAccess(w, r, job) {
 		return
 	}
 
@@ -488,9 +545,10 @@ func (h *JobHandler) GetWorkers(w http.ResponseWriter, r *http.Request) {
 // @Router       /api/v1/webhooks [post]
 func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		URL    string   `json:"url"`
-		Secret string   `json:"secret"`
-		Events []string `json:"events"`
+		URL      string   `json:"url"`
+		Secret   string   `json:"secret"`
+		Events   []string `json:"events"`
+		TenantID string   `json:"tenant_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON: "+err.Error())
@@ -501,7 +559,13 @@ func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "url is required")
 		return
 	}
-	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	tenantID := middleware.TenantIDFromContext(r.Context())
+	if middleware.IsClientTenant(tenantID) {
+		// Client API keys always register webhooks for their own tenant.
+	} else if req.TenantID != "" {
+		tenantID = req.TenantID
+	}
+	req.Events = webhooks.NormalizeEvents(req.Events)
 	wh, err := h.webhookStore.Create(r.Context(), tenantID, req.URL, req.Secret, req.Events)
 	if err != nil {
 		h.writeAppError(w, err)
@@ -647,6 +711,9 @@ func (h *JobHandler) PauseJob(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
 		return
 	}
+	if _, ok := h.loadJobForTenant(w, r, jobID); !ok {
+		return
+	}
 	if err := h.service.PauseJob(r.Context(), jobID); err != nil {
 		h.writeAppError(w, err)
 		return
@@ -668,6 +735,9 @@ func (h *JobHandler) ResumeJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+	if _, ok := h.loadJobForTenant(w, r, jobID); !ok {
 		return
 	}
 	if err := h.service.ResumeJob(r.Context(), jobID); err != nil {
@@ -709,6 +779,15 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 	authType, _ := r.Context().Value(middleware.ContextKeyAuthType).(string)
 	sess := middleware.SessionFromContext(r.Context())
 
+	// API-key clients (the client portal) only see events for their own tenant.
+	// Operator sessions and the static operator API key see every event.
+	var filterTenant string
+	if authType == middleware.AuthTypeAPIKey {
+		if tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string); tenantID != "" && tenantID != "operator" {
+			filterTenant = tenantID
+		}
+	}
+
 	var tickerC <-chan time.Time
 	if authType == middleware.AuthTypeSession && sess != nil {
 		ticker := time.NewTicker(h.sseCheckInterval)
@@ -730,10 +809,28 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
+			if filterTenant != "" && !sseEventMatchesTenant(msg, filterTenant) {
+				continue
+			}
 			fmt.Fprint(w, msg)
 			flusher.Flush()
 		}
 	}
+}
+
+// sseEventMatchesTenant reports whether a serialized SSE message belongs to the
+// given tenant. Unparseable messages are delivered rather than dropped so a
+// future broker change cannot silently starve a client.
+func sseEventMatchesTenant(msg, tenantID string) bool {
+	payload := strings.TrimSpace(strings.TrimPrefix(msg, "data: "))
+	var ev sse.Event
+	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+		return true
+	}
+	if ev.Tenant == "" {
+		return false
+	}
+	return ev.Tenant == tenantID
 }
 
 // CancelJob handles POST /jobs/{id}/cancel.
@@ -750,6 +847,9 @@ func (h *JobHandler) CancelJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("id")
 	if jobID == "" {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "missing job ID in path")
+		return
+	}
+	if _, ok := h.loadJobForTenant(w, r, jobID); !ok {
 		return
 	}
 	if err := h.service.CancelJob(r.Context(), jobID); err != nil {
@@ -786,6 +886,10 @@ func (h *JobHandler) UpdateJobProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
+
+	if _, ok := h.loadJobForTenant(w, r, jobID); !ok {
+		return
+	}
 
 	if err := h.service.UpdateJobProgress(r.Context(), jobID, req.Progress); err != nil {
 		h.writeAppError(w, err)
@@ -856,7 +960,10 @@ func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
 // @Failure      401    {object}  dto.ErrorResponse
 // @Router       /api/v1/dlq [get]
 func (h *JobHandler) ListFailedJobs(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	tenantID := middleware.TenantIDFromContext(r.Context())
+	if !middleware.IsClientTenant(tenantID) {
+		tenantID = ""
+	}
 	jobType := r.URL.Query().Get("queue")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 { limit = 20 }
@@ -896,17 +1003,10 @@ func (h *JobHandler) ListFailedJobs(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  dto.ErrorResponse
 // @Router       /api/v1/dlq/{id} [get]
 func (h *JobHandler) GetFailedJobDetail(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
 	id := r.PathValue("id")
 
-	job, err := h.service.GetJobStatus(r.Context(), id)
-	if err != nil {
-		h.writeAppError(w, err)
-		return
-	}
-
-	if job.TenantID != tenantID {
-		h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "forbidden")
+	job, ok := h.loadJobForTenant(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -924,7 +1024,10 @@ func (h *JobHandler) GetFailedJobDetail(w http.ResponseWriter, r *http.Request) 
 // @Failure      404  {object}  dto.ErrorResponse
 // @Router       /api/v1/dlq/{id}/replay [post]
 func (h *JobHandler) ReplayFailedJob(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	tenantID := middleware.TenantIDFromContext(r.Context())
+	if !middleware.IsClientTenant(tenantID) {
+		tenantID = ""
+	}
 	id := r.PathValue("id")
 
 	job, err := h.service.ReplayJob(r.Context(), id, tenantID)
@@ -959,7 +1062,10 @@ func (h *JobHandler) publishDLQSSE(jobID, status string) {
 // @Failure      404  {object}  dto.ErrorResponse
 // @Router       /api/v1/dlq/{id} [delete]
 func (h *JobHandler) DeleteFailedJob(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
+	tenantID := middleware.TenantIDFromContext(r.Context())
+	if !middleware.IsClientTenant(tenantID) {
+		tenantID = ""
+	}
 	id := r.PathValue("id")
 
 	if err := h.service.DeleteJob(r.Context(), id, tenantID); err != nil {
@@ -1004,4 +1110,59 @@ func (h *JobHandler) BulkPurgeDLQ(w http.ResponseWriter, r *http.Request) {
 
 	h.publishDLQSSE("", "bulk_purged")
 	h.writeJSON(w, http.StatusOK, map[string]int64{"deleted": count})
+}
+
+// ── Job Types ─────────────────────────────────────────────────────────────────
+
+// ListJobTypes handles GET /api/v1/job-types.
+func (h *JobHandler) ListJobTypes(w http.ResponseWriter, r *http.Request) {
+	if h.jobTypeStore == nil {
+		h.writeJSON(w, http.StatusOK, map[string]interface{}{"job_types": jobtypes.BuiltIn})
+		return
+	}
+	types, err := h.jobTypeStore.List(r.Context())
+	if err != nil {
+		h.writeAppError(w, err)
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{"job_types": types})
+}
+
+// CreateJobType handles POST /api/v1/job-types (admin only).
+func (h *JobHandler) CreateJobType(w http.ResponseWriter, r *http.Request) {
+	if h.jobTypeStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, apperr.CodeInternal, "job type registry not configured")
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Handler     string `json:"handler"`
+		PayloadHint string `json:"payload_hint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+	jt, err := h.jobTypeStore.Create(r.Context(), req.Name, req.Description, req.Handler, req.PayloadHint)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, err.Error())
+		return
+	}
+	h.writeJSON(w, http.StatusCreated, jt)
+}
+
+// DeleteJobType handles DELETE /api/v1/job-types/{name} (admin only).
+func (h *JobHandler) DeleteJobType(w http.ResponseWriter, r *http.Request) {
+	if h.jobTypeStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, apperr.CodeInternal, "job type registry not configured")
+		return
+	}
+	name := r.PathValue("name")
+	if err := h.jobTypeStore.Delete(r.Context(), name); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -57,7 +57,16 @@ func RequireAuth(cfg *config.Config, sessions *session.Store, store models.Store
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			if rawKey := r.Header.Get("X-API-Key"); rawKey != "" {
+			rawKey := r.Header.Get("X-API-Key")
+
+			// EventSource cannot set custom request headers, so the client
+			// portal passes its API key as a query parameter on the SSE
+			// endpoints only. Keep the fallback scoped to those routes.
+			if rawKey == "" && isSSEEndpoint(r.URL.Path) {
+				rawKey = r.URL.Query().Get("api_key")
+			}
+
+			if rawKey != "" {
 				// Fast-path: operator's own static API key grants admin access
 				// without a DB round-trip.
 				if cfg.ApiKey != "" && rawKey == cfg.ApiKey {
@@ -145,4 +154,14 @@ func stateChanging(method string) bool {
 	default:
 		return false
 	}
+}
+
+// isSSEEndpoint reports whether the path is one of the server-sent event
+// stream routes — the only place an API key may be accepted as a query param.
+func isSSEEndpoint(path string) bool {
+	switch path {
+	case "/events", "/api/v1/events":
+		return true
+	}
+	return false
 }

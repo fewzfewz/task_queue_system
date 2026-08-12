@@ -16,7 +16,7 @@ func TestNewRouter_RegistersRoutes(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
 	if handler == nil {
 		t.Fatal("expected non-nil handler")
 	}
@@ -56,7 +56,7 @@ func TestNewRouter_DataEndpointsRequireAuth(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
 
 	dlqTests := []struct {
 		method string
@@ -93,7 +93,7 @@ func TestNewRouter_APIKeyAuth(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
 
 	req := httptest.NewRequest("GET", "/jobs/nonexistent", nil)
 	req.Header.Set("X-API-Key", cfg.ApiKey)
@@ -110,7 +110,7 @@ func TestNewRouter_LoginSessionFlow(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
 
 	// Login as admin.
 	login := httptest.NewRequest("POST", "/api/v1/login", strings.NewReader(`{"username":"admin","password":"admin123"}`))
@@ -166,7 +166,7 @@ func TestNewRouter_LoginBadCredentials(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
 
 	login := httptest.NewRequest("POST", "/api/v1/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
 	login.Header.Set("Content-Type", "application/json")
@@ -182,7 +182,7 @@ func TestNewRouter_SwaggerUI(t *testing.T) {
 	store := models.NewInMemoryStore()
 	mq := queue.NewMockQueue()
 	cfg := config.Load()
-	handler := NewRouter(mq, store, slog.Default(), cfg, nil)
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
 
 	req := httptest.NewRequest("GET", "/swagger/", nil)
 	rec := httptest.NewRecorder()

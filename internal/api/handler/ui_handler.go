@@ -128,6 +128,7 @@ const appHTML = `<!DOCTYPE html>
     #content { padding:24px; max-width:1360px; margin:0 auto; }
     .page { display:none; }
     .page.active { display:block; animation:fadeIn .25s ease; }
+    .hidden { display:none !important; }
     @keyframes fadeIn { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
 
     /* ── Stats Cards ── */
@@ -424,6 +425,9 @@ const appHTML = `<!DOCTYPE html>
         <a class="nav-item" data-page="webhooks" data-admin onclick="showPage('webhooks');loadWebhooks()">
           <i class="fas fa-globe"></i> Webhooks
         </a>
+        <a class="nav-item" data-page="jobtypes" data-admin onclick="showPage('jobtypes');loadJobTypes()">
+          <i class="fas fa-tags"></i> Job Types
+        </a>
       </div>
       <div class="sidebar-footer">
         <span class="user"><i class="fas fa-user-circle"></i> Admin</span>
@@ -518,7 +522,13 @@ const appHTML = `<!DOCTYPE html>
             <div class="section-title"><i class="fas fa-plus-circle"></i> Create Job</div>
             <div class="grid-2">
               <div>
-                <div class="form-group"><label>Job Type</label><input id="create-type" value="email" /></div>
+                <div class="form-group"><label>Job Type</label>
+                  <select id="create-type" onchange="adminOnJobTypeChange()">
+                    <option value="email">email</option>
+                    <option value="image">image</option>
+                    <option value="http">http</option>
+                  </select>
+                </div>
                 <div class="form-row">
                   <div class="form-group"><label>Priority</label><input id="create-priority" value="medium" /></div>
                   <div class="form-group"><label>Tenant ID</label><input id="create-tenant" value="tenant-a" /></div>
@@ -531,7 +541,14 @@ const appHTML = `<!DOCTYPE html>
                 <div class="form-group"><label>Schedule (ISO8601)</label><input id="create-runat" placeholder="Optional" /></div>
               </div>
               <div>
-                <div class="form-group"><label>Payload (JSON)</label><textarea id="create-payload">{"to":"user@example.com","body":"Welcome!"}</textarea></div>
+                <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                  <span id="admin-payload-title">Job Payload</span>
+                  <button type="button" class="btn-secondary btn-sm" onclick="adminTogglePayloadMode()" style="font-size:11px"><i class="fas fa-code"></i> JSON</button>
+                </div>
+                <div id="admin-payload-fields"></div>
+                <div id="admin-payload-json-wrap" class="hidden">
+                  <textarea id="create-payload">{"to":"user@example.com","body":"Welcome!"}</textarea>
+                </div>
               </div>
             </div>
             <div class="toolbar" style="margin-top:10px;">
@@ -670,9 +687,9 @@ const appHTML = `<!DOCTYPE html>
             </p>
             <div style="overflow-x:auto;">
               <table style="margin:0;width:100%;">
-                <thead><tr><th>Tenant ID</th><th>Registration Date</th></tr></thead>
+                <thead><tr><th>Tenant ID</th><th>Registration Date</th><th>Actions</th></tr></thead>
                 <tbody id="clients-body">
-                  <tr><td colspan="2" style="text-align:center;padding:30px;color:var(--muted);">Loading clients...</td></tr>
+                  <tr><td colspan="3" style="text-align:center;padding:30px;color:var(--muted);">Loading clients...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -688,6 +705,7 @@ const appHTML = `<!DOCTYPE html>
               <div class="form-group"><label>Secret</label><input id="wh-secret" value="wh-secret-123" /></div>
               <div class="form-group"><label>Events (comma)</label><input id="wh-events" value="completed,failed" /></div>
             </div>
+            <div class="form-group"><label>Tenant ID <span style="color:var(--muted2)">(required for operator sessions)</span></label><input id="wh-tenant" placeholder="my-tenant" /></div>
             <button class="btn-primary" data-admin onclick="registerWebhook()"><i class="fas fa-plus"></i> Register</button>
           </div>
           <div class="section-card">
@@ -695,6 +713,31 @@ const appHTML = `<!DOCTYPE html>
             <table>
               <thead><tr><th>ID</th><th>URL</th><th>Events</th><th>Created</th><th></th></tr></thead>
               <tbody id="wh-body"><tr><td colspan="5"><div class="state-box empty"><i class="fas fa-globe"></i> No webhooks loaded yet.</div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Page: Job Types -->
+        <div id="page-jobtypes" class="page">
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-tags"></i> Register Custom Job Type</div>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+              Built-in types: <code>email</code> (simulated SMTP), <code>image</code> (image processing), <code>http</code> (HTTP callback).
+              Register custom types that delegate to the <code>http</code> handler for real-world integrations.
+            </p>
+            <div class="grid-3">
+              <div class="form-group"><label>Name</label><input id="jt-name" placeholder="slack-notify" /></div>
+              <div class="form-group"><label>Handler</label><select id="jt-handler"><option value="http">http</option><option value="email">email</option><option value="image">image</option></select></div>
+              <div class="form-group"><label>Payload Hint</label><input id="jt-hint" placeholder='{"url":"https://..."}' /></div>
+            </div>
+            <div class="form-group"><label>Description</label><input id="jt-desc" placeholder="Send Slack notification via webhook" /></div>
+            <button class="btn-primary" data-admin onclick="createJobType()"><i class="fas fa-plus"></i> Add Job Type</button>
+          </div>
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-list"></i> Available Job Types</div>
+            <table>
+              <thead><tr><th>Name</th><th>Handler</th><th>Description</th><th>Built-in</th><th></th></tr></thead>
+              <tbody id="jt-body"><tr><td colspan="5"><div class="state-box empty"><i class="fas fa-tags"></i> No job types loaded yet.</div></td></tr></tbody>
             </table>
           </div>
         </div>
@@ -717,7 +760,8 @@ const appHTML = `<!DOCTYPE html>
       cb: 'Circuit Breaker',
       dlq: 'Dead Letter Queue',
       clients: 'Clients',
-      webhooks: 'Webhooks'
+      webhooks: 'Webhooks',
+      jobtypes: 'Job Types'
     };
     const PAGE_DESCS = {
       dashboard: 'System overview and real-time statistics',
@@ -729,7 +773,8 @@ const appHTML = `<!DOCTYPE html>
       cb: 'Track circuit breaker states per plugin',
       dlq: 'Manage failed jobs and retries',
       clients: 'Manage tenant credentials',
-      webhooks: 'Configure event-driven HTTP callbacks'
+      webhooks: 'Configure event-driven HTTP callbacks',
+      jobtypes: 'Register custom job types for workers'
     };
     let SESSION = { authenticated:false, username:'', role:'', csrf_token:'' };
     let idleTimer = null;
@@ -936,9 +981,80 @@ const appHTML = `<!DOCTYPE html>
     document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal();});
 
     // ── Create Job ──
+    let adminPayloadMode = 'form';
+    let adminJobTypeRegistry = {};
+    const ADMIN_PAYLOAD_SCHEMAS = {
+      email: { title:'Email', fields:[
+        {id:'to',label:'To',type:'email',required:true,placeholder:'user@example.com'},
+        {id:'subject',label:'Subject',type:'text',placeholder:'Hello'},
+        {id:'body',label:'Body',type:'textarea',placeholder:'Message...'}
+      ]},
+      image: { title:'Image', fields:[
+        {id:'source_url',label:'Source URL',type:'url',required:true,placeholder:'https://example.com/img.jpg'},
+        {id:'operation',label:'Operation',type:'select',options:['process','resize','compress','watermark'],default:'process'}
+      ]},
+      http: { title:'HTTP', fields:[
+        {id:'url',label:'URL',type:'url',required:true,placeholder:'https://api.example.com/hook'},
+        {id:'method',label:'Method',type:'select',options:['POST','GET','PUT','PATCH','DELETE'],default:'POST'},
+        {id:'headers',label:'Headers',type:'text',placeholder:'Authorization: Bearer token'},
+        {id:'body',label:'Body (JSON)',type:'textarea',placeholder:'{"key":"value"}'}
+      ]}
+    };
+    function adminResolveHandler(name) {
+      if (ADMIN_PAYLOAD_SCHEMAS[name]) return name;
+      const m = adminJobTypeRegistry[name];
+      return (m && m.handler) || 'http';
+    }
+    function adminRenderPayloadForm() {
+      const type = document.getElementById('create-type').value;
+      const handler = adminResolveHandler(type);
+      const schema = ADMIN_PAYLOAD_SCHEMAS[handler] || ADMIN_PAYLOAD_SCHEMAS.http;
+      document.getElementById('admin-payload-title').textContent = schema.title + ' Payload';
+      document.getElementById('admin-payload-fields').innerHTML = schema.fields.map(f => {
+        const req = f.required ? ' *' : '';
+        let input = f.type === 'textarea' ? '<textarea id="apf-'+f.id+'" rows="3" placeholder="'+(f.placeholder||'')+'"></textarea>'
+          : f.type === 'select' ? '<select id="apf-'+f.id+'">'+(f.options||[]).map(o=>'<option'+(o===f.default?' selected':'')+'>'+o+'</option>').join('')+'</select>'
+          : '<input id="apf-'+f.id+'" type="'+(f.type||'text')+'" placeholder="'+(f.placeholder||'')+'">';
+        return '<div class="form-group"><label>'+f.label+req+'</label>'+input+'</div>';
+      }).join('');
+    }
+    function adminTogglePayloadMode() {
+      adminPayloadMode = adminPayloadMode === 'form' ? 'json' : 'form';
+      const showJson = adminPayloadMode === 'json';
+      document.getElementById('admin-payload-fields').classList.toggle('hidden', showJson);
+      document.getElementById('admin-payload-json-wrap').classList.toggle('hidden', !showJson);
+      if (showJson) document.getElementById('create-payload').value = JSON.stringify(adminCollectPayload(), null, 2);
+      else adminRenderPayloadForm();
+    }
+    function adminOnJobTypeChange() {
+      if (adminPayloadMode === 'form') adminRenderPayloadForm();
+    }
+    function adminParseHeaders(raw) {
+      raw = (raw||'').trim(); if (!raw) return undefined;
+      if (raw.startsWith('{')) { try { return JSON.parse(raw); } catch { return null; } }
+      const out = {}; raw.split('\n').forEach(l=>{const i=l.indexOf(':'); if(i>0) out[l.slice(0,i).trim()]=l.slice(i+1).trim();});
+      return Object.keys(out).length ? out : undefined;
+    }
+    function adminCollectPayload() {
+      const handler = adminResolveHandler(document.getElementById('create-type').value);
+      const schema = ADMIN_PAYLOAD_SCHEMAS[handler] || ADMIN_PAYLOAD_SCHEMAS.http;
+      const payload = {};
+      schema.fields.forEach(f => {
+        const el = document.getElementById('apf-'+f.id); if (!el) return;
+        const val = (el.value||'').trim(); if (!val) return;
+        if (f.id === 'headers') { const h = adminParseHeaders(val); if (h) payload.headers = h; return; }
+        if (f.id === 'body' && handler === 'http') { try { payload.body = JSON.parse(val); } catch { payload.body = val; } return; }
+        payload[f.id] = f.type === 'number' ? Number(val) : val;
+      });
+      return payload;
+    }
     function fillExample() {
       document.getElementById('create-type').value='email';
-      document.getElementById('create-payload').value=JSON.stringify({to:'user@example.com',subject:'hello'},null,2);
+      adminRenderPayloadForm();
+      const toEl = document.getElementById('apf-to');
+      if (toEl) toEl.value = 'user@example.com';
+      const subEl = document.getElementById('apf-subject');
+      if (subEl) subEl.value = 'hello';
       document.getElementById('create-priority').value='medium';
       document.getElementById('create-tenant').value='tenant-a';
       document.getElementById('create-corr').value='corr-'+Date.now();
@@ -957,7 +1073,12 @@ const appHTML = `<!DOCTYPE html>
         run_at:document.getElementById('create-runat').value.trim()||undefined,
         payload:{}
       };
-      try{body.payload=JSON.parse(document.getElementById('create-payload').value.trim()||'{}');}catch(_){}
+      if (adminPayloadMode === 'json') {
+        try { body.payload = JSON.parse(document.getElementById('create-payload').value.trim() || '{}'); }
+        catch(_) { toast('Invalid JSON payload','error'); return; }
+      } else {
+        body.payload = adminCollectPayload();
+      }
       const out=await api('/jobs',{method:'POST',body:JSON.stringify(body)});
       document.getElementById('create-output').innerText=JSON.stringify(out,null,2);
       if(out&&out._ok&&out.id){toast('Job created: '+out.id);}else{toast((out&&out._error)||'Create failed','error');}
@@ -1316,6 +1437,36 @@ const appHTML = `<!DOCTYPE html>
       loadDLQ(); toast('Bulk purge completed');
     }
 
+    // ── Clients ──
+    async function loadClients() {
+      const body=document.getElementById('clients-body');
+      body.innerHTML='<tr><td colspan="3">'+stateLoading('Loading clients…')+'</td></tr>';
+      const out=await api(API_BASE+'/clients');
+      const list=(out&&out.clients)||[];
+      if(!list.length){body.innerHTML='<tr><td colspan="3">'+stateEmpty('fa-users','No clients registered yet.')+'</td></tr>';return;}
+      body.innerHTML=list.map(c=>
+        '<tr><td style="font-family:monospace;">'+esc(c.tenant_id)+'</td>'+
+        '<td style="color:var(--muted);font-size:12px;">'+esc((c.created_at||'').slice(0,19).replace('T',' '))+'</td>'+
+        '<td style="white-space:nowrap;">'+
+        '<button class="btn-secondary btn-sm" onclick="rotateClientKey(\''+esc(c.tenant_id)+'\')" style="margin-right:4px"><i class="fas fa-rotate"></i> Rotate</button>'+
+        '<button class="btn-danger btn-sm" onclick="revokeClient(\''+esc(c.tenant_id)+'\')"><i class="fas fa-ban"></i> Revoke</button>'+
+        '</td></tr>'
+      ).join('');
+    }
+    async function revokeClient(tenantId) {
+      if(!confirmAction('Revoke all API keys for tenant '+tenantId+'?'))return;
+      await api(API_BASE+'/clients/'+encodeURIComponent(tenantId),{method:'DELETE'});
+      loadClients(); toast('Client revoked: '+tenantId);
+    }
+    async function rotateClientKey(tenantId) {
+      if(!confirmAction('Rotate API key for tenant '+tenantId+'? The old key will stop working.'))return;
+      const out=await api(API_BASE+'/clients/'+encodeURIComponent(tenantId)+'/rotate',{method:'POST'});
+      if(out&&out.api_key){
+        openModal('New API Key for '+esc(tenantId),'<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Copy this key now — it will not be shown again.</p><pre>'+esc(out.api_key)+'</pre>','<button class="btn-secondary btn-sm" onclick="closeModal()">Close</button>');
+      }
+      loadClients();
+    }
+
     // ── Webhooks ──
     async function loadWebhooks() {
       const body=document.getElementById('wh-body');
@@ -1339,6 +1490,8 @@ const appHTML = `<!DOCTYPE html>
         secret:document.getElementById('wh-secret').value.trim(),
         events:(document.getElementById('wh-events').value.trim()||'completed,failed').split(',').map(s=>s.trim())
       };
+      const tenant=document.getElementById('wh-tenant').value.trim();
+      if(tenant)body.tenant_id=tenant;
       if(!body.url){toast('URL is required','warn');return;}
       const out=await api(API_BASE+'/webhooks',{method:'POST',body:JSON.stringify(body)});
       if(!out||out._ok===false){toast((out&&out._error)||'Register failed','error');return;}
@@ -1363,6 +1516,52 @@ const appHTML = `<!DOCTYPE html>
       const body='<p style="font-size:12px;color:var(--muted);margin-bottom:12px;word-break:break-all;">'+esc(url)+'</p>'+
         '<table><thead><tr><th>Time</th><th>Job</th><th>Attempt</th><th>Backoff</th><th>Status</th><th>Result</th><th>Error</th></tr></thead><tbody>'+rows+'</tbody></table>';
       openModal('Delivery History',body,'<button class="btn-secondary btn-sm" onclick="closeModal()">Close</button>');
+    }
+
+    // ── Job Types ──
+    async function loadJobTypes() {
+      const body=document.getElementById('jt-body');
+      body.innerHTML='<tr><td colspan="5">'+stateLoading('Loading job types…')+'</td></tr>';
+      const out=await api(API_BASE+'/job-types');
+      const list=(out&&out.job_types)||[];
+      adminJobTypeRegistry = {};
+      list.forEach(t => { adminJobTypeRegistry[t.name] = t; });
+      const createSel = document.getElementById('create-type');
+      if (createSel && list.length) {
+        createSel.innerHTML = list.map(t =>
+          '<option value="'+esc(t.name)+'">'+esc(t.name)+(t.built_in?'':' (custom)')+'</option>'
+        ).join('');
+      }
+      adminRenderPayloadForm();
+      if(!list.length){body.innerHTML='<tr><td colspan="5">'+stateEmpty('fa-tags','No job types found.')+'</td></tr>';return;}
+      body.innerHTML=list.map(jt=>
+        '<tr>'+
+        '<td><span class="pill blue">'+esc(jt.name)+'</span></td>'+
+        '<td style="font-family:monospace;font-size:12px;">'+esc(jt.handler||jt.name)+'</td>'+
+        '<td style="color:var(--muted);font-size:12px;">'+esc(jt.description||'')+'</td>'+
+        '<td>'+(jt.built_in?'<span class="pill good">yes</span>':'<span class="pill">custom</span>')+'</td>'+
+        '<td>'+(jt.built_in?'':'<button class="btn-danger btn-sm" onclick="deleteJobType(\''+esc(jt.name)+'\')"><i class="fas fa-trash"></i></button>')+'</td>'+
+        '</tr>').join('');
+    }
+    async function createJobType() {
+      const body={
+        name:document.getElementById('jt-name').value.trim(),
+        description:document.getElementById('jt-desc').value.trim(),
+        handler:document.getElementById('jt-handler').value,
+        payload_hint:document.getElementById('jt-hint').value.trim()
+      };
+      if(!body.name){toast('Name is required','warn');return;}
+      const out=await api(API_BASE+'/job-types',{method:'POST',body:JSON.stringify(body)});
+      if(!out||out._ok===false){toast((out&&out._error)||'Create failed','error');return;}
+      document.getElementById('jt-name').value='';
+      document.getElementById('jt-desc').value='';
+      document.getElementById('jt-hint').value='';
+      loadJobTypes(); toast('Job type registered');
+    }
+    async function deleteJobType(name) {
+      if(!confirmAction('Delete job type '+name+'?'))return;
+      await api(API_BASE+'/job-types/'+encodeURIComponent(name),{method:'DELETE'});
+      loadJobTypes(); toast('Job type deleted');
     }
 
     // ── Live Activity (SSE) ──
@@ -1434,12 +1633,14 @@ const appHTML = `<!DOCTYPE html>
         loadStats().catch(function(){}),
         loadCircuitBreakers().catch(function(){}),
         loadRateLimits().catch(function(){}),
-        loadWebhooks().catch(function(){})
+        loadWebhooks().catch(function(){}),
+        loadJobTypes().catch(function(){})
       ]);
       updateHealthBanner();
     }
     loadSession().then(function(ok){
       if(ok){
+        adminRenderPayloadForm();
         const page=localStorage.getItem('task_queue_page')||'dashboard';
         showPage(page);
         loadEverything();

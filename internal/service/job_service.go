@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/sse"
 	"task-queue-system/internal/storage/models"
@@ -16,10 +20,11 @@ import (
 	apperr "task-queue-system/internal/errors"
 )
 
-// allowedJobTypes is the set of job types the system accepts.
+// allowedJobTypes is the set of built-in job types (test types for CI only).
 var allowedJobTypes = map[string]struct{}{
 	"email": {},
 	"image": {},
+	"http":  {},
 	"test":           {},
 	"test-success":   {},
 	"test-fail":      {},
@@ -36,6 +41,7 @@ type JobService struct {
 	logger        *slog.Logger
 	maxQueueSize  int64
 	webhookStore  *webhooks.WebhookStore
+	jobTypeStore  *jobtypes.Store
 	sseBroker     *sse.Broker
 }
 
@@ -57,12 +63,30 @@ func (s *JobService) SetWebhookStore(ws *webhooks.WebhookStore) {
 	s.webhookStore = ws
 }
 
+// SetJobTypeStore attaches the dynamic job type registry.
+func (s *JobService) SetJobTypeStore(jts *jobtypes.Store) {
+	s.jobTypeStore = jts
+}
+
+// JobTypeStore returns the job type registry, if configured.
+func (s *JobService) JobTypeStore() *jobtypes.Store { return s.jobTypeStore }
+
+func (s *JobService) isJobTypeAllowed(ctx context.Context, jobType string) bool {
+	if _, ok := allowedJobTypes[jobType]; ok {
+		return true
+	}
+	if s.jobTypeStore != nil && s.jobTypeStore.IsAllowed(ctx, jobType) {
+		return true
+	}
+	return false
+}
+
 // Store returns the underlying models.Store.
 func (s *JobService) Store() models.Store { return s.store }
 
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
 func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error) {
-	if _, ok := allowedJobTypes[jobType]; !ok {
+	if !s.isJobTypeAllowed(ctx, jobType) {
 		return nil, apperr.NewInvalidArgument(fmt.Sprintf("unsupported job type %q", jobType))
 	}
 	if maxRetries <= 0 {
@@ -152,6 +176,11 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		s.logger.Error("failed to enqueue job", "job_id", job.ID, "error", err)
 		return nil, apperr.NewInternal("failed to enqueue job", err)
 	}
+
+	s.publishWebhookEvent(ctx, job, "created", map[string]interface{}{
+		"type": job.Type,
+	})
+	s.publishSSE(job.ID, "created", job.Type, job.TenantID)
 
 	return job, nil
 }
@@ -315,29 +344,33 @@ func (s *JobService) publishRateLimitSSE(tenantID string) {
 }
 
 func (s *JobService) publishWebhookEvents(ctx context.Context, job *jobs.Job, status jobs.JobStatus, result interface{}) {
-	webhooksToSend := s.collectWebhookTargets(ctx, job, status)
+	s.publishWebhookEvent(ctx, job, string(status), result)
+}
+
+func (s *JobService) publishWebhookEvent(ctx context.Context, job *jobs.Job, event string, result interface{}) {
+	webhooksToSend := s.collectWebhookTargetsForEvent(ctx, job, event)
 
 	for _, target := range webhooksToSend {
 		errStr := ""
-		if status == jobs.StatusFailed {
+		if event == string(jobs.StatusFailed) {
 			if s, ok := result.(string); ok {
 				errStr = s
-			} else {
+			} else if result != nil {
 				errStr = fmt.Sprintf("%v", result)
 			}
 		}
 
-		event := map[string]interface{}{
+		eventPayload := map[string]interface{}{
 			"job_id":    job.ID,
 			"tenant_id": job.TenantID,
-			"status":    string(status),
+			"status":    event,
 			"result":    result,
 			"error":     errStr,
 			"timestamp": time.Now().UTC(),
 			"url":       target.URL,
 			"secret":    target.Secret,
 		}
-		if err := s.queue.PublishWebhookEvent(ctx, event); err != nil {
+		if err := s.queue.PublishWebhookEvent(ctx, eventPayload); err != nil {
 			s.logger.Error("failed to publish webhook event", "job_id", job.ID, "url", target.URL, "error", err)
 		}
 	}
@@ -349,12 +382,16 @@ type webhookTarget struct {
 }
 
 func (s *JobService) collectWebhookTargets(ctx context.Context, job *jobs.Job, status jobs.JobStatus) []webhookTarget {
+	return s.collectWebhookTargetsForEvent(ctx, job, string(status))
+}
+
+func (s *JobService) collectWebhookTargetsForEvent(ctx context.Context, job *jobs.Job, event string) []webhookTarget {
 	var targets []webhookTarget
 
 	// 1. Per-job webhook
 	if job.Webhook != nil && job.Webhook.URL != "" {
 		for _, e := range job.Webhook.Events {
-			if e == string(status) {
+			if webhooks.NormalizeEvent(e) == webhooks.NormalizeEvent(event) {
 				targets = append(targets, webhookTarget{URL: job.Webhook.URL, Secret: job.Webhook.Secret})
 				break
 			}
@@ -363,7 +400,7 @@ func (s *JobService) collectWebhookTargets(ctx context.Context, job *jobs.Job, s
 
 	// 2. Persistent tenant webhooks
 	if s.webhookStore != nil {
-		matched, err := s.webhookStore.Match(ctx, job.TenantID, string(status))
+		matched, err := s.webhookStore.Match(ctx, job.TenantID, event)
 		if err != nil {
 			s.logger.Error("failed to match persistent webhooks", "tenant_id", job.TenantID, "error", err)
 		} else {
@@ -527,17 +564,62 @@ func (s *JobService) ListFailedJobs(ctx context.Context, tenantID, jobType strin
 }
 
 // CountFailedJobs returns the total number of permanently failed jobs matching filters.
-func (s *JobService) CountFailedJobs(ctx context.Context, tenantID, jobType string) (int, error) {
-	all, err := s.store.SearchJobs(ctx, models.JobFilter{
+func (s *JobService) CountFailedJobs(ctx context.Context, tenantID, jobType string) (int64, error) {
+	return s.store.CountJobs(ctx, models.JobFilter{
 		TenantID: tenantID,
 		Type:     jobType,
 		Status:   string(jobs.StatusFailed),
-		Limit:    10000,
 	})
-	if err != nil {
-		return 0, err
+}
+
+// JobStatusCounts returns job counts grouped by status, optionally scoped to a tenant.
+func (s *JobService) JobStatusCounts(ctx context.Context, tenantID string) (map[string]int64, error) {
+	statuses := []jobs.JobStatus{
+		jobs.StatusPending,
+		jobs.StatusProcessing,
+		jobs.StatusCompleted,
+		jobs.StatusFailed,
+		jobs.StatusCancelled,
 	}
-	return len(all), nil
+	counts := make(map[string]int64, len(statuses))
+	for _, st := range statuses {
+		n, err := s.store.CountJobs(ctx, models.JobFilter{
+			TenantID: tenantID,
+			Status:   string(st),
+		})
+		if err != nil {
+			return nil, err
+		}
+		counts[string(st)] = n
+	}
+	return counts, nil
+}
+
+// CountJobs returns the number of jobs matching a filter.
+func (s *JobService) CountJobs(ctx context.Context, filter models.JobFilter) (int64, error) {
+	return s.store.CountJobs(ctx, filter)
+}
+
+// RevokeClient removes all API keys for a tenant.
+func (s *JobService) RevokeClient(ctx context.Context, tenantID string) error {
+	return s.store.RevokeClient(ctx, tenantID)
+}
+
+// RotateClientKey revokes existing keys and registers a new one.
+func (s *JobService) RotateClientKey(ctx context.Context, tenantID string) (string, error) {
+	if err := s.store.RevokeClient(ctx, tenantID); err != nil {
+		return "", err
+	}
+	keyBytes := make([]byte, 32)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", err
+	}
+	rawKey := "tq_live_" + hex.EncodeToString(keyBytes)
+	hash := sha256.Sum256([]byte(rawKey))
+	if err := s.store.RegisterClient(ctx, tenantID, hex.EncodeToString(hash[:])); err != nil {
+		return "", err
+	}
+	return rawKey, nil
 }
 
 func (s *JobService) ReplayJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, error) {
@@ -545,7 +627,7 @@ func (s *JobService) ReplayJob(ctx context.Context, jobID, tenantID string) (*jo
 	if err != nil {
 		return nil, err
 	}
-	if job.TenantID != tenantID {
+	if tenantID != "" && tenantID != "operator" && job.TenantID != tenantID {
 		return nil, apperr.NewForbidden("you do not own this job")
 	}
 
@@ -572,7 +654,7 @@ func (s *JobService) DeleteJob(ctx context.Context, jobID, tenantID string) erro
 	if err != nil {
 		return err
 	}
-	if job.TenantID != tenantID {
+	if tenantID != "" && tenantID != "operator" && job.TenantID != tenantID {
 		return apperr.NewForbidden("you do not own this job")
 	}
 	return s.store.DeleteJob(ctx, jobID)

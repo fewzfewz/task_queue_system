@@ -70,3 +70,12 @@ None — all items completed.
 | ✅ | **OTel context propagation** (trace ID across Enqueue/Dequeue) | — | `tracing.go`, `redis.go`, `worker_processor.go` |
 | ✅ | **Helm chart hardening** (PDBs + topology spread constraints) | — | `helm/task-queue/templates/pdb-*.yaml`, deployment templates |
 | ✅ | **Postgres migration rollback** (rollback SQL + CLI commands) | — | `cmd/cli/main.go`, `db/migrations/*_rollback.sql` |
+| ✅ | **Tenant isolation** on job/DLQ endpoints for registered clients | `access_test.go` | `handler/access.go` |
+| ✅ | **Client API key revoke/rotate** (API + operator UI) | — | `client_handler.go`, `job_service.go` |
+| ✅ | **Efficient job counts** via `CountJobs` (no full-table scans) | `access_test.go` | `models.go`, store backends |
+| ✅ | **Registration rate limit** via `REGISTER_RATE_LIMIT` | — | `client_handler.go`, `config.go` |
+| ✅ | **Real SMTP email plugin** when `SMTP_HOST` is set | `plugins_test.go` | `plugins/standard/email.go` |
+| ✅ | **`created` webhook event** on job submission | — | `handler.go`, `job_service.go` |
+| ✅ | **Custom job types registry** (`email`, `image`, `http` handlers) | `jobtypes/store_test.go` | `internal/jobtypes/` |
+| ✅ | **Webhook payload hardening** (secret excluded from POST body) | `dispatcher_test.go` | `webhooks/dispatcher.go` |
+| ✅ | **Swagger docs regenerated** | — | `docs/swagger.yaml` |

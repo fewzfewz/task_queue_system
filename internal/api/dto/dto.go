@@ -79,6 +79,10 @@ func (r *CreateJobRequest) Validate() error {
 		if url, _ := r.Payload["source_url"].(string); url == "" {
 			return fmt.Errorf("image jobs require a 'source_url' field in the payload")
 		}
+	case "http":
+		if url, _ := r.Payload["url"].(string); url == "" {
+			return fmt.Errorf("http jobs require a 'url' field in the payload")
+		}
 	}
 
 	// ── Cron Expression Validation ─────────────────────────────────────────

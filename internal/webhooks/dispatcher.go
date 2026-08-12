@@ -46,6 +46,7 @@ func (c DispatcherConfig) defaults() DispatcherConfig {
 	return c
 }
 
+// Event is the internal stream message; Secret is used for signing only.
 type Event struct {
 	JobID     string      `json:"job_id"`
 	TenantID  string      `json:"tenant_id"`
@@ -55,6 +56,16 @@ type Event struct {
 	Timestamp time.Time   `json:"timestamp"`
 	URL       string      `json:"url"`
 	Secret    string      `json:"secret"`
+}
+
+// WebhookPayload is the JSON body POSTed to subscriber URLs (no secret field).
+type WebhookPayload struct {
+	JobID     string      `json:"job_id"`
+	TenantID  string      `json:"tenant_id"`
+	Status    string      `json:"status"`
+	Result    interface{} `json:"result,omitempty"`
+	Error     string      `json:"error,omitempty"`
+	Timestamp time.Time   `json:"timestamp"`
 }
 
 type Dispatcher struct {
@@ -215,7 +226,15 @@ func min(a, b int) int {
 // send delivers the event, returning the HTTP status code (0 on transport
 // errors) and any error.
 func (d *Dispatcher) send(ctx context.Context, ev Event) (int, error) {
-	body, _ := json.Marshal(ev)
+	payload := WebhookPayload{
+		JobID:     ev.JobID,
+		TenantID:  ev.TenantID,
+		Status:    ev.Status,
+		Result:    ev.Result,
+		Error:     ev.Error,
+		Timestamp: ev.Timestamp,
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, "POST", ev.URL, bytes.NewBuffer(body))
 	if err != nil {
 		return 0, err

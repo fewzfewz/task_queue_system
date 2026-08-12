@@ -15,6 +15,61 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/circuit-breakers": {
+            "get": {
+                "description": "Returns the current circuit-breaker state for every plugin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "circuit-breaker"
+                ],
+                "summary": "List circuit breakers",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/circuit-breakers/reset/{type}": {
+            "post": {
+                "description": "Closes the circuit breaker for a plugin type.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "circuit-breaker"
+                ],
+                "summary": "Reset a circuit breaker",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Plugin type",
+                        "name": "type",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/dlq": {
             "get": {
                 "description": "Returns a paginated list of jobs that have permanently failed for the tenant.",
@@ -447,15 +502,81 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/logout": {
+            "post": {
+                "description": "Revokes the current session and clears the session cookie.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/api/v1/rate-limits": {
+            "get": {
+                "description": "Returns current fixed-window usage for every tenant that has submitted jobs.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "monitoring"
+                ],
+                "summary": "Get per-tenant rate limit status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/session": {
+            "get": {
+                "description": "Returns the current session state, role and CSRF token.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Get current session",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -640,6 +761,50 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/webhooks/{id}/deliveries": {
+            "get": {
+                "description": "Returns the last N delivery attempts (status codes, retry attempts, backoff state) for a webhook endpoint.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Get webhook delivery history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Webhook ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max deliveries to return (default 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/webhooks.DeliveryRecord"
+                            }
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -1219,6 +1384,41 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "last_heartbeat": {
+                    "type": "string"
+                }
+            }
+        },
+        "webhooks.DeliveryRecord": {
+            "type": "object",
+            "properties": {
+                "attempt": {
+                    "description": "1-based",
+                    "type": "integer"
+                },
+                "backoff_ms": {
+                    "description": "wait before this attempt (0 on first try)",
+                    "type": "integer"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "job_id": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "description": "0 = transport error (no HTTP response)",
+                    "type": "integer"
+                },
+                "success": {
+                    "type": "boolean"
+                },
+                "tenant_id": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }

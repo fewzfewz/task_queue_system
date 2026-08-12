@@ -223,7 +223,15 @@ func TestDeliveryPayloadIntegrity(t *testing.T) {
 			d := newTestDispatcher(rdb, 5*time.Second, DispatcherConfig{MaxRetries: 3, BaseDelay: 20 * time.Millisecond, MaxDelay: time.Second})
 			d.dispatch(context.Background(), ev, "msg-payload-"+tc.status)
 
-			want, err := json.Marshal(ev)
+			wantPayload := WebhookPayload{
+				JobID:     ev.JobID,
+				TenantID:  ev.TenantID,
+				Status:    ev.Status,
+				Result:    ev.Result,
+				Error:     ev.Error,
+				Timestamp: ev.Timestamp,
+			}
+			want, err := json.Marshal(wantPayload)
 			if err != nil {
 				t.Fatalf("marshal expected body: %v", err)
 			}
@@ -231,7 +239,7 @@ func TestDeliveryPayloadIntegrity(t *testing.T) {
 				t.Fatalf("delivered body mismatch:\ngot  %s\nwant %s", got, want)
 			}
 
-			var decoded Event
+			var decoded WebhookPayload
 			if err := json.Unmarshal(rcv.lastBody(), &decoded); err != nil {
 				t.Fatalf("delivered body is not valid JSON: %v", err)
 			}
@@ -240,9 +248,6 @@ func TestDeliveryPayloadIntegrity(t *testing.T) {
 			}
 			if !decoded.Timestamp.Equal(ev.Timestamp) {
 				t.Fatalf("timestamp mismatch: got %v want %v", decoded.Timestamp, ev.Timestamp)
-			}
-			if decoded.URL != srv.URL || decoded.Secret != "payload-secret" {
-				t.Fatalf("url/secret mismatch: %+v", decoded)
 			}
 
 			gotResult, _ := json.Marshal(decoded.Result)

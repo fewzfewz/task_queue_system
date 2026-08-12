@@ -30,9 +30,7 @@ func NewWebhookStore(rdb *redis.Client) *WebhookStore {
 }
 
 func (s *WebhookStore) Create(ctx context.Context, tenantID, url, secret string, events []string) (*RegisteredWebhook, error) {
-	if len(events) == 0 {
-		events = []string{"completed", "failed"}
-	}
+	events = NormalizeEvents(events)
 	w := &RegisteredWebhook{
 		ID:        uuid.New().String(),
 		TenantID:  tenantID,
@@ -93,7 +91,7 @@ func (s *WebhookStore) Update(ctx context.Context, id, url, secret string, event
 		w.Secret = secret
 	}
 	if len(events) > 0 {
-		w.Events = events
+		w.Events = NormalizeEvents(events)
 	}
 	data, err := json.Marshal(w)
 	if err != nil {
@@ -118,7 +116,7 @@ func (s *WebhookStore) Match(ctx context.Context, tenantID, status string) ([]*R
 	var matched []*RegisteredWebhook
 	for _, w := range all {
 		for _, e := range w.Events {
-			if e == status || e == "*" {
+			if NormalizeEvent(e) == NormalizeEvent(status) || e == "*" {
 				matched = append(matched, w)
 				break
 			}

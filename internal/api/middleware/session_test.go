@@ -130,6 +130,50 @@ func TestRequireAuth_RejectsAnonymous(t *testing.T) {
 	}
 }
 
+func TestRequireAuth_APIKeyQueryParam_SSE(t *testing.T) {
+	rawKey := "tenant-key"
+	store := newMockStore(map[string]string{hashKey(rawKey): "tenant-a"})
+	cfg := &config.Config{}
+	sessions := session.NewStore(time.Hour)
+
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantID, _ := r.Context().Value(ContextKeyTenantID).(string)
+		if tenantID != "tenant-a" {
+			t.Errorf("expected tenant tenant-a, got %q", tenantID)
+		}
+		if got := RoleFromContext(r.Context()); got != RoleAdmin {
+			t.Errorf("expected role admin, got %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/v1/events?api_key="+rawKey, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRequireAuth_APIKeyQueryParam_RejectedOffSSE(t *testing.T) {
+	rawKey := "tenant-key"
+	store := newMockStore(map[string]string{hashKey(rawKey): "tenant-a"})
+	cfg := &config.Config{}
+	sessions := session.NewStore(time.Hour)
+
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not run")
+	}))
+
+	// Query-param keys must NOT be honored on ordinary (non-SSE) routes.
+	req := httptest.NewRequest("GET", "/jobs?api_key="+rawKey, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
 func TestRequireAuth_RejectsExpiredSession(t *testing.T) {
 	store := newMockStore(map[string]string{})
 	cfg := &config.Config{}

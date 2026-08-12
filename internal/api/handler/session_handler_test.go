@@ -22,7 +22,7 @@ func newSessionHandler(rateLimit int) (*JobHandler, *session.Store) {
 	q := &mockQueue{}
 	svc := service.New(q, store, slog.Default(), 0)
 	sessions := session.NewStore(time.Hour)
-	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", rateLimit)
+	h := New(svc, slog.Default(), "test-api-key", "admin", "admin123", sessions, "localhost:8081", rateLimit, 10)
 	return h, sessions
 }
 

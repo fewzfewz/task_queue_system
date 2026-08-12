@@ -37,7 +37,7 @@ At a high level, the system lets a client submit background work and then handle
 When a client submits a job:
 
 1. The request hits `POST /jobs`.
-2. `internal/api/middleware/auth.go` validates either a JWT Bearer token or the legacy `X-API-Key`.
+2. `internal/api/middleware/auth.go` validates either a registered client `X-API-Key`, the operator `X-API-Key`, or a browser session cookie.
 3. `internal/api/dto/dto.go` validates the request body.
 4. `internal/service/job_service.go` checks allowed job types, tenant rate limits, queue capacity, and scheduling rules.
 5. The job is built in `internal/jobs/job.go`.
@@ -84,8 +84,11 @@ The system has two distinct data layers:
 
 Built-in worker plugins currently support:
 
-- `email`
+- `email` (SMTP when `SMTP_HOST` is set on the worker; simulated otherwise)
 - `image`
+- `http`
+
+Admins can register additional job types via `POST /api/v1/job-types` or the operator UI.
 
 The test suite also uses:
 
@@ -104,6 +107,22 @@ The test suite also uses:
   - Alias of the main browser UI
 - `GET /admin/dlq`
   - DLQ-focused management console
+- `POST /api/v1/register`
+  - Register a tenant and receive a one-time API key
+- `GET /api/v1/client/me`
+  - Return the authenticated client's tenant ID
+- `GET /api/v1/clients`
+  - List registered tenants (operator)
+- `DELETE /api/v1/clients/{tenant_id}`
+  - Revoke a tenant API key (operator)
+- `POST /api/v1/clients/{tenant_id}/rotate`
+  - Rotate a tenant API key (operator)
+- `GET /api/v1/job-types`
+  - List registered job types
+- `POST /api/v1/job-types`
+  - Register a custom job type (operator)
+- `DELETE /api/v1/job-types/{name}`
+  - Remove a custom job type (operator)
 - `POST /jobs`
   - Create a new job
 - `GET /jobs/{id}`
@@ -151,15 +170,23 @@ The test suite also uses:
 | `REDIS_HOST` | `localhost:6379` | Redis address |
 | `REDIS_PASSWORD` | `` | Redis password |
 | `REDIS_DB` | `0` | Redis database number |
-| `API_KEY` | `secret-api-key` | Legacy API key auth |
+| `API_KEY` | `secret-api-key` | Operator API key auth |
+| `ADMIN_USERNAME` | `admin` | Operator UI login username |
+| `ADMIN_PASSWORD` | `admin123` | Operator UI login password |
+| `SESSION_TTL_SECONDS` | `28800` | Operator session lifetime (seconds) |
+| `LOGIN_RATE_LIMIT` | `5` | Login attempts per IP per minute |
+| `REGISTER_RATE_LIMIT` | `10` | Client registration attempts per IP per minute |
 | `JOB_RATE_LIMIT` | `0` | Worker throughput limit (jobs/sec, 0 = unlimited) |
 | `TENANT_RATE_LIMIT` | `0` | Per-tenant API rate limit (req/sec, 0 = unlimited) |
 | `LOG_LEVEL` | `info` | Log level (info, error, debug) |
 | `MAX_QUEUE_SIZE` | `10000` | Max pending jobs (0 = unlimited) |
 | `STORE_BACKEND` | `redis` | Store backend (redis, postgres, dual) |
 | `POSTGRES_CONN_STR` | `` | PostgreSQL connection string |
-| `JWT_PUBLIC_KEY` | `` | JWT public key in PEM format |
-| `JWT_PUBLIC_KEY_PATH` | `` | Path to JWT public key file |
+| `SMTP_HOST` | `` | SMTP server for real email delivery (worker) |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USER` | `` | SMTP username (optional) |
+| `SMTP_PASSWORD` | `` | SMTP password (optional) |
+| `SMTP_FROM` | `` | From address for outbound email |
 | `VAULT_ADDR` | `` | HashiCorp Vault address |
 | `VAULT_ROLE_ID` | `` | Vault AppRole role ID |
 | `VAULT_SECRET_ID` | `` | Vault AppRole secret ID |

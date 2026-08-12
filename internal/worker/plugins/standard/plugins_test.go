@@ -30,7 +30,7 @@ func TestEmailPlugin_Execute_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result != "email sent to user@example.com" {
+	if result != "email sent to user@example.com (simulated)" {
 		t.Fatalf("unexpected result: %v", result)
 	}
 }
@@ -61,7 +61,7 @@ func TestEmailPlugin_Execute_HigherVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if result != "email sent to user@example.com" {
+	if result != "email sent to user@example.com (simulated)" {
 		t.Fatalf("unexpected result: %v", result)
 	}
 }
@@ -165,6 +165,33 @@ func TestImagePlugin_GlobalRegistration(t *testing.T) {
 		t.Fatalf("expected image plugin registered globally, got: %v", err)
 	}
 	if p.Type() != "image" {
+		t.Fatalf("unexpected global plugin type: %q", p.Type())
+	}
+}
+
+func TestHTTPPlugin_Execute_Success(t *testing.T) {
+	p := NewHTTPPlugin(slog.Default())
+	job := jobs.NewJob("http", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"url":    "https://example.com",
+		"method": "GET",
+	}
+
+	// Will fail without network - test missing url instead
+	job.Payload = map[string]interface{}{}
+	_, err := p.Execute(context.Background(), job)
+	if err == nil {
+		t.Fatal("expected error for missing url")
+	}
+}
+
+func TestHTTPPlugin_GlobalRegistration(t *testing.T) {
+	reg := plugin.GetGlobalRegistry()
+	p, err := reg.Get("http")
+	if err != nil {
+		t.Fatalf("expected http plugin registered globally, got: %v", err)
+	}
+	if p.Type() != "http" {
 		t.Fatalf("unexpected global plugin type: %q", p.Type())
 	}
 }

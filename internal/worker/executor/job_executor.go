@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/worker/plugin"
 )
 
@@ -14,16 +15,21 @@ import (
 type JobExecutor struct {
 	registry       *plugin.Registry
 	circuitBreaker *plugin.CircuitBreaker
+	jobTypeStore   *jobtypes.Store
 	logger         *slog.Logger
 }
 
 // NewJobExecutor creates a JobExecutor using the system-wide global plugin registry.
-func NewJobExecutor(logger *slog.Logger) *JobExecutor {
-	return &JobExecutor{
+func NewJobExecutor(logger *slog.Logger, jobTypeStore ...*jobtypes.Store) *JobExecutor {
+	je := &JobExecutor{
 		registry:       plugin.GetGlobalRegistry(),
 		circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second),
 		logger:         logger,
 	}
+	if len(jobTypeStore) > 0 {
+		je.jobTypeStore = jobTypeStore[0]
+	}
+	return je
 }
 
 // RegisterPlugin adds a new job type capability to the executor.
@@ -57,8 +63,13 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interfac
 
 	je.logger.Debug("executing job", "job_id", job.ID, "job_type", job.Type)
 
-	// Fetch plugin from registry using job.Type
+	// Fetch plugin from registry using job.Type (or resolve via job type store).
 	p, err := je.registry.Get(job.Type)
+	if err != nil && je.jobTypeStore != nil {
+		if handler := je.jobTypeStore.HandlerFor(ctx, job.Type); handler != "" {
+			p, err = je.registry.Get(handler)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("job_executor: no plugin for %q: %w", job.Type, err)
 	}

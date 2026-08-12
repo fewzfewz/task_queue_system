@@ -94,6 +94,10 @@ type Config struct {
 	// When set, traces are exported via OTLP. When empty, no tracing SDK is initialized.
 	// Example: "localhost:4318"
 	OTELExporterOTLPEndpoint string
+
+	// RegisterRateLimit is the maximum client registrations per IP per minute.
+	// Default: 10. Set to 0 to disable.
+	RegisterRateLimit int
 }
 
 
@@ -124,6 +128,7 @@ func Load() *Config {
 		TenantRateLimit:     getEnvAsInt64("TENANT_RATE_LIMIT", 0),
 		SLATargetSeconds:           getEnvAsInt("SLA_TARGET_SECONDS", 5),
 		OTELExporterOTLPEndpoint:   getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		RegisterRateLimit:          getEnvAsInt("REGISTER_RATE_LIMIT", 10),
 	}
 }
 
