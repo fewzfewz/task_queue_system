@@ -39,6 +39,9 @@ type Store interface {
 	// Save persists a job. Overwrites any existing record with the same ID.
 	Save(ctx context.Context, job *jobs.Job) error
 
+	// SaveBatch persists multiple jobs efficiently.
+	SaveBatch(ctx context.Context, jobs []*jobs.Job) error
+
 	// GetByID returns the job with the given ID.
 	// Returns ErrJobNotFound if no record exists.
 	GetByID(ctx context.Context, id string) (*jobs.Job, error)
@@ -143,6 +146,15 @@ func NewInMemoryStore() *InMemoryStore {
 
 // Save adds or replaces the job record. Stores a shallow copy to prevent
 // accidental mutation of the caller's pointer.
+func (s *InMemoryStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, job := range batch {
+		s.data[job.ID] = job
+	}
+	return nil
+}
+
 func (s *InMemoryStore) Save(_ context.Context, job *jobs.Job) error {
 	if job == nil {
 		return fmt.Errorf("store: cannot save nil job")
@@ -516,6 +528,20 @@ type RedisStore struct {
 // NewRedisStore creates a RedisStore.
 func NewRedisStore(client *redis.Client) *RedisStore {
 	return &RedisStore{client: client}
+}
+
+func (s *RedisStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
+	if len(batch) == 0 { return nil }
+	pipe := s.client.Pipeline()
+	for _, job := range batch {
+		data, err := json.Marshal(job)
+		if err != nil {
+			return err
+		}
+		pipe.Set(ctx, "job:"+job.ID, string(data), 0)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (s *RedisStore) Save(ctx context.Context, job *jobs.Job) error {

@@ -22,6 +22,15 @@ func NewDualStore(primary, secondary Store) *DualStore {
 	}
 }
 
+// SaveBatch writes to both stores.
+func (s *DualStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
+	if err := s.Primary.SaveBatch(ctx, batch); err != nil {
+		return err
+	}
+	s.Secondary.SaveBatch(ctx, batch)
+	return nil
+}
+
 // Save writes to both stores.
 func (s *DualStore) Save(ctx context.Context, job *jobs.Job) error {
 	_ = s.Secondary.Save(ctx, job) // Opportunistic write to secondary

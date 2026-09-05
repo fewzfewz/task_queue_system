@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"github.com/google/uuid"
 
 	"github.com/robfig/cron/v3"
 	"task-queue-system/internal/jobs"
@@ -86,6 +87,88 @@ func (s *JobService) isJobTypeAllowed(ctx context.Context, jobType string) bool 
 func (s *JobService) Store() models.Store { return s.store }
 
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
+func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct{
+	Type             string
+	Payload          map[string]interface{}
+	Labels           map[string]string
+	Priority         string
+	MaxRetries       int
+	BackoffAlgorithm string
+	BackoffJitter    string
+	CronExpr         string
+	RunAt            string
+	CorrelationID    string
+	Timeout          int
+	Version          int
+	TenantID         string
+	Webhook          *jobs.WebhookConfig
+	DedupKey         string
+	Dependencies     []string
+	ShardKey         string
+}) ([]*jobs.Job, error) {
+	if len(requests) == 0 { return nil, nil }
+	var batch []*jobs.Job
+	now := time.Now().UTC()
+	var toEnqueue []*jobs.Job
+
+	for _, req := range requests {
+		maxR := req.MaxRetries
+		if maxR == 0 { maxR = 3 }
+		
+		runAtTime := now
+		if req.RunAt != "" {
+			if parsed, err := time.Parse(time.RFC3339, req.RunAt); err == nil {
+				runAtTime = parsed
+			}
+		}
+
+		j := &jobs.Job{
+			ID:               uuid.New().String(),
+			Type:             req.Type,
+			Payload:          req.Payload,
+			Status:           jobs.StatusPending,
+			Priority:         jobs.JobPriority(req.Priority),
+			MaxRetries:       maxR,
+			CorrelationID:    req.CorrelationID,
+			Timeout:          req.Timeout,
+			Version:          req.Version,
+			TenantID:         req.TenantID,
+			Webhook:          req.Webhook,
+			DedupKey:         req.DedupKey,
+			Dependencies:     req.Dependencies,
+			ShardKey:         req.ShardKey,
+			CronExpr:         req.CronExpr,
+			RunAt:            runAtTime,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		if j.Priority == "" { j.Priority = jobs.PriorityMedium }
+		if j.Timeout == 0 { j.Timeout = 60 }
+		if j.Version == 0 { j.Version = 1 }
+
+		batch = append(batch, j)
+		if len(req.Dependencies) == 0 {
+			toEnqueue = append(toEnqueue, j)
+		}
+	}
+
+	if err := s.store.SaveBatch(ctx, batch); err != nil {
+		return nil, apperr.NewInternal("failed to persist job batch", err)
+	}
+
+	if len(toEnqueue) > 0 {
+		for _, j := range toEnqueue {
+			if err := s.queue.Enqueue(ctx, j); err != nil {
+				s.logger.Error("failed to enqueue batch member to active queue", "error", err)
+			}
+		}
+	}
+	for _, j := range batch {
+		s.publishWebhookEvent(ctx, j, "created", map[string]interface{}{"job_id": j.ID})
+	}
+	return batch, nil
+}
+
 func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error) {
 	if !s.isJobTypeAllowed(ctx, jobType) {
 		return nil, apperr.NewInvalidArgument(fmt.Sprintf("unsupported job type %q", jobType))

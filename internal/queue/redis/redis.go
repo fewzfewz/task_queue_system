@@ -208,6 +208,7 @@ func (q *RedisQueue) getFairPartitionKeys() []string {
 // Enqueue serialises the job as JSON and pushes it to the left of the Redis list.
 // BRPOP pops from the right (FIFO ordering).
 // Uses the job's Priority to determine the target queue.
+
 func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 	if job == nil {
 		return fmt.Errorf("queue: cannot enqueue a nil job")

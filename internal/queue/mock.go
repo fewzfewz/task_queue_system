@@ -23,6 +23,7 @@ func NewMockQueue() *MockQueue {
 	}
 }
 
+
 func (m *MockQueue) Enqueue(_ context.Context, job *jobs.Job) error {
 	select {
 	case m.jobs <- job:
