@@ -322,7 +322,7 @@ const landingHTML = `<!DOCTYPE html>
   </a>
   <div class="nav-links">
     <a href="#features">Features</a>
-    <a href="#register">Docs</a>
+    <a href="/swagger/">Docs</a>
     <a href="/client/login">Sign In</a>
     <a href="#register" class="nav-cta">Get Started</a>
   </div>
