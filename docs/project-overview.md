@@ -102,9 +102,9 @@ The test suite also uses:
 ### HTTP endpoints
 
 - `GET /`
-  - Main browser UI with tabs for create/search jobs, workers/health, and DLQ/admin actions
+  - Public landing page with inline client registration
 - `GET /ui`
-  - Alias of the main browser UI
+  - Main operator dashboard with tabs for create/search jobs, workers/health, and DLQ/admin actions
 - `GET /admin/dlq`
   - DLQ-focused management console
 - `POST /api/v1/register`

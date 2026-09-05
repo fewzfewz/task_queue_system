@@ -21,6 +21,8 @@ const (
 	StatusFailed JobStatus = "failed"
 	// StatusCancelled indicates the job was cancelled before completion.
 	StatusCancelled JobStatus = "cancelled"
+	// StatusRecurring indicates the job is a template for a recurring cron schedule.
+	StatusRecurring JobStatus = "recurring"
 )
 
 // JobPriority defines the execution urgency for a job.

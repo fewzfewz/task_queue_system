@@ -165,6 +165,13 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 	}
 	if cronExpr != "" {
 		job.CronExpr = cronExpr
+		job.Status = jobs.StatusRecurring
+		
+		// Parse the cron expression to set the initial next run time (RunAt)
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		if sched, err := parser.Parse(cronExpr); err == nil {
+			job.RunAt = sched.Next(time.Now().UTC())
+		}
 	}
 
 	if err := s.store.Save(ctx, job); err != nil {
@@ -172,9 +179,12 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		return nil, apperr.NewInternal("failed to persist job", err)
 	}
 
-	if err := s.queue.Enqueue(ctx, job); err != nil {
-		s.logger.Error("failed to enqueue job", "job_id", job.ID, "error", err)
-		return nil, apperr.NewInternal("failed to enqueue job", err)
+	// Only enqueue to Redis if it's an actual active job (not a recurring template)
+	if job.Status != jobs.StatusRecurring {
+		if err := s.queue.Enqueue(ctx, job); err != nil {
+			s.logger.Error("failed to enqueue job", "job_id", job.ID, "error", err)
+			return nil, apperr.NewInternal("failed to enqueue job", err)
+		}
 	}
 
 	s.publishWebhookEvent(ctx, job, "created", map[string]interface{}{
@@ -495,12 +505,16 @@ func (s *JobService) SearchJobs(ctx context.Context, filter models.JobFilter) ([
 	return s.store.SearchJobs(ctx, filter)
 }
 
-// RecurringJobsDue scans for jobs with CronExpr set, fires any that are due,
-// and creates new job instances. Returns the count of instances created.
+// RecurringJobsDue scans for recurring job templates that are due,
+// spawns a single active instance, and updates the template's next RunAt time.
 func (s *JobService) RecurringJobsDue(ctx context.Context) (int, error) {
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
-	allJobs, err := s.store.SearchJobs(ctx, models.JobFilter{Limit: 1000})
+	// Fetch ALL recurring job templates. Since there shouldn't be millions of templates, Limit: 10000 is safer.
+	templates, err := s.store.SearchJobs(ctx, models.JobFilter{
+		Status: string(jobs.StatusRecurring),
+		Limit:  10000,
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -508,44 +522,48 @@ func (s *JobService) RecurringJobsDue(ctx context.Context) (int, error) {
 	now := time.Now().UTC()
 	var count int
 
-	for _, j := range allJobs {
-		if j.CronExpr == "" || j.Paused {
+	for _, t := range templates {
+		if t.Paused || t.CronExpr == "" {
 			continue
 		}
 
-		sched, err := parser.Parse(j.CronExpr)
+		// If RunAt is in the future, it's not due yet.
+		if t.RunAt.After(now) {
+			continue
+		}
+
+		sched, err := parser.Parse(t.CronExpr)
 		if err != nil {
-			s.logger.Warn("invalid cron expr on job", "job_id", j.ID, "cron", j.CronExpr, "error", err)
+			s.logger.Warn("invalid cron expr on job template", "job_id", t.ID, "cron", t.CronExpr, "error", err)
 			continue
 		}
 
-		lastRun := j.CreatedAt
-		nextRun := sched.Next(lastRun)
+		// 1. Spawn a single active instance for this tick
+		instance := *t // shallow copy
+		instance.ID = "" // let store/queue generate a new ID, but wait, jobs.NewJob logic does this.
+		instance.ID = jobs.NewJob(t.Type, t.Payload, t.Labels, t.Priority, t.MaxRetries, time.Time{}, t.CorrelationID, t.Timeout, t.Version, t.TenantID).ID
+		instance.Status = jobs.StatusPending
+		instance.CronExpr = "" // The instance is not a recurring job itself
+		instance.CreatedAt = now
+		instance.UpdatedAt = now
+		instance.RunAt = now
+		instance.Retries = 0
 
-		for !nextRun.After(now) {
-			instance := *j
-			instance.ID = ""
-			instance.CronExpr = ""
-			instance.CreatedAt = now
-			instance.Status = jobs.StatusPending
-			instance.Retries = 0
-
-			if err := s.store.Save(ctx, &instance); err != nil {
-				s.logger.Error("failed to save recurring job instance", "error", err)
-				continue
-			}
-			if err := s.queue.Enqueue(ctx, &instance); err != nil {
-				s.logger.Error("failed to enqueue recurring job instance", "error", err)
-				continue
-			}
-			count++
-
-			lastRun = nextRun
-			nextRun = sched.Next(lastRun)
+		if err := s.store.Save(ctx, &instance); err != nil {
+			s.logger.Error("failed to save recurring job instance", "error", err)
+			continue
 		}
+		if err := s.queue.Enqueue(ctx, &instance); err != nil {
+			s.logger.Error("failed to enqueue recurring job instance", "error", err)
+			continue
+		}
+		count++
 
-		if !nextRun.IsZero() {
-			_ = s.store.UpdateStatus(ctx, j.ID, jobs.StatusPending, "")
+		// 2. Update the template's next RunAt
+		t.RunAt = sched.Next(now)
+		t.UpdatedAt = now
+		if err := s.store.Save(ctx, t); err != nil {
+			s.logger.Error("failed to update recurring job template run_at", "error", err)
 		}
 	}
 

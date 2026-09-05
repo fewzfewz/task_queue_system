@@ -1230,9 +1230,15 @@ const clientDashboardHTML = `<!DOCTYPE html>
                 <input id="dedup-key" type="text" placeholder="unique-idempotency-key">
               </div>
             </div>
-            <div class="form-group">
-              <label>Run At <span style="color:var(--muted2)">(leave empty = immediate)</span></label>
-              <input id="run-at" type="datetime-local">
+            <div class="grid-2">
+              <div class="form-group">
+                <label>Run At <span style="color:var(--muted2)">(leave empty = immediate)</span></label>
+                <input id="run-at" type="datetime-local">
+              </div>
+              <div class="form-group">
+                <label>Cron Schedule <span style="color:var(--muted2)">(optional)</span></label>
+                <input id="cron-expr" type="text" placeholder="* * * * *">
+              </div>
             </div>
           </div>
         </div>
@@ -1780,7 +1786,7 @@ function filterJobs() {
 
 function buildJobTable(jobs) {
   if (!jobs.length) return '<p style="color:var(--muted);font-size:13px;text-align:center;padding:30px">No jobs found.</p>';
-  const statusClass = s => ({completed:'good',failed:'bad',processing:'info',pending:'',paused:'warn'}[s] || '');
+  const statusClass = s => ({completed:'good',failed:'bad',processing:'info',recurring:'info',pending:'',paused:'warn'}[s] || '');
   return '<table><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Priority</th><th>Progress</th><th>Created</th><th></th></tr></thead><tbody>'
     + jobs.map(j => '<tr>'
       + '<td class="job-id">' + (j.id||'').substring(0,12) + '…</td>'
@@ -1854,7 +1860,7 @@ async function viewJob(id) {
   try {
     const res = await fetch('/api/v1/jobs/' + id, {headers: H});
     const j = await res.json();
-    const statusClass = s => ({completed:'good',failed:'bad',processing:'info',pending:'',paused:'warn'}[s] || '');
+    const statusClass = s => ({completed:'good',failed:'bad',processing:'info',recurring:'info',pending:'',paused:'warn'}[s] || '');
     document.getElementById('job-modal-body').innerHTML =
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">'
       + kv('ID', '<code style="color:var(--accent2);font-size:11px">' + j.id + '</code>')
@@ -1864,7 +1870,7 @@ async function viewJob(id) {
       + kv('Attempts', (j.attempts||j.retries||0) + ' / ' + (j.max_attempts||j.max_retries||3))
       + kv('Progress', Math.round(j.progress||0) + '%')
       + kv('Created', fmtTime(j.created_at))
-      + kv('Updated', fmtTime(j.updated_at))
+      + (j.cron_expr ? kv('Cron', j.cron_expr) : kv('Updated', fmtTime(j.updated_at)))
       + '</div>'
       + '<div style="margin-bottom:12px"><div class="section-title">Payload</div><pre>' + JSON.stringify(j.payload||{}, null, 2) + '</pre></div>'
       + (j.result ? '<div><div class="section-title">Result</div><pre>' + JSON.stringify(j.result, null, 2) + '</pre></div>' : '');
@@ -1954,6 +1960,8 @@ async function submitJob() {
   if (dk) body.dedup_key = dk;
   const ra = document.getElementById('run-at').value;
   if (ra) body.run_at = new Date(ra).toISOString();
+  const ce = document.getElementById('cron-expr').value.trim();
+  if (ce) body.cron_expr = ce;
   const wurl = document.getElementById('webhook-url').value.trim();
   if (wurl) body.webhook = {url: wurl, events: ['completed','failed']};
 
@@ -1992,6 +2000,7 @@ function resetSubmitForm() {
   document.getElementById('correlation-id').value = '';
   document.getElementById('dedup-key').value = '';
   document.getElementById('run-at').value = '';
+  document.getElementById('cron-expr').value = '';
   document.getElementById('webhook-url').value = '';
   document.getElementById('max-retries').value = '3';
   document.getElementById('submit-alert').className = 'hidden';

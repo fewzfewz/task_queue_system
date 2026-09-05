@@ -38,7 +38,8 @@ Redis is the queue broker and also stores queue state, worker heartbeats, proces
 
 ## Key Routes
 
-- `GET /` or `GET /ui` — browser-based operator UI (session login required)
+- `GET /` — public landing page and client registration
+- `GET /ui` — browser-based operator UI (session login required)
 - `POST /api/v1/login` — authenticate with username/password, starts a session
 - `POST /api/v1/logout` — revoke the current session
 - `GET /api/v1/session` — current session state (role + CSRF token)
@@ -243,7 +244,7 @@ make docker-build
 
 The system has three browser-based interfaces, all accessed via the API server (port `8080`).
 
-### Main Operator Dashboard — `GET /` or `GET /ui`
+### Main Operator Dashboard — `GET /ui`
 
 A full-featured sidebar layout with pages for every operation:
 
@@ -271,9 +272,9 @@ A focused dead-letter queue management console:
 | **Workers** | Active worker heartbeat cards |
 | **DLQ Table** | Sortable/filterable table with replay/purge per row, auto-refresh toggle |
 
-### Client Portal — `/client/login`, `/client/register`, `/client/dashboard`
+### Client Portal — `/` (Landing), `/client/login`, `/client/dashboard`
 
-A dedicated, styled single-page application for tenants to register, view their API keys, and manage their specific jobs.
+A dedicated, styled single-page application for tenants to register, view their API keys, and manage their specific jobs. The public landing page at `/` provides inline registration.
 
 | Page | Description |
 |-------------|-------------|
@@ -685,8 +686,8 @@ If you are a developer integrating a separate application with this Task Queue, 
 
 ### Option A: Use the Client Portal UI (Recommended for Users)
 
-1. Navigate to `http://localhost:8080/client/register`.
-2. Enter your desired tenant name.
+1. Navigate to `http://localhost:8080/`.
+2. Enter your desired tenant name in the registration section.
 3. The system will provide your **API Key**. Save this immediately! It will be automatically saved to your browser's `localStorage` for the current session.
 4. You will be redirected to the **Client Dashboard** (`/client/dashboard`) where you can submit jobs, view your task queue, and check statuses using a rich, modern UI.
 5. In the future, you can return and access the dashboard by entering your API key at `http://localhost:8080/client/login`.

@@ -418,6 +418,9 @@ const appHTML = `<!DOCTYPE html>
         <a class="nav-item" data-page="dlq" onclick="showPage('dlq');loadDLQ()">
           <i class="fas fa-trash-alt"></i> Dead Letter Queue
         </a>
+        <a class="nav-item" href="/admin/dlq" data-admin style="color:var(--bad);">
+          <i class="fas fa-skull-crossbones"></i> DLQ Console
+        </a>
         <div class="nav-label">Settings</div>
         <a class="nav-item" data-page="clients" data-admin onclick="showPage('clients');loadClients()">
           <i class="fas fa-users"></i> Clients
@@ -565,7 +568,7 @@ const appHTML = `<!DOCTYPE html>
             <div class="section-title"><i class="fas fa-search"></i> Search Jobs</div>
             <div class="grid-3">
               <div class="form-group"><label>Filter by Type</label><input id="search-type" value="email" /></div>
-              <div class="form-group"><label>Filter by Status</label><input id="search-status" value="pending" placeholder="pending/running/completed/failed" /></div>
+              <div class="form-group"><label>Filter by Status</label><input id="search-status" value="" placeholder="pending/processing/completed/failed/recurring" /></div>
               <div class="form-group"><label>Tenant ID</label><input id="search-tenant" placeholder="Optional" /></div>
             </div>
             <div class="form-row" style="grid-template-columns:1fr 1fr 2fr;margin-bottom:12px;">
@@ -1086,7 +1089,7 @@ const appHTML = `<!DOCTYPE html>
 
     // ── Search Jobs ──
     let searchState={page:1,limit:20};
-    const STATUS_PILL={pending:'warn',running:'',completed:'good',failed:'bad',cancelled:'bad',paused:'warn'};
+    const STATUS_PILL={pending:'warn',processing:'info',recurring:'info',running:'',completed:'good',failed:'bad',cancelled:'bad',paused:'warn'};
     function statusPill(s){
       const cls=STATUS_PILL[s]||'';
       return '<span class="pill '+cls+'">'+esc(s)+'</span>';
@@ -1154,7 +1157,7 @@ const appHTML = `<!DOCTYPE html>
         '<tr><th>Tenant</th><td>'+esc(out&&out.tenant_id||'')+'</td></tr>'+
         '<tr><th>Retries</th><td>'+(out&&out.retries||0)+' / '+(out&&out.max_retries!=null?out.max_retries:'-')+'</td></tr>'+
         '<tr><th>Created</th><td>'+esc(out&&out.created_at)+'</td></tr>'+
-        '<tr><th>Updated</th><td>'+esc(out&&out.updated_at)+'</td></tr>'+
+        (out&&out.cron_expr ? '<tr><th>Cron</th><td>'+esc(out.cron_expr)+'</td></tr>' : '<tr><th>Updated</th><td>'+esc(out&&out.updated_at)+'</td></tr>')+
         '<tr><th>Shard Key</th><td>'+esc(out&&out.shard_key||'')+'</td></tr>'+
         '</tbody></table>'+
         '<div class="section-title" style="font-size:11px;">Payload</div>'+
@@ -1737,7 +1740,8 @@ const loginPageHTML = `<!DOCTYPE html>
           credentials:'same-origin'
         });
         if(res.ok){
-          window.location.href='/';
+          const data=await res.json().catch(function(){return {};});
+          window.location.href=(data&&data.role==='viewer')?'/':'/ui';
         }else{
           const data=await res.json().catch(function(){return {};});
           err.style.display='block';

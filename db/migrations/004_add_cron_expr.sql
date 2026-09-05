@@ -1,0 +1,1 @@
+ALTER TABLE jobs ADD COLUMN cron_expr TEXT;

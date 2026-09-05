@@ -129,25 +129,28 @@ func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 			attempts, max_attempts, correlation_id, timeout_seconds,
 			version, scheduled_at, updated_at, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			dedup_key, dependencies, shard_key
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+			dedup_key, dependencies, shard_key, cron_expr
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			attempts = EXCLUDED.attempts,
 			updated_at = EXCLUDED.updated_at,
 			processed_by = EXCLUDED.processed_by,
 			result = EXCLUDED.result,
-			error = EXCLUDED.error
+			error = EXCLUDED.error,
+			scheduled_at = EXCLUDED.scheduled_at,
+			cron_expr = EXCLUDED.cron_expr
 	`
 	dedup := nullIfEmpty(job.DedupKey)
 	shard := nullIfEmpty(job.ShardKey)
+	cronExp := nullIfEmpty(job.CronExpr)
 	_, err := s.pool.Exec(ctx, query,
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 		job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout,
 		job.Version, job.RunAt, time.Now().UTC(),
 		job.Progress,
 		url, secret, events, lastStatus, attempts,
-		dedup, string(depsJSON), shard,
+		dedup, string(depsJSON), shard, cronExp,
 	)
 	return err
 }
@@ -173,15 +176,16 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 			attempts, max_attempts, correlation_id, timeout_seconds,
 			version, scheduled_at, created_at, updated_at, processed_by, result, error, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			error_history, dedup_key, dependencies, shard_key
+			error_history, dedup_key, dependencies, shard_key, cron_expr
 		FROM jobs WHERE id = $1
 	`
+	var cronExp *string
 	err := s.pool.QueryRow(ctx, query, id).Scan(
 		&j.ID, &j.TenantID, &j.Type, &payload, &status, &priority,
 		&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 		&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy, &res, &errStr, &j.Progress,
 		&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
-		&errHistoryJSON, &dedupKey, &depsJSON, &shardKey,
+		&errHistoryJSON, &dedupKey, &depsJSON, &shardKey, &cronExp,
 	)
 
 	if err != nil {
@@ -228,6 +232,9 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 
 	if errHistoryJSON != nil {
 		_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
+	}
+	if cronExp != nil {
+		j.CronExpr = *cronExp
 	}
 
 	return &j, nil
@@ -448,7 +455,7 @@ func (s *PostgresStore) ListJobs(ctx context.Context, tenantID string, status st
 			progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
 			error_history,
-			dedup_key, dependencies, shard_key
+			dedup_key, dependencies, shard_key, cron_expr
 		FROM jobs 
 		WHERE ($1 = '' OR tenant_id = $1)
 		  AND ($2 = '' OR status = $2)
@@ -637,7 +644,7 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		var webhookEvents []string
 		var webhookLastStatus, webhookAttempts *int
 		var errHistoryJSON []byte
-		var dedupKey, shardKey *string
+		var dedupKey, shardKey, cronExp *string
 		var depsJSON []byte
 
 		err := rows.Scan(
@@ -647,7 +654,7 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 			&j.Progress,
 			&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
 			&errHistoryJSON,
-			&dedupKey, &depsJSON, &shardKey,
+			&dedupKey, &depsJSON, &shardKey, &cronExp,
 		)
 		if err != nil {
 			return nil, err
@@ -681,6 +688,9 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		}
 		if errHistoryJSON != nil {
 			_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
+		}
+		if cronExp != nil {
+			j.CronExpr = *cronExp
 		}
 		results = append(results, &j)
 	}

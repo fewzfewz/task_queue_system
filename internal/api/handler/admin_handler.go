@@ -276,6 +276,10 @@ const adminHTML = `<!DOCTYPE html>
         <div><h2>TaskQueue</h2><span>DLQ Console</span></div>
       </div>
       <div class="sidebar-nav">
+        <a class="nav-item" href="/ui" style="color:var(--accent2);margin-bottom:6px;border:1px solid rgba(99,102,241,.2);background:rgba(99,102,241,.07);">
+          <i class="fas fa-arrow-left"></i> Operator Panel
+        </a>
+        <div style="height:1px;background:var(--border);margin:6px 0 10px;"></div>
         <a class="nav-item active" data-page="overview" onclick="showPage('overview')">
           <i class="fas fa-chart-pie"></i> Overview
         </a>
