@@ -44,6 +44,9 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	// ── Public routes ────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/v1/login", h.Login)
 	mux.HandleFunc("GET /api/v1/session", h.GetSession)
+	mux.HandleFunc("GET /features", h.ServeFeaturesPage)
+	mux.HandleFunc("GET /docs", h.ServeDocsPage)
+	mux.HandleFunc("GET /docs/sdk", h.ServeSDKPage)
 	mux.HandleFunc("GET /", h.ServeLandingPage)      // public landing + registration
 	mux.HandleFunc("GET /ui", h.ServeAppUI)           // operator dashboard
 	mux.HandleFunc("GET /login", h.ServeLoginPage)
