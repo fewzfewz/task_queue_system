@@ -94,12 +94,12 @@ const landingHTML = `<!DOCTYPE html>
     .nav-cta:hover{opacity:.9;transform:translateY(-1px)}
 
     /* ── Hero ── */
-    .hero{
+    .hero{padding:120px clamp(20px,5vw,80px) 40px;
       padding:148px clamp(20px,5vw,80px) 80px;
       max-width:1200px;margin:0 auto;
       display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;
     }
-    @media(max-width:900px){.hero{grid-template-columns:1fr;padding-top:110px}.hero-visual{display:none}}
+    @media(max-width:900px){.hero{padding:120px clamp(20px,5vw,80px) 40px;grid-template-columns:1fr;padding-top:110px}.hero-visual{display:none}}
     .hero-badge{
       display:inline-flex;align-items:center;gap:8px;
       background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);
@@ -124,7 +124,7 @@ const landingHTML = `<!DOCTYPE html>
 
     /* ── Visual panel (right side) ── */
     .hero-visual{position:relative}
-    .terminal{
+    .terminal{position:relative;
       background:rgba(10,15,30,0.9);border:1px solid var(--border);border-radius:16px;
       padding:20px;font-size:13px;font-family:'SF Mono','Fira Code',monospace;
       box-shadow:0 30px 80px rgba(0,0,0,.6);backdrop-filter:blur(16px);
@@ -148,8 +148,62 @@ const landingHTML = `<!DOCTYPE html>
     .stat-chip .sc-val{font-size:22px;font-weight:800;color:var(--accent2)}
     .stat-chip .sc-lbl{font-size:11px;color:var(--muted2);margin-top:2px}
 
+    
+    .bottom-layout {
+      max-width: 1200px; margin: 0 auto; padding: 40px clamp(20px, 5vw, 80px) 80px;
+      display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 60px;
+    }
+    @media(max-width:900px){ .bottom-layout { grid-template-columns: 1fr; } }
+    
+    .features h3 { font-size: 28px; font-weight: 800; margin-bottom: 24px; color: var(--text); }
+    .feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .feat-card {
+      background: rgba(31,42,64,0.4); border: 1px solid var(--border); border-radius: 16px;
+      padding: 20px; transition: all .3s; backdrop-filter: blur(16px);
+      text-align: left;
+    }
+    .feat-card:hover { border-color: rgba(99,102,241,0.5); background: rgba(31,42,64,0.6); }
+    .feat-icon {
+      width: 44px; height: 44px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 18px; margin-bottom: 12px;
+    }
+    .feat-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 0; }
+    .feat-card p { font-size: 13px; color: var(--muted); margin-top: 8px; line-height: 1.5; display: none; }
+    
+    .register-section { width: 100%; margin: 0; padding: 0; }
+    .register-card {
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 20px;
+      padding: 40px; box-shadow: 0 30px 80px rgba(0,0,0,.6); backdrop-filter: blur(20px);
+      position: relative;
+    }
+    .register-card::before {
+      content: ''; position: absolute; inset: -1px; border-radius: 21px; z-index: -1;
+      background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
+    }
+    .rc-head { text-align: center; margin-bottom: 32px; }
+    .rc-icon {
+      width: 48px; height: 48px; border-radius: 50%; background: rgba(255,255,255,0.1);
+      display: inline-flex; align-items: center; justify-content: center; font-size: 20px; color: #fff;
+      margin-bottom: 16px;
+    }
+    .rc-head h3 { display: none; }
+    .rc-head p { display: none; }
+    
+    .terminal-wrapper {
+      position: relative;
+      padding: 2px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(99,102,241,0.8), rgba(192,132,252,0.8), rgba(56,189,248,0.8));
+      box-shadow: 0 0 60px rgba(99,102,241,0.4);
+    }
+    .terminal {
+      background: #0a0f1e; border: none; border-radius: 16px;
+      padding: 24px; font-size: 13px; font-family: 'SF Mono', monospace;
+      margin: 0;
+    }
+
     /* ── Features ── */
-    .features{max-width:1200px;margin:0 auto;padding:80px clamp(20px,5vw,80px)}
+    
     .section-header{text-align:center;margin-bottom:56px}
     .section-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent2);margin-bottom:12px}
     .section-header h3{font-size:clamp(26px,4vw,40px);font-weight:800;margin-bottom:12px}
@@ -279,15 +333,15 @@ const landingHTML = `<!DOCTYPE html>
   <div class="hero-copy">
     <div class="hero-badge"><span class="dot"></span>Production Ready</div>
     <h2>Background jobs that<br><span class="grad">never drop the ball</span></h2>
-    <p>A resilient, priority-aware job queue with retries, circuit breakers, dead-letter queues, and real-time monitoring — built for services that can't afford to miss a beat.</p>
+    <p>Background job processing system optimized with ultra modern, and ultra-modern production.</p>
     <div class="hero-actions">
       <a href="#register" class="btn-hero primary"><i class="fas fa-rocket"></i> Get Your API Key</a>
       <a href="/swagger/" class="btn-hero ghost"><i class="fas fa-book"></i> API Docs</a>
     </div>
-    <div class="hero-note"><i class="fas fa-check-circle"></i> Free to register &mdash; no credit card required</div>
+    <div class="hero-note">Note: You can register to get a free tier.</div>
   </div>
   <div class="hero-visual">
-    <div class="terminal">
+    <div class="terminal-wrapper"><div class="terminal">
       <div class="term-bar">
         <div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div>
         <span class="term-title">terminal</span>
@@ -300,6 +354,7 @@ const landingHTML = `<!DOCTYPE html>
       <div class="term-line">&nbsp;&nbsp;<span class="tc-key">"tenant_id"</span><span class="tc-ok">:</span> <span class="tc-val">"acme-corp"</span></div>
       <div class="term-line"><span class="tc-ok">}</span></div>
       <div class="term-line" style="margin-top:12px"><span class="tc-prompt">$</span> <span class="tc-cmd">curl /jobs -H "X-API-Key: tq_live_a8f2..."</span> <span class="cursor"></span></div>
+      </div>
       <div class="stat-chips">
         <div class="stat-chip"><div class="sc-val">99.9%</div><div class="sc-lbl">Uptime</div></div>
         <div class="stat-chip"><div class="sc-val">&lt;5ms</div><div class="sc-lbl">Enqueue</div></div>
@@ -309,103 +364,64 @@ const landingHTML = `<!DOCTYPE html>
   </div>
 </section>
 
-<!-- Features -->
-<section class="features" id="features">
-  <div class="section-header">
-    <div class="section-tag">Why TaskQueue</div>
-    <h3>Everything you need, nothing you don't</h3>
-    <p>Ship background jobs with confidence. TaskQueue handles the hard parts so you can focus on your product.</p>
-  </div>
-  <div class="feat-grid">
-    <div class="feat-card">
-      <div class="feat-icon" style="background:rgba(99,102,241,.15);color:var(--accent2)"><i class="fas fa-layer-group"></i></div>
-      <h4>Priority Queues</h4>
-      <p>Three-tier priority system (high / medium / low) ensures critical jobs are always processed first, even under heavy load.</p>
-    </div>
-    <div class="feat-card">
-      <div class="feat-icon" style="background:rgba(52,211,153,.12);color:var(--good)"><i class="fas fa-redo"></i></div>
-      <h4>Automatic Retries</h4>
-      <p>Configurable retry counts with exponential back-off. Jobs that keep failing land in the Dead Letter Queue for manual review.</p>
-    </div>
-    <div class="feat-card">
-      <div class="feat-icon" style="background:rgba(192,132,252,.12);color:var(--accent3)"><i class="fas fa-shield-alt"></i></div>
-      <h4>Circuit Breakers</h4>
-      <p>Per-plugin circuit breakers automatically trip when a downstream service degrades, protecting your system from cascading failures.</p>
-    </div>
-    <div class="feat-card">
-      <div class="feat-icon" style="background:rgba(56,189,248,.1);color:var(--accent4)"><i class="fas fa-broadcast-tower"></i></div>
-      <h4>Real-time SSE</h4>
-      <p>Live Server-Sent Events stream job lifecycle events directly to your dashboard — no polling, no delay.</p>
-    </div>
-    <div class="feat-card">
-      <div class="feat-icon" style="background:rgba(251,191,36,.1);color:var(--warn)"><i class="fas fa-project-diagram"></i></div>
-      <h4>DAG Dependencies</h4>
-      <p>Define job dependency graphs. TaskQueue resolves the execution order and won't start a job until all its dependencies succeed.</p>
-    </div>
-    <div class="feat-card">
-      <div class="feat-icon" style="background:rgba(248,113,113,.1);color:var(--bad)"><i class="fas fa-globe"></i></div>
-      <h4>Webhook Callbacks</h4>
-      <p>Register HTTP callbacks for any job event. Your service gets notified the instant a job completes, fails, or is cancelled.</p>
-    </div>
-  </div>
-</section>
 
-<!-- Registration -->
-<section class="register-section" id="register">
-  <div class="register-card" id="register-form-wrap">
-    <div class="rc-head">
-      <div class="rc-icon"><i class="fas fa-key"></i></div>
-      <h3>Create your free account</h3>
-      <p>Pick a unique tenant ID and you'll receive an API key instantly.</p>
+<div class="bottom-layout">
+  <!-- Features -->
+  <section class="features" id="features">
+    <div style="font-size: 24px; font-weight: 700; margin-bottom: 24px;">Why TaskQueue's Grid</div>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(99,102,241,.15);color:var(--accent2)"><i class="fas fa-list-ol"></i></div>
+        <h4>Priority Queues</h4>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(251,191,36,.15);color:var(--warn)"><i class="fas fa-sync"></i></div>
+        <h4>Automatic Retries</h4>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(248,113,113,.15);color:var(--bad)"><i class="fas fa-bolt"></i></div>
+        <h4>Circuit Breakers</h4>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(52,211,153,.15);color:var(--good)"><i class="fas fa-broadcast-tower"></i></div>
+        <h4>Real-time SSE</h4>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(56,189,248,.15);color:var(--accent4)"><i class="fas fa-project-diagram"></i></div>
+        <h4>DAG Dependencies</h4>
+      </div>
+      <div class="feat-card">
+        <div class="feat-icon" style="background:rgba(192,132,252,.15);color:var(--accent3)"><i class="fas fa-satellite-dish"></i></div>
+        <h4>Webhook Callbacks</h4>
+      </div>
     </div>
+  </section>
 
-    <div id="reg-alert" class="alert-box"></div>
-
-    <div class="form-group">
-      <label for="reg-tenant">Tenant ID</label>
-      <input id="reg-tenant" type="text" placeholder="e.g. acme-corp" autocomplete="off" maxlength="64" spellcheck="false">
+  <!-- Registration -->
+  <section class="register-section" id="register">
+    <div class="register-card" id="register-form-wrap">
+      <div class="rc-head">
+        <div class="rc-icon"><i class="fas fa-key"></i></div>
+      </div>
+      <div id="reg-alert" class="alert-box"></div>
+      <div class="form-group">
+        <label for="reg-tenant">Tenant ID</label>
+        <input id="reg-tenant" type="text" placeholder="Tenant ID" autocomplete="off" maxlength="64" spellcheck="false">
+      </div>
+      <div class="form-group">
+        <label for="reg-service">Service Name (optional)</label>
+        <input id="reg-service" type="text" placeholder="Service Name (optional)" autocomplete="off">
+      </div>
+      <button class="btn-register" id="reg-btn" onclick="doRegister()">
+        <span id="reg-label">Create Account & Get API Key</span>
+      </button>
     </div>
-    <div class="form-group">
-      <label for="reg-service">Service Name <span style="color:var(--muted2);font-weight:400">(optional)</span></label>
-      <input id="reg-service" type="text" placeholder="e.g. payment-worker" autocomplete="off">
-    </div>
-
-    <button class="btn-register" id="reg-btn" onclick="doRegister()">
-      <span id="reg-label"><i class="fas fa-rocket"></i> &nbsp;Create Account & Get API Key</span>
-    </button>
-
-    <hr class="divider">
-    <div class="login-row">Already have a key? <a href="/client/login">Sign in to your dashboard</a></div>
-  </div>
-
-  <!-- Key reveal (shown after success) -->
-  <div class="register-card key-reveal" id="key-reveal">
-    <div class="kr-icon">🎉</div>
-    <h4>You're all set!</h4>
-    <p>Here is your API key. <strong>Copy it now</strong> — it won't be shown again.</p>
-    <div class="key-box">
-      <code id="key-display"></code>
-      <button onclick="copyKey()"><i class="fas fa-copy"></i> Copy</button>
-    </div>
-    <div class="key-warning"><i class="fas fa-exclamation-triangle"></i> Store this key securely. It cannot be recovered.</div>
-    <div class="key-actions">
-      <a href="/client/dashboard" class="ka-dash"><i class="fas fa-gauge-high"></i> Open Dashboard</a>
-      <a href="/swagger/" class="ka-docs"><i class="fas fa-book"></i> API Reference</a>
-    </div>
-  </div>
-</section>
+  </section>
+</div>
 
 <!-- Footer -->
-<footer>
-  <p>© 2025 TaskQueue. Built for developers who ship.</p>
-  <div class="footer-links">
-    <a href="/swagger/">API Reference</a>
-    <a href="/client/login">Sign In</a>
-    <a href="/ui">Operator Panel</a>
-  </div>
-</footer>
-
 <script>
+
   let generatedKey = '';
 
   async function doRegister() {
