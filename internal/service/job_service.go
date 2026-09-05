@@ -104,6 +104,7 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 	}
 
 	// ── DAG Dependency Validation ───────────────────────────────────────────
+	allMet := true
 	if len(dependencies) > 0 {
 		deps, err := s.store.GetByIDs(ctx, dependencies)
 		if err != nil {
@@ -112,9 +113,11 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 		if len(deps) != len(dependencies) {
 			return nil, apperr.NewInvalidArgument("one or more dependency job IDs not found")
 		}
+		// We DO NOT reject if they aren't completed yet. This allows enqueuing a full DAG at once.
 		for _, dep := range deps {
 			if dep.Status != jobs.StatusCompleted {
-				return nil, apperr.NewInvalidArgument(fmt.Sprintf("dependency %q is not completed (status: %s)", dep.ID, dep.Status))
+				allMet = false
+				break
 			}
 		}
 	}
@@ -180,7 +183,7 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 	}
 
 	// Only enqueue to Redis if it's an actual active job (not a recurring template)
-	if job.Status != jobs.StatusRecurring {
+	if job.Status != jobs.StatusRecurring && allMet {
 		if err := s.queue.Enqueue(ctx, job); err != nil {
 			s.logger.Error("failed to enqueue job", "job_id", job.ID, "error", err)
 			return nil, apperr.NewInternal("failed to enqueue job", err)
@@ -325,6 +328,19 @@ func (s *JobService) UpdateJobResult(ctx context.Context, jobID string, status j
 
 	// Publish webhook events: from per-job webhook config AND from persistent tenant webhooks.
 	s.publishWebhookEvents(ctx, job, status, result)
+	// ── DAG Promotion ─────────────────────────────────────────────────────────
+	if status == jobs.StatusCompleted {
+		dependentJobs, err := s.store.GetDependentJobs(ctx, jobID)
+		if err == nil && len(dependentJobs) > 0 {
+			for _, dJob := range dependentJobs {
+				if err := s.queue.Enqueue(ctx, dJob); err != nil {
+					s.logger.Error("failed to enqueue dependent job", "job_id", dJob.ID, "error", err)
+				} else {
+					s.logger.Info("dependent job promoted to queue", "parent_id", jobID, "dependent_id", dJob.ID)
+				}
+			}
+		}
+	}
 
 	return nil
 }
@@ -718,4 +734,32 @@ func (s *JobService) ArchiveOldJobs(ctx context.Context, maxAge time.Duration) (
 
 func (s *JobService) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
 	return s.queue.SubscribeCancellations(ctx)
+}
+
+// PromoteReadyDAGJobs finds pending jobs with met dependencies and enqueues them.
+func (s *JobService) PromoteReadyDAGJobs(ctx context.Context) (int64, error) {
+	jobs, err := s.store.GetReadyDAGJobs(ctx, 100)
+	if err != nil {
+		return 0, err
+	}
+	var count int64
+	for _, j := range jobs {
+		// Only enqueue if it's not already in Redis (checked implicitly by Redis logic or safe to double-push if deduped by ID)
+		// Wait, Redis Enqueue might just overwrite. But if it's already in pending, ZAdd might update score, LPUSH might duplicate if not careful.
+		// However, it's only retrieved if it's in Postgres 'pending'. When popped by worker, it stays pending?
+		// No, when popped by worker it becomes 'processing'.
+		// What if it's in Redis queue right now? Postgres says 'pending'.
+		// We could add a status like 'queued' but our system uses 'pending' for both.
+		// So we must be careful not to push multiple times.
+		// Wait! s.store.GetReadyDAGJobs gets 'pending' jobs. Any 'pending' job with met dependencies SHOULD be in Redis.
+		// We can safely Enqueue it. Redis deduplication or idempotent processing handles the rest, OR we can just let it be.
+		// Actually, Redis Queue doesn't natively deduplicate pending queue (it's a List or Zset).
+		// Wait, for delayed jobs it's ZSET (deduped). For ready jobs it's LIST (NOT deduped)!
+		// If we push it 5 times, it gets processed 5 times? No, the postgres UpdateStatus to 'processing' uses `WHERE status = 'pending'`. 
+		// The 2nd pop will fail to UpdateStatus and be ignored! So it's safe.
+		if err := s.queue.Enqueue(ctx, j); err == nil {
+			count++
+		}
+	}
+	return count, nil
 }

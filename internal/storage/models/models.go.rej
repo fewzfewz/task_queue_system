@@ -1,0 +1,32 @@
+--- models.go
++++ models.go
+@@ -196,6 +198,14 @@
+ 	return out, nil
+ }
+ 
++func (s *InMemoryStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
++	return nil, nil // DAGs not supported in memory store
++}
++
++func (s *InMemoryStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
++	return nil, nil // DAGs not supported in memory store
++}
++
+ func (s *InMemoryStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+ 	s.mu.RLock()
+ 	defer s.mu.RUnlock()
+@@ -469,6 +479,14 @@
+ 	return out, nil
+ }
+ 
++func (s *DualStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
++	return s.primary.GetReadyDAGJobs(ctx, limit)
++}
++
++func (s *DualStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
++	return s.primary.GetDependentJobs(ctx, parentID)
++}
++
+ func (s *DualStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+ 	return s.primary.GetQueueLengths(ctx)
+ }

@@ -116,6 +116,13 @@ func (s *DualStore) IsDedupKeyTaken(ctx context.Context, dedupKey, tenantID stri
 	return s.Primary.IsDedupKeyTaken(ctx, dedupKey, tenantID)
 }
 
+func (s *DualStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
+	return s.Primary.GetReadyDAGJobs(ctx, limit)
+}
+func (s *DualStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
+	return s.Primary.GetDependentJobs(ctx, parentID)
+}
+
 func (s *DualStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error) {
 	return s.Primary.GetByIDs(ctx, ids)
 }
