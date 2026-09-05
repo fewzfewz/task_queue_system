@@ -57,6 +57,7 @@ type Queue interface {
 	// RateLimitStatus reports the current per-tenant usage against the
 	// configured tenant rate limit. It returns an empty slice when the limit
 	// is disabled (0 = unlimited).
+	UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error
 	RateLimitStatus(ctx context.Context) ([]TenantRateStatus, error)
 
 	// PriorityPartitionDepths returns pending job counts by priority tier and

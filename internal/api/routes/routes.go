@@ -108,6 +108,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	write("DELETE /api/v1/job-types/{name}", h.DeleteJobType)
 	write("DELETE /api/v1/clients/{tenant_id}", h.RevokeClient)
 	write("POST /api/v1/clients/{tenant_id}/rotate", h.RotateClientKey)
+	write("PUT /api/v1/clients/{tenant_id}/config", h.UpdateClientConfig)
 
 	// Logout is CSRF-protected but available to any authenticated session.
 	mux.Handle("POST /api/v1/logout", auth(csrf(http.HandlerFunc(h.Logout))))

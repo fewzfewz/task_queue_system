@@ -120,3 +120,26 @@ func (h *JobHandler) RotateClientKey(w http.ResponseWriter, r *http.Request) {
 		"message":   "Store this new API key safely. The old key is now invalid.",
 	})
 }
+
+// UpdateClientConfig handles PUT /api/v1/clients/{tenant_id}/config — admin only.
+func (h *JobHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenant_id")
+	if tenantID == "" {
+		middleware.SendJSONError(w, http.StatusBadRequest, "BAD_REQUEST", "tenant_id is required")
+		return
+	}
+	
+	var req struct {
+		ConcurrencyLimit int `json:"concurrency_limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		middleware.SendJSONError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json payload")
+		return
+	}
+
+	if err := h.service.UpdateTenantConfig(r.Context(), tenantID, req.ConcurrencyLimit); err != nil {
+		middleware.SendJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to update config")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

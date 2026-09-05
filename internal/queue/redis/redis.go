@@ -300,6 +300,27 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 			continue
 		}
 
+		// Check Tenant Limits
+		tenantLimit := q.getTenantLimit(ctx, job.TenantID)
+		activeTenantKey := "task_queue:active_tenant:" + job.TenantID
+
+		if tenantLimit > 0 {
+			now := time.Now().Unix()
+			q.client.ZRemRangeByScore(ctx, activeTenantKey, "-inf", fmt.Sprintf("%d", now))
+			activeCount, err := q.client.ZCard(ctx, activeTenantKey).Result()
+			if err != nil {
+				return nil, fmt.Errorf("queue: failed to check active count for tenant %s: %w", job.TenantID, err)
+			}
+
+			if int(activeCount) >= tenantLimit {
+				deferredKey := "task_queue:deferred_tenant:" + job.TenantID
+				if err := q.client.LPush(ctx, deferredKey, result[1]).Err(); err != nil {
+					return nil, fmt.Errorf("queue: failed to defer job for tenant %s: %w", job.TenantID, err)
+				}
+				continue
+			}
+		}
+
 		if limit > 0 {
 			// Clear expired active tracking (visibility timeout)
 			now := time.Now().Unix()
@@ -343,8 +364,13 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 			Score:  float64(timeoutAt),
 			Member: job.ID,
 		})
-		// Keep a reverse mapping so we know which activeKey to remove from during Ack/Fail
 		pipe.Set(ctx, "task_queue:job_active_key:"+job.ID, activeKey, visibilityTimeout+time.Hour)
+
+		pipe.ZAdd(ctx, activeTenantKey, redis.Z{
+			Score:  float64(timeoutAt),
+			Member: job.ID,
+		})
+		pipe.Set(ctx, "task_queue:job_active_tenant_key:"+job.ID, activeTenantKey, visibilityTimeout+time.Hour)
 
 		if _, err := pipe.Exec(ctx); err != nil {
 			return nil, fmt.Errorf("queue: Dequeue tracking failed: %w", err)
@@ -355,6 +381,21 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 }
 
 // getJobTypeState fetches the concurrency limit and paused state for a job type.
+// getTenantLimit returns the concurrency limit for a tenant. If no limit is configured, returns 0.
+func (q *RedisQueue) getTenantLimit(ctx context.Context, tenantID string) int {
+	data, err := q.client.HGet(ctx, "task_queue:tenants:registered", tenantID).Result()
+	if err != nil {
+		return 0 // default unlimited
+	}
+	var partial struct {
+		ConcurrencyLimit int `json:"concurrency_limit"`
+	}
+	if err := json.Unmarshal([]byte(data), &partial); err == nil {
+		return partial.ConcurrencyLimit
+	}
+	return 0
+}
+
 func (q *RedisQueue) getJobTypeState(ctx context.Context, jobType string) (int, bool, error) {
 	data, err := q.client.HGet(ctx, "task_queue:job_types:registered", jobType).Bytes()
 	if err != nil {
@@ -405,6 +446,12 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 		pipe.ZRem(ctx, activeKey, jobID)
 		pipe.Del(ctx, "task_queue:job_active_key:"+jobID)
 	}
+
+	activeTenantKey, _ := q.client.Get(ctx, "task_queue:job_active_tenant_key:"+jobID).Result()
+	if activeTenantKey != "" {
+		pipe.ZRem(ctx, activeTenantKey, jobID)
+		pipe.Del(ctx, "task_queue:job_active_tenant_key:"+jobID)
+	}
 	
 	cmds, err := pipe.Exec(ctx)
 	if err != nil {
@@ -453,6 +500,12 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 	if activeKey != "" {
 		pipe.ZRem(ctx, activeKey, jobID)
 		pipe.Del(ctx, "task_queue:job_active_key:"+jobID)
+	}
+
+	activeTenantKey, _ := q.client.Get(ctx, "task_queue:job_active_tenant_key:"+jobID).Result()
+	if activeTenantKey != "" {
+		pipe.ZRem(ctx, activeTenantKey, jobID)
+		pipe.Del(ctx, "task_queue:job_active_tenant_key:"+jobID)
 	}
 	
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -670,6 +723,14 @@ func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, erro
 
 // RateLimitStatus reports the current per-tenant usage against the configured
 // tenant rate limit. Tenants are tracked the first time they submit a job.
+func (q *RedisQueue) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error {
+	data, err := json.Marshal(map[string]int{"concurrency_limit": concurrencyLimit})
+	if err != nil {
+		return err
+	}
+	return q.client.HSet(ctx, "task_queue:tenants:registered", tenantID, string(data)).Err()
+}
+
 func (q *RedisQueue) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
 	if q.rateLimit == 0 {
 		return []queue.TenantRateStatus{}, nil
@@ -827,6 +888,65 @@ func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
 		}
 	}
 	
+	// 2. Fetch all registered tenants to get their limits.
+	allTenants, err := q.client.HGetAll(ctx, "task_queue:tenants:registered").Result()
+	if err == nil {
+		for tenantID, raw := range allTenants {
+			var partial struct {
+				ConcurrencyLimit int `json:"concurrency_limit"`
+			}
+			if err := json.Unmarshal([]byte(raw), &partial); err != nil {
+				continue
+			}
+
+			deferredKey := "task_queue:deferred_tenant:" + tenantID
+			deferredCount, err := q.client.LLen(ctx, deferredKey).Result()
+			if err != nil || deferredCount == 0 {
+				continue
+			}
+
+			limit := partial.ConcurrencyLimit
+			var available int
+
+			if limit <= 0 {
+				available = int(deferredCount) // Unlimited
+			} else {
+				activeKey := "task_queue:active_tenant:" + tenantID
+				now := time.Now().Unix()
+				q.client.ZRemRangeByScore(ctx, activeKey, "-inf", fmt.Sprintf("%d", now))
+				activeCount, err := q.client.ZCard(ctx, activeKey).Result()
+				if err != nil {
+					continue
+				}
+
+				available = limit - int(activeCount)
+				if available <= 0 {
+					continue
+				}
+			}
+
+			for i := 0; i < available; i++ {
+				payload, err := q.client.RPop(ctx, deferredKey).Result()
+				if err != nil {
+					if errors.Is(err, redis.Nil) {
+						break
+					}
+					continue
+				}
+
+				var partialJob struct {
+					ID       string           `json:"id"`
+					Priority jobs.JobPriority `json:"priority"`
+				}
+				if err := json.Unmarshal([]byte(payload), &partialJob); err == nil {
+					targetKey := q.getPartitionedKey(partialJob.ID, partialJob.Priority)
+					q.client.LPush(ctx, targetKey, payload)
+					movedTotal++
+				}
+			}
+		}
+	}
+
 	return movedTotal, nil
 }
 

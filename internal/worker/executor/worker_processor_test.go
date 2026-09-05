@@ -69,6 +69,7 @@ func (m *mockQ) IsAllowed(ctx context.Context, tenantID string) (bool, error) {
 	}
 	return true, nil
 }
+func (m *mockQ) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error { return nil }
 func (m *mockQ) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
 	if m.rateLimitStatusFunc != nil {
 		return m.rateLimitStatusFunc(ctx)

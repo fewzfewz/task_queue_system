@@ -746,6 +746,10 @@ func (s *JobService) RotateClientKey(ctx context.Context, tenantID string) (stri
 	return rawKey, nil
 }
 
+func (s *JobService) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error {
+	return s.queue.UpdateTenantConfig(ctx, tenantID, concurrencyLimit)
+}
+
 func (s *JobService) ReplayJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, error) {
 	job, err := s.store.GetByID(ctx, jobID)
 	if err != nil {
