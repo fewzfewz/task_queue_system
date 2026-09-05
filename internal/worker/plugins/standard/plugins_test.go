@@ -195,3 +195,65 @@ func TestHTTPPlugin_GlobalRegistration(t *testing.T) {
 		t.Fatalf("unexpected global plugin type: %q", p.Type())
 	}
 }
+
+func TestSlackPlugin_Type(t *testing.T) {
+	p := NewSlackPlugin(slog.Default())
+	if got := p.Type(); got != "slack" {
+		t.Fatalf("expected type 'slack', got %q", got)
+	}
+}
+
+func TestSlackPlugin_Execute_MissingText(t *testing.T) {
+	p := NewSlackPlugin(slog.Default())
+	job := jobs.NewJob("slack", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{}
+
+	_, err := p.Execute(context.Background(), job)
+	if err == nil {
+		t.Fatal("expected error for missing text")
+	}
+}
+
+func TestSlackPlugin_Execute_Simulated(t *testing.T) {
+	p := NewSlackPlugin(slog.Default())
+	job := jobs.NewJob("slack", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"text": "Hello Slack!",
+	}
+
+	res, err := p.Execute(context.Background(), job)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if res != "slack message simulated" {
+		t.Fatalf("unexpected result: %v", res)
+	}
+}
+
+func TestDataExportPlugin_Type(t *testing.T) {
+	p := NewDataExportPlugin(slog.Default())
+	if got := p.Type(); got != "data_export" {
+		t.Fatalf("expected type 'data_export', got %q", got)
+	}
+}
+
+func TestDataExportPlugin_Execute_Success(t *testing.T) {
+	p := NewDataExportPlugin(slog.Default())
+	job := jobs.NewJob("data_export", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"format": "json",
+	}
+
+	res, err := p.Execute(context.Background(), job)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	
+	m, ok := res.(map[string]string)
+	if !ok {
+		t.Fatalf("expected map[string]string result")
+	}
+	if m["format"] != "json" {
+		t.Fatalf("unexpected format: %v", m["format"])
+	}
+}
