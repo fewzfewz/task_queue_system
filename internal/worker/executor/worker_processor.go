@@ -251,7 +251,13 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		"max_retries", job.MaxRetries,
 	)
 
-	if job.Retries < job.MaxRetries {
+	if errors.Is(execErr, ErrCircuitOpen) {
+		log.Warn("circuit breaker open, requeuing job without consuming retry")
+		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending, wp.name)
+		// Requeue with backoff but do not increment job.Retries
+		wp.deferJob(ctx, execCtx, job, log)
+		metrics.JobTotal.WithLabelValues(job.Type, job.TenantID, "retry").Inc()
+	} else if job.Retries < job.MaxRetries {
 		_ = wp.service.UpdateJobStatus(execCtx, job.ID, jobs.StatusPending, wp.name)
 		wp.retry(ctx, execCtx, job, log)
 		// Metrics: Retry counts as a partial failure but not a terminal one for this metric
@@ -312,6 +318,35 @@ func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs
 	}
 
 	// Ack removes the old in-flight record; the freshly enqueued copy takes over.
+	if err := wp.service.Ack(execCtx, job.ID); err != nil {
+		log.Error("failed to ack original entry after re-enqueue", "error", err)
+	}
+}
+
+// deferJob re-enqueues the job without incrementing the retry counter, applying
+// a short fixed delay before re-enqueuing.
+func (wp *WorkerProcessor) deferJob(shutdownCtx, execCtx context.Context, job *jobs.Job, log *slog.Logger) {
+	job.Status = jobs.StatusPending
+	job.UpdatedAt = time.Now().UTC()
+
+	delay := 5 * time.Second
+
+	select {
+	case <-shutdownCtx.Done():
+		log.Warn("shutdown interrupted defer delay; proactively re-enqueuing job")
+		if err := wp.service.Enqueue(execCtx, job); err != nil {
+			log.Error("failed to re-enqueue during shutdown", "error", err)
+		}
+		_ = wp.service.Ack(execCtx, job.ID)
+		return
+	case <-time.After(delay):
+	}
+
+	if err := wp.service.Enqueue(execCtx, job); err != nil {
+		log.Error("failed to re-enqueue job for deferral", "error", err)
+		return
+	}
+
 	if err := wp.service.Ack(execCtx, job.ID); err != nil {
 		log.Error("failed to ack original entry after re-enqueue", "error", err)
 	}

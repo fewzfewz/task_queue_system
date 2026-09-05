@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -49,6 +50,8 @@ func (je *JobExecutor) CircuitBreakerStatus() map[string]string {
 	return je.circuitBreaker.Status()
 }
 
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
 // Execute performs the work for a given job by fetching the appropriate plugin.
 // It fulfills the "registry instead of switch-case" requirement by dynamic lookup.
 func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interface{}, err error) {
@@ -58,7 +61,7 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interfac
 
 	// ── Circuit Breaker Check ──────────────────────────────────────────────
 	if !je.circuitBreaker.IsAllowed(job.Type) {
-		return nil, fmt.Errorf("circuit breaker open for plugin %q — too many consecutive failures", job.Type)
+		return nil, fmt.Errorf("%w for plugin %q", ErrCircuitOpen, job.Type)
 	}
 
 	je.logger.Debug("executing job", "job_id", job.ID, "job_type", job.Type)
