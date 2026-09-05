@@ -102,6 +102,7 @@ func (m *MockQueue) PromoteScheduledJobs(_ context.Context) (int, error) {
 }
 
 func (m *MockQueue) ReclaimTimedOutJobs(_ context.Context) (int, error) {
+
 	return 0, nil
 }
 
@@ -130,3 +131,5 @@ func (m *MockQueue) PublishWebhookEvent(_ context.Context, event interface{}) er
 	_, err := json.Marshal(event)
 	return err
 }
+
+func (m *MockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }

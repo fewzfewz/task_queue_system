@@ -139,7 +139,15 @@ func run() error {
 				log.Info("stalled jobs reclaimed", "count", reclaimed)
 			}
 
-			// 3. Process recurring jobs
+			// 3. Reconcile deferred jobs (concurrency limit freed up)
+			reconciled, err := svc.ReconcileDeferredJobs(ctx)
+			if err != nil {
+				log.Error("deferral reconciliation failed", "error", err)
+			} else if reconciled > 0 {
+				log.Info("deferred jobs returned to main queue", "count", reconciled)
+			}
+
+			// 4. Process recurring jobs
 			recurring, err := svc.RecurringJobsDue(ctx)
 			if err != nil {
 				log.Error("recurring job check failed", "error", err)
@@ -147,17 +155,18 @@ func run() error {
 				log.Info("recurring job instances created", "count", recurring)
 			}
 
-			// 4. TTL Auto-Cleanup — purge terminal jobs older than 7 days, ran every ~90s
-			if tickCount%60 == 0 {
-				cutoff := time.Now().UTC().Add(-7 * 24 * time.Hour)
-				cleaned, err := svc.PurgeJobsBefore(ctx, cutoff)
+			// 5. Job Archiving (run every ~1 hour / 2400 ticks)
+			tickCount++
+			if cfg.ArchiveAgeDays > 0 && tickCount%2400 == 0 {
+				archived, err := svc.ArchiveOldJobs(ctx, time.Duration(cfg.ArchiveAgeDays)*24*time.Hour)
 				if err != nil {
-					log.Error("TTL cleanup failed", "error", err)
-				} else if cleaned > 0 {
-					log.Info("TTL cleanup purged old terminal jobs", "count", cleaned)
+					log.Error("job archiving failed", "error", err)
+				} else if archived > 0 {
+					log.Info("old jobs archived/purged", "count", archived, "age_days", cfg.ArchiveAgeDays)
 				}
 			}
-			tickCount++
+
+
 		}
 	}
 }

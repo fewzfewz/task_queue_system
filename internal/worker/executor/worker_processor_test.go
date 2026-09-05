@@ -121,6 +121,7 @@ func (m *mockQ) PromoteScheduledJobs(ctx context.Context) (int, error) {
 	return 0, nil
 }
 func (m *mockQ) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
+
 	if m.reclaimFunc != nil {
 		return m.reclaimFunc(ctx)
 	}
@@ -320,3 +321,5 @@ func TestWorkerProcessor_Run_StopsOnContextCancel(t *testing.T) {
 
 	wp.Run(ctx)
 }
+
+func (m *mockQ) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }

@@ -142,3 +142,12 @@ func (s *DualStore) RevokeClient(ctx context.Context, tenantID string) error {
 	return s.Primary.RevokeClient(ctx, tenantID)
 }
 
+
+// ArchiveOldJobs archives jobs in both stores. It primarily relies on the primary store's count.
+func (s *DualStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
+	// Archive in secondary first
+	_, _ = s.Secondary.ArchiveOldJobs(ctx, cutoff)
+	
+	// Archive in primary
+	return s.Primary.ArchiveOldJobs(ctx, cutoff)
+}

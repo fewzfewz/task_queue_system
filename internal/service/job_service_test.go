@@ -136,6 +136,7 @@ func (m *mockQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 }
 
 func (m *mockQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
+
 	if m.reclaimFunc != nil {
 		return m.reclaimFunc(ctx)
 	}
@@ -417,3 +418,5 @@ func TestBulkPurgeDLQ(t *testing.T) {
 		t.Fatalf("expected 3 deleted jobs, got %d", count)
 	}
 }
+
+func (m *mockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }

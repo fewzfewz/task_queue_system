@@ -704,3 +704,22 @@ func nullIfEmpty(s string) *string {
 	}
 	return &s
 }
+
+// ArchiveOldJobs moves completed/failed jobs older than cutoff to the jobs_archive table.
+func (s *PostgresStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
+	query := `
+		WITH moved AS (
+			DELETE FROM jobs
+			WHERE status IN ('completed', 'failed', 'cancelled')
+			AND updated_at < $1
+			RETURNING *
+		)
+		INSERT INTO jobs_archive SELECT * FROM moved;
+	`
+	result, err := s.pool.Exec(ctx, query, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("postgres_store: failed to archive old jobs: %w", err)
+	}
+
+	return result.RowsAffected(), nil
+}

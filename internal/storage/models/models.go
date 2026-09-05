@@ -83,6 +83,9 @@ type Store interface {
 	// RecoverOrphans resets jobs from crashed workers back to 'pending'.
 	RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error)
 
+	// ArchiveOldJobs archives or purges jobs that are finalized and older than cutoff.
+	ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error)
+
 	// DLQ Management
 	DeleteJob(ctx context.Context, jobID string) error
 	DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error)
@@ -947,4 +950,57 @@ func (s *RedisStore) RevokeClient(ctx context.Context, tenantID string) error {
 		}
 	}
 	return nil
+}
+
+// ArchiveOldJobs removes jobs from memory that are finalized and older than cutoff.
+func (s *InMemoryStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var purged int64
+	for id, job := range s.data {
+		if (job.Status == jobs.StatusCompleted || job.Status == jobs.StatusFailed || job.Status == jobs.StatusCancelled) && job.UpdatedAt.Before(cutoff) {
+			delete(s.data, id)
+			purged++
+		}
+	}
+	return purged, nil
+}
+
+// ArchiveOldJobs purges jobs from Redis that are finalized and older than cutoff to save RAM.
+func (s *RedisStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
+	// For Redis, archiving means deleting old hashes to reclaim memory.
+	// Since jobs are stored in a single HASH, we must fetch and inspect them.
+	// In a real prod environment with Redis, we'd use TTLs, but we'll simulate it here.
+	all, err := s.client.HGetAll(ctx, jobStoreKey).Result()
+	if err != nil {
+		return 0, err
+	}
+
+	var toPurge []string
+	for id, raw := range all {
+		var partial struct {
+			Status    jobs.JobStatus `json:"status"`
+			UpdatedAt time.Time      `json:"updated_at"`
+		}
+		if err := json.Unmarshal([]byte(raw), &partial); err != nil {
+			continue // Skip corrupted
+		}
+		if (partial.Status == jobs.StatusCompleted || partial.Status == jobs.StatusFailed || partial.Status == jobs.StatusCancelled) && partial.UpdatedAt.Before(cutoff) {
+			toPurge = append(toPurge, id)
+		}
+	}
+
+	if len(toPurge) == 0 {
+		return 0, nil
+	}
+
+	// Purge in batches if necessary, but here we just pass the slice
+	pipe := s.client.Pipeline()
+	pipe.HDel(ctx, jobStoreKey, toPurge...)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+
+	return int64(len(toPurge)), nil
 }

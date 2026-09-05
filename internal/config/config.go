@@ -98,37 +98,43 @@ type Config struct {
 	// RegisterRateLimit is the maximum client registrations per IP per minute.
 	// Default: 10. Set to 0 to disable.
 	RegisterRateLimit int
+
+	// ArchiveAgeDays determines how old a completed/failed job must be before
+	// the scheduler moves it to the archive table or purges it from memory.
+	// Default: 7. Set to 0 to disable archiving.
+	ArchiveAgeDays int
 }
 
 
 // Load reads environment variables and returns a populated Config with defaults.
 func Load() *Config {
 	return &Config{
-		ServerPort:    getEnvOrDefault("PORT", "8080"),
-		RedisHost:     getEnvOrDefault("REDIS_HOST", "localhost:6379"),
-		RedisPassword: getEnvOrDefault("REDIS_PASSWORD", ""),
-		RedisDB:       getEnvAsInt("REDIS_DB", 0),
-		ApiKey:          getEnvOrDefault("API_KEY", "secret-api-key"),
-		AdminUsername:   getEnvOrDefault("ADMIN_USERNAME", "admin"),
-		AdminPassword:   getEnvOrDefault("ADMIN_PASSWORD", "admin123"),
-		ReadonlyUsername:   getEnvOrDefault("READONLY_USERNAME", ""),
-		ReadonlyPassword:   getEnvOrDefault("READONLY_PASSWORD", ""),
-		SessionTTLSeconds:  getEnvAsInt("SESSION_TTL_SECONDS", 28800),
-		LoginRateLimit:     getEnvAsInt("LOGIN_RATE_LIMIT", 5),
-		WorkerAddr:         getEnvOrDefault("WORKER_ADDR", "localhost:8081"),
-		JobRateLimit:  getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
-		LogLevel:      getEnvOrDefault("LOG_LEVEL", "info"),
-		MaxQueueSize:  getEnvAsInt64("MAX_QUEUE_SIZE", 10000),
-		StoreBackend:  getEnvOrDefault("STORE_BACKEND", "redis"),
-		PostgresConnStr: getEnvOrDefault("POSTGRES_CONN_STR", ""),
+		ServerPort:        getEnvOrDefault("PORT", "8080"),
+		RedisHost:         getEnvOrDefault("REDIS_HOST", "localhost:6379"),
+		RedisPassword:     getEnvOrDefault("REDIS_PASSWORD", ""),
+		RedisDB:           getEnvAsInt("REDIS_DB", 0),
+		ApiKey:            getEnvOrDefault("API_KEY", "secret-api-key"),
+		AdminUsername:     getEnvOrDefault("ADMIN_USERNAME", "admin"),
+		AdminPassword:     getEnvOrDefault("ADMIN_PASSWORD", "admin123"),
+		ReadonlyUsername:  getEnvOrDefault("READONLY_USERNAME", ""),
+		ReadonlyPassword:  getEnvOrDefault("READONLY_PASSWORD", ""),
+		SessionTTLSeconds: getEnvAsInt("SESSION_TTL_SECONDS", 28800),
+		LoginRateLimit:    getEnvAsInt("LOGIN_RATE_LIMIT", 5),
+		WorkerAddr:        getEnvOrDefault("WORKER_ADDR", "localhost:8081"),
+		JobRateLimit:      getEnvAsFloat("JOB_RATE_LIMIT", 0.0),
+		LogLevel:          getEnvOrDefault("LOG_LEVEL", "info"),
+		MaxQueueSize:      getEnvAsInt64("MAX_QUEUE_SIZE", 10000),
+		StoreBackend:      getEnvOrDefault("STORE_BACKEND", "redis"),
+		PostgresConnStr:   getEnvOrDefault("POSTGRES_CONN_STR", ""),
 		DrainTimeoutSeconds: getEnvAsInt("DRAIN_TIMEOUT", 60),
 		WorkerPoolSize:      getEnvAsInt("WORKER_POOL_SIZE", 50),
 		WorkerPort:          getEnvOrDefault("WORKER_PORT", "8081"),
 		SchedulerPort:       getEnvOrDefault("SCHEDULER_PORT", "8082"),
 		TenantRateLimit:     getEnvAsInt64("TENANT_RATE_LIMIT", 0),
-		SLATargetSeconds:           getEnvAsInt("SLA_TARGET_SECONDS", 5),
-		OTELExporterOTLPEndpoint:   getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
-		RegisterRateLimit:          getEnvAsInt("REGISTER_RATE_LIMIT", 10),
+		SLATargetSeconds:    getEnvAsInt("SLA_TARGET_SECONDS", 5),
+		OTELExporterOTLPEndpoint: getEnvOrDefault("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		RegisterRateLimit:        getEnvAsInt("REGISTER_RATE_LIMIT", 10),
+		ArchiveAgeDays:           getEnvAsInt("ARCHIVE_AGE_DAYS", 7),
 	}
 }
 

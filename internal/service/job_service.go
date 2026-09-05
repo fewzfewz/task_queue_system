@@ -698,3 +698,17 @@ func (s *JobService) BulkPurgeDLQ(ctx context.Context, tenantID, jobType string,
 
 
 
+
+// ReconcileDeferredJobs moves deferred jobs back to the main queue if their concurrency limits allow.
+func (s *JobService) ReconcileDeferredJobs(ctx context.Context) (int, error) {
+	return s.queue.ReconcileDeferredJobs(ctx)
+}
+
+// ArchiveOldJobs archives jobs that are completed/failed and older than maxAge.
+func (s *JobService) ArchiveOldJobs(ctx context.Context, maxAge time.Duration) (int64, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().Add(-maxAge)
+	return s.store.ArchiveOldJobs(ctx, cutoff)
+}

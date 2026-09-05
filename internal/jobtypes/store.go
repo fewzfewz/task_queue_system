@@ -25,9 +25,10 @@ type JobType struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	Handler     string    `json:"handler"`
-	PayloadHint string    `json:"payload_hint,omitempty"`
-	BuiltIn     bool      `json:"built_in,omitempty"`
-	CreatedAt   time.Time `json:"created_at,omitempty"`
+	PayloadHint      string    `json:"payload_hint,omitempty"`
+	BuiltIn          bool      `json:"built_in,omitempty"`
+	ConcurrencyLimit int       `json:"concurrency_limit,omitempty"`
+	CreatedAt        time.Time `json:"created_at,omitempty"`
 }
 
 // Store persists admin-registered custom job types in Redis.

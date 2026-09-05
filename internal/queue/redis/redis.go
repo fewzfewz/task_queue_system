@@ -262,53 +262,106 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 		timeout = time.Until(deadline)
 	}
 
-	// BRPop checks keys left-to-right, ensuring strict priority handling
-	// We watch all partitions for all priorities in a fair order.
 	keys := q.getFairPartitionKeys()
-	result, err := q.client.BRPop(ctx, timeout, keys...).Result()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
+
+	for {
+		result, err := q.client.BRPop(ctx, timeout, keys...).Result()
+		if err != nil {
+			if err == redis.Nil {
+				return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
+			}
+			return nil, fmt.Errorf("queue: BRPOP failed: %w", err)
 		}
-		return nil, fmt.Errorf("queue: BRPOP failed: %w", err)
+
+		if len(result) < 2 {
+			return nil, fmt.Errorf("queue: unexpected BRPOP result length %d", len(result))
+		}
+
+		var job jobs.Job
+		if err := json.Unmarshal([]byte(result[1]), &job); err != nil {
+			return nil, fmt.Errorf("queue: failed to deserialise job payload: %w", err)
+		}
+
+		// Check Concurrency Limit
+		limit, err := q.getJobTypeLimit(ctx, job.Type)
+		if err != nil {
+			return nil, fmt.Errorf("queue: failed to get limit for job type %s: %w", job.Type, err)
+		}
+
+		activeKey := "task_queue:active_type:" + job.Type
+
+		if limit > 0 {
+			// Clear expired active tracking (visibility timeout)
+			now := time.Now().Unix()
+			q.client.ZRemRangeByScore(ctx, activeKey, "-inf", fmt.Sprintf("%d", now))
+
+			activeCount, err := q.client.ZCard(ctx, activeKey).Result()
+			if err != nil {
+				return nil, fmt.Errorf("queue: failed to check active count for %s: %w", job.Type, err)
+			}
+
+			if int(activeCount) >= limit {
+				// Over limit: Push to deferred queue and continue loop
+				deferredKey := "task_queue:deferred:" + job.Type
+				if err := q.client.LPush(ctx, deferredKey, result[1]).Err(); err != nil {
+					return nil, fmt.Errorf("queue: failed to defer job %s: %w", job.ID, err)
+				}
+				continue
+			}
+		}
+
+		// Transition the job to processing state.
+		job.Status = jobs.StatusProcessing
+		job.UpdatedAt = time.Now().UTC()
+
+		updated, err := json.Marshal(&job)
+		if err != nil {
+			return nil, fmt.Errorf("queue: failed to serialise processing job %s: %w", job.ID, err)
+		}
+
+		timeoutAt := time.Now().Add(visibilityTimeout).Unix()
+
+		pipe := q.client.TxPipeline()
+		pipe.HSet(ctx, "task_queue:payloads", job.ID, updated)
+		pipe.ZAdd(ctx, processingSetKey, redis.Z{
+			Score:  float64(timeoutAt),
+			Member: job.ID,
+		})
+		
+		// Track active concurrency
+		pipe.ZAdd(ctx, activeKey, redis.Z{
+			Score:  float64(timeoutAt),
+			Member: job.ID,
+		})
+		// Keep a reverse mapping so we know which activeKey to remove from during Ack/Fail
+		pipe.Set(ctx, "task_queue:job_active_key:"+job.ID, activeKey, visibilityTimeout+time.Hour)
+
+		if _, err := pipe.Exec(ctx); err != nil {
+			return nil, fmt.Errorf("queue: Dequeue tracking failed: %w", err)
+		}
+
+		return &job, nil
 	}
+}
 
-	// BRPop returns [key, value]; the actual payload is at index 1.
-	if len(result) < 2 {
-		return nil, fmt.Errorf("queue: unexpected BRPOP result length %d", len(result))
-	}
-
-	var job jobs.Job
-	if err := json.Unmarshal([]byte(result[1]), &job); err != nil {
-		return nil, fmt.Errorf("queue: failed to deserialise job payload: %w", err)
-	}
-
-	// Transition the job to processing state.
-	job.Status = jobs.StatusProcessing
-	job.UpdatedAt = time.Now().UTC()
-
-	// Persist the updated job for future reference and for visibility timeout reaper.
-	updated, err := json.Marshal(&job)
+// getJobTypeLimit fetches the concurrency limit for a job type.
+func (q *RedisQueue) getJobTypeLimit(ctx context.Context, jobType string) (int, error) {
+	data, err := q.client.HGet(ctx, "task_queue:job_types:registered", jobType).Bytes()
 	if err != nil {
-		return nil, fmt.Errorf("queue: failed to serialise processing job %s: %w", job.ID, err)
+		if errors.Is(err, redis.Nil) {
+			return 0, nil // Not registered = unlimited (built-ins fallback)
+		}
+		return 0, err
 	}
-
-	// 1. Store payload in hash for O(1) lookup by ID.
-	// 2. Store ID in ZSET with visibility timeout for reaper.
-	timeoutAt := time.Now().Add(visibilityTimeout).Unix()
-
-	pipe := q.client.TxPipeline()
-	pipe.HSet(ctx, "task_queue:payloads", job.ID, updated)
-	pipe.ZAdd(ctx, processingSetKey, redis.Z{
-		Score:  float64(timeoutAt),
-		Member: job.ID,
-	})
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, fmt.Errorf("queue: Dequeue tracking failed: %w", err)
+	
+	// Fast parse just the concurrency limit using unmarshal on a partial struct
+	var partial struct {
+		ConcurrencyLimit int `json:"concurrency_limit"`
 	}
-
-	return &job, nil
+	if err := json.Unmarshal(data, &partial); err != nil {
+		return 0, err
+	}
+	return partial.ConcurrencyLimit, nil
 }
 
 // Ack marks a successfully processed job as completed and removes it from
@@ -335,6 +388,13 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 	pipe := q.client.TxPipeline()
 	pipe.HDel(ctx, "task_queue:payloads", jobID)
 	pipe.ZRem(ctx, processingSetKey, jobID)
+	
+	// Remove from concurrency tracking
+	activeKey, _ := q.client.Get(ctx, "task_queue:job_active_key:"+jobID).Result()
+	if activeKey != "" {
+		pipe.ZRem(ctx, activeKey, jobID)
+		pipe.Del(ctx, "task_queue:job_active_key:"+jobID)
+	}
 	
 	cmds, err := pipe.Exec(ctx)
 	if err != nil {
@@ -378,6 +438,13 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 	pipe := q.client.TxPipeline()
 	pipe.HDel(ctx, "task_queue:payloads", jobID)
 	pipe.ZRem(ctx, processingSetKey, jobID)
+	
+	activeKey, _ := q.client.Get(ctx, "task_queue:job_active_key:"+jobID).Result()
+	if activeKey != "" {
+		pipe.ZRem(ctx, activeKey, jobID)
+		pipe.Del(ctx, "task_queue:job_active_key:"+jobID)
+	}
+	
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("queue: Fail cleanup failed: %w", err)
 	}
@@ -673,3 +740,75 @@ func (q *RedisQueue) PublishWebhookEvent(ctx context.Context, event interface{})
 	}).Err()
 }
 
+
+// ReconcileDeferredJobs moves jobs from deferred queues back to the main queue
+// if their job type concurrency limits allow it.
+func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
+	// 1. Fetch all registered job types to get their limits.
+	allTypes, err := q.client.HGetAll(ctx, "task_queue:job_types:registered").Result()
+	if err != nil {
+		return 0, err
+	}
+
+	movedTotal := 0
+	for typeName, raw := range allTypes {
+		var partial struct {
+			ConcurrencyLimit int `json:"concurrency_limit"`
+		}
+		if err := json.Unmarshal([]byte(raw), &partial); err != nil {
+			continue
+		}
+
+		limit := partial.ConcurrencyLimit
+		if limit <= 0 {
+			continue // No limit, meaning deferred shouldn't have been populated, but skip anyway
+		}
+
+		deferredKey := "task_queue:deferred:" + typeName
+		activeKey := "task_queue:active_type:" + typeName
+
+		// Check if there are any deferred jobs for this type
+		deferredCount, err := q.client.LLen(ctx, deferredKey).Result()
+		if err != nil || deferredCount == 0 {
+			continue
+		}
+
+		// Check active count
+		now := time.Now().Unix()
+		q.client.ZRemRangeByScore(ctx, activeKey, "-inf", fmt.Sprintf("%d", now))
+		activeCount, err := q.client.ZCard(ctx, activeKey).Result()
+		if err != nil {
+			continue
+		}
+
+		available := limit - int(activeCount)
+		if available <= 0 {
+			continue
+		}
+
+		// We can move up to `available` jobs back to the main queue.
+		// For simplicity and speed in this loop, we pop and push one by one.
+		for i := 0; i < available; i++ {
+			payload, err := q.client.RPop(ctx, deferredKey).Result()
+			if err != nil {
+				if errors.Is(err, redis.Nil) {
+					break // Queue is empty
+				}
+				continue
+			}
+
+			// Parse the priority to know which queue to put it back into
+			var partialJob struct {
+				ID       string           `json:"id"`
+				Priority jobs.JobPriority `json:"priority"`
+			}
+			if err := json.Unmarshal([]byte(payload), &partialJob); err == nil {
+				targetKey := q.getPartitionedKey(partialJob.ID, partialJob.Priority)
+				q.client.LPush(ctx, targetKey, payload)
+				movedTotal++
+			}
+		}
+	}
+	
+	return movedTotal, nil
+}

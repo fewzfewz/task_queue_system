@@ -132,6 +132,7 @@ func (m *mockQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 	return 0, nil
 }
 func (m *mockQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
+
 	if m.reclaimFunc != nil {
 		return m.reclaimFunc(ctx)
 	}
@@ -418,3 +419,5 @@ func TestSSEEventMatchesTenant(t *testing.T) {
 }
 
 
+
+func (m *mockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }
