@@ -885,6 +885,17 @@ const clientLoginHTML = `<!DOCTYPE html>
 </div>
 
 <script>
+  window.addEventListener("DOMContentLoaded", async function() {
+    const key = localStorage.getItem("tq_api_key");
+    if (key) {
+      try {
+        const res = await fetch("/api/v1/client/me", { headers: {"X-API-Key": key} });
+        if (res.ok) { window.location.href = "/client/dashboard"; }
+        else { localStorage.removeItem("tq_api_key"); }
+      } catch(e) {}
+    }
+  });
+
   function toggleVis() {
     const inp = document.getElementById('api-key');
     const icon = document.getElementById('vis-icon');

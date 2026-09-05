@@ -1724,6 +1724,16 @@ const loginPageHTML = `<!DOCTYPE html>
     <div id="login-error" class="error">Invalid credentials</div>
   </div>
   <script>
+    window.addEventListener("DOMContentLoaded", async function() {
+      try{
+        const res = await fetch("/api/v1/session");
+        if (res.ok) {
+          const data = await res.json();
+          window.location.href = (data && data.role === "viewer") ? "/" : "/ui";
+        }
+      }catch(e){}
+    });
+
     async function login(){
       const btn=document.getElementById('login-btn');
       const err=document.getElementById('login-error');
