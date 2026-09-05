@@ -65,6 +65,10 @@ type Queue interface {
 
 	// Webhooks
 	PublishWebhookEvent(ctx context.Context, event interface{}) error
+
+	// Cancellations
+	PublishCancellation(ctx context.Context, jobID string) error
+	SubscribeCancellations(ctx context.Context) (<-chan string, error)
 }
 
 

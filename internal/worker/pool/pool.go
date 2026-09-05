@@ -30,6 +30,8 @@ type Config struct {
 
 // Pool manages a fixed number of worker processors and their lifecycle.
 type Pool struct {
+	activeJobs   map[string]context.CancelFunc
+	activeJobsMu sync.Mutex
 	cfg        Config
 	instanceID string
 	service    *service.JobService
@@ -57,6 +59,7 @@ func New(cfg Config, instanceID string, svc *service.JobService, je *executor.Jo
 	}
 
 	return &Pool{
+		activeJobs:   make(map[string]context.CancelFunc),
 		cfg:        cfg,
 		instanceID: instanceID,
 		service:    svc,
@@ -83,12 +86,19 @@ func (p *Pool) Start(ctx context.Context) {
 	// Start metrics reporting goroutine
 	p.wg.Add(1)
 	go p.metricsLoop(workerCtx)
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		p.listenForCancellations(workerCtx)
+	}()
 
 	for i := 0; i < p.cfg.NumWorkers; i++ {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
 		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger, p.cfg.SLATarget)
 		
+		w.SetCancelHooks(p.RegisterActiveJob, p.UnregisterActiveJob)
 		w.SetHooks(
+
 			func() { p.busyCount.Add(1) },
 			func() { p.busyCount.Add(-1) },
 		)
@@ -174,4 +184,43 @@ func (p *Pool) Stop() {
 	p.InitiateDrain()
 	p.wg.Wait()
 	p.logger.Info("worker pool shut down")
+}
+
+func (p *Pool) RegisterActiveJob(jobID string, cancel context.CancelFunc) {
+	p.activeJobsMu.Lock()
+	defer p.activeJobsMu.Unlock()
+	p.activeJobs[jobID] = cancel
+}
+
+func (p *Pool) UnregisterActiveJob(jobID string) {
+	p.activeJobsMu.Lock()
+	defer p.activeJobsMu.Unlock()
+	delete(p.activeJobs, jobID)
+}
+
+func (p *Pool) listenForCancellations(ctx context.Context) {
+	ch, err := p.service.SubscribeCancellations(ctx)
+	if err != nil {
+		p.logger.Error("failed to subscribe to cancellations", "error", err)
+		return
+	}
+	p.logger.Info("listening for job cancellations")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case jobID, ok := <-ch:
+			if !ok {
+				return
+			}
+			p.activeJobsMu.Lock()
+			if cancel, exists := p.activeJobs[jobID]; exists {
+				p.logger.Info("received cancellation signal for active job", "job_id", jobID)
+				cancel()
+				delete(p.activeJobs, jobID)
+			}
+			p.activeJobsMu.Unlock()
+		}
+	}
 }

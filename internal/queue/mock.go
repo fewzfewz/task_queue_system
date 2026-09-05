@@ -133,3 +133,6 @@ func (m *MockQueue) PublishWebhookEvent(_ context.Context, event interface{}) er
 }
 
 func (m *MockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }
+
+func (m *MockQueue) PublishCancellation(ctx context.Context, jobID string) error { return nil }
+func (m *MockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }

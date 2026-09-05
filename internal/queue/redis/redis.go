@@ -282,13 +282,22 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 			return nil, fmt.Errorf("queue: failed to deserialise job payload: %w", err)
 		}
 
-		// Check Concurrency Limit
-		limit, err := q.getJobTypeLimit(ctx, job.Type)
+		// Check Concurrency Limit and Paused State
+		limit, paused, err := q.getJobTypeState(ctx, job.Type)
 		if err != nil {
-			return nil, fmt.Errorf("queue: failed to get limit for job type %s: %w", job.Type, err)
+			return nil, fmt.Errorf("queue: failed to get state for job type %s: %w", job.Type, err)
 		}
 
 		activeKey := "task_queue:active_type:" + job.Type
+
+		if paused {
+			// Overridden by pause: Push to deferred queue and continue loop
+			deferredKey := "task_queue:deferred:" + job.Type
+			if err := q.client.LPush(ctx, deferredKey, result[1]).Err(); err != nil {
+				return nil, fmt.Errorf("queue: failed to defer job %s: %w", job.ID, err)
+			}
+			continue
+		}
 
 		if limit > 0 {
 			// Clear expired active tracking (visibility timeout)
@@ -344,24 +353,24 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	}
 }
 
-// getJobTypeLimit fetches the concurrency limit for a job type.
-func (q *RedisQueue) getJobTypeLimit(ctx context.Context, jobType string) (int, error) {
+// getJobTypeState fetches the concurrency limit and paused state for a job type.
+func (q *RedisQueue) getJobTypeState(ctx context.Context, jobType string) (int, bool, error) {
 	data, err := q.client.HGet(ctx, "task_queue:job_types:registered", jobType).Bytes()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return 0, nil // Not registered = unlimited (built-ins fallback)
+			return 0, false, nil // Not registered = unlimited, not paused
 		}
-		return 0, err
+		return 0, false, err
 	}
 	
-	// Fast parse just the concurrency limit using unmarshal on a partial struct
 	var partial struct {
-		ConcurrencyLimit int `json:"concurrency_limit"`
+		ConcurrencyLimit int  `json:"concurrency_limit"`
+		Paused           bool `json:"paused"`
 	}
 	if err := json.Unmarshal(data, &partial); err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return partial.ConcurrencyLimit, nil
+	return partial.ConcurrencyLimit, partial.Paused, nil
 }
 
 // Ack marks a successfully processed job as completed and removes it from
@@ -753,37 +762,44 @@ func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
 	movedTotal := 0
 	for typeName, raw := range allTypes {
 		var partial struct {
-			ConcurrencyLimit int `json:"concurrency_limit"`
+			ConcurrencyLimit int  `json:"concurrency_limit"`
+			Paused           bool `json:"paused"`
 		}
 		if err := json.Unmarshal([]byte(raw), &partial); err != nil {
 			continue
 		}
 
-		limit := partial.ConcurrencyLimit
-		if limit <= 0 {
-			continue // No limit, meaning deferred shouldn't have been populated, but skip anyway
+		if partial.Paused {
+			continue // Queue is paused, do not promote
 		}
 
 		deferredKey := "task_queue:deferred:" + typeName
-		activeKey := "task_queue:active_type:" + typeName
-
+		
 		// Check if there are any deferred jobs for this type
 		deferredCount, err := q.client.LLen(ctx, deferredKey).Result()
 		if err != nil || deferredCount == 0 {
 			continue
 		}
 
-		// Check active count
-		now := time.Now().Unix()
-		q.client.ZRemRangeByScore(ctx, activeKey, "-inf", fmt.Sprintf("%d", now))
-		activeCount, err := q.client.ZCard(ctx, activeKey).Result()
-		if err != nil {
-			continue
-		}
+		limit := partial.ConcurrencyLimit
+		var available int
 
-		available := limit - int(activeCount)
-		if available <= 0 {
-			continue
+		if limit <= 0 {
+			available = int(deferredCount) // Unlimited, move everything
+		} else {
+			activeKey := "task_queue:active_type:" + typeName
+			// Check active count
+			now := time.Now().Unix()
+			q.client.ZRemRangeByScore(ctx, activeKey, "-inf", fmt.Sprintf("%d", now))
+			activeCount, err := q.client.ZCard(ctx, activeKey).Result()
+			if err != nil {
+				continue
+			}
+
+			available = limit - int(activeCount)
+			if available <= 0 {
+				continue
+			}
 		}
 
 		// We can move up to `available` jobs back to the main queue.
@@ -811,4 +827,41 @@ func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
 	}
 	
 	return movedTotal, nil
+}
+
+// PublishCancellation broadcasts a cancellation signal for a job.
+func (q *RedisQueue) PublishCancellation(ctx context.Context, jobID string) error {
+	return q.client.Publish(ctx, "task_queue:cancellations", jobID).Err()
+}
+
+// SubscribeCancellations listens for job cancellation signals globally.
+func (q *RedisQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
+	pubsub := q.client.Subscribe(ctx, "task_queue:cancellations")
+	
+	// Ensure subscription is successful before proceeding
+	_, err := pubsub.Receive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("queue: failed to subscribe to cancellations: %w", err)
+	}
+
+	ch := pubsub.Channel()
+	out := make(chan string)
+
+	go func() {
+		defer pubsub.Close()
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				out <- msg.Payload
+			}
+		}
+	}()
+
+	return out, nil
 }

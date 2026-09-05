@@ -28,6 +28,7 @@ type JobType struct {
 	PayloadHint      string    `json:"payload_hint,omitempty"`
 	BuiltIn          bool      `json:"built_in,omitempty"`
 	ConcurrencyLimit int       `json:"concurrency_limit,omitempty"`
+	Paused           bool      `json:"paused,omitempty"`
 	CreatedAt        time.Time `json:"created_at,omitempty"`
 }
 

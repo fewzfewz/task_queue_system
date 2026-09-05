@@ -421,3 +421,6 @@ func TestSSEEventMatchesTenant(t *testing.T) {
 
 
 func (m *mockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }
+
+func (m *mockQueue) PublishCancellation(ctx context.Context, jobID string) error { return nil }
+func (m *mockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }

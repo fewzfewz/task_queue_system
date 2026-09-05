@@ -37,6 +37,9 @@ type WorkerProcessor struct {
 
 	onBusy    func()
 	onIdle    func()
+
+	onRegister   func(string, context.CancelFunc)
+	onUnregister func(string)
 }
 
 
@@ -194,6 +197,16 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	}
 	jobCtx, cancel := context.WithTimeout(execCtx, timeout)
 	defer cancel()
+	execCtx, cancelFunc := context.WithCancel(execCtx)
+	if wp.onRegister != nil {
+		wp.onRegister(job.ID, cancelFunc)
+	}
+	defer func() {
+		cancelFunc()
+		if wp.onUnregister != nil {
+			wp.onUnregister(job.ID)
+		}
+	}()
 
 	start := time.Now()
 	progressCtx := plugin.WithProgressCallback(jobCtx, func(pct float64) {
@@ -311,4 +324,10 @@ func (wp *WorkerProcessor) permanentlyFail(ctx context.Context, job *jobs.Job, r
 	if err := wp.service.Fail(ctx, job.ID, reason); err != nil {
 		log.Error("failed to mark job as permanently failed", "error", err)
 	}
+}
+
+// SetCancelHooks configures callbacks to register and unregister context cancellations.
+func (wp *WorkerProcessor) SetCancelHooks(register func(jobID string, cancel context.CancelFunc), unregister func(jobID string)) {
+	wp.onRegister = register
+	wp.onUnregister = unregister
 }

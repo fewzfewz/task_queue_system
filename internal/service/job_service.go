@@ -281,6 +281,9 @@ func (s *JobService) CancelJob(ctx context.Context, jobID string) error {
 		return err
 	}
 	_ = s.queue.Ack(ctx, jobID)
+	// Broadcast cancellation to all workers so active executions are killed
+	_ = s.queue.PublishCancellation(ctx, jobID)
+	
 	s.logger.Info("job cancelled", "job_id", jobID)
 	s.publishSSE(jobID, string(jobs.StatusCancelled), "", "")
 	return nil
@@ -711,4 +714,8 @@ func (s *JobService) ArchiveOldJobs(ctx context.Context, maxAge time.Duration) (
 	}
 	cutoff := time.Now().UTC().Add(-maxAge)
 	return s.store.ArchiveOldJobs(ctx, cutoff)
+}
+
+func (s *JobService) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
+	return s.queue.SubscribeCancellations(ctx)
 }
