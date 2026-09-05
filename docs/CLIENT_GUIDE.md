@@ -149,3 +149,14 @@ You can monitor your tenant's jobs, queue health, and metrics using the built-in
 Navigate to `/client/login` and log in using your API Key to access your private dashboard.
 
 Happy Queuing!
+
+### Exactly-Once Deduplication (Unique Jobs)
+To prevent creating duplicate jobs, you can provide a `dedup_key`.
+```json
+{
+  "type": "process_payment",
+  "payload": {"amount": 100},
+  "dedup_key": "tx_abc123"
+}
+```
+If a job with the same `dedup_key` is already pending, processing, or recently completed, the API will reject the duplicate request and return a `409 Conflict` HTTP status.

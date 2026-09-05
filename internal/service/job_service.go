@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -179,6 +180,9 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 
 	if err := s.store.Save(ctx, job); err != nil {
 		s.logger.Error("failed to persist job", "job_id", job.ID, "error", err)
+		if strings.Contains(err.Error(), "idx_jobs_dedup_key_unique") || strings.Contains(err.Error(), "duplicate key") {
+			return nil, apperr.NewConflict("job with this dedup_key already exists concurrently")
+		}
 		return nil, apperr.NewInternal("failed to persist job", err)
 	}
 

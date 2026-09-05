@@ -148,6 +148,7 @@ const docsHTML = sharedHeader + `
         <li><strong>Tenant ID:</strong> A unique identifier for your organization. All jobs and metrics are isolated per tenant.</li>
         <li><strong>Job Type:</strong> Categorizes your tasks (e.g., <code>email</code>, <code>webhook</code>). You can configure specific concurrency limits and retry policies per Job Type.</li>
         <li><strong>Payload:</strong> The JSON data provided when enqueuing a job. This is passed directly to the worker processing the job.</li>
+        <li><strong>Deduplication:</strong> Use the <code>dedup_key</code> property to enforce exactly-once semantics. Submitting multiple jobs with the same <code>dedup_key</code> returns a 409 Conflict.
     </ul>
 
     <h2>The Job Lifecycle</h2>
