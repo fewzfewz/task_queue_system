@@ -528,7 +528,11 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 	}
 
 	// Push the job to the dead letter queue (Left push to allow chronologic access)
-	if err := q.client.LPush(ctx, q.dlqKey, failedPayload).Err(); err != nil {
+	pipe2 := q.client.TxPipeline()
+	pipe2.LPush(ctx, q.dlqKey, failedPayload)
+	// Cap the DLQ to 10000 items to prevent broker OOM
+	pipe2.LTrim(ctx, q.dlqKey, 0, 9999)
+	if _, err := pipe2.Exec(ctx); err != nil {
 		return fmt.Errorf("queue: failed to push job %s to dead-letter queue: %w", job.ID, err)
 	}
 
