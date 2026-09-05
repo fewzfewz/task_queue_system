@@ -257,3 +257,77 @@ func TestDataExportPlugin_Execute_Success(t *testing.T) {
 		t.Fatalf("unexpected format: %v", m["format"])
 	}
 }
+
+func TestPDFPlugin_Type(t *testing.T) {
+	p := NewPDFPlugin(slog.Default())
+	if got := p.Type(); got != "pdf" {
+		t.Fatalf("expected type 'pdf', got %q", got)
+	}
+}
+
+func TestPDFPlugin_Execute_MissingInput(t *testing.T) {
+	p := NewPDFPlugin(slog.Default())
+	job := jobs.NewJob("pdf", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{}
+
+	_, err := p.Execute(context.Background(), job)
+	if err == nil {
+		t.Fatal("expected error for missing html/url")
+	}
+}
+
+func TestLLMPlugin_Type(t *testing.T) {
+	p := NewLLMPlugin(slog.Default())
+	if got := p.Type(); got != "llm" {
+		t.Fatalf("expected type 'llm', got %q", got)
+	}
+}
+
+func TestLLMPlugin_Execute_Success(t *testing.T) {
+	p := NewLLMPlugin(slog.Default())
+	job := jobs.NewJob("llm", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"prompt": "Say hello",
+	}
+
+	res, err := p.Execute(context.Background(), job)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	m, ok := res.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map[string]interface{} result")
+	}
+	if m["model"] != "gpt-4o" {
+		t.Fatalf("unexpected model: %v", m["model"])
+	}
+}
+
+func TestS3Plugin_Type(t *testing.T) {
+	p := NewS3Plugin(slog.Default())
+	if got := p.Type(); got != "s3_upload" {
+		t.Fatalf("expected type 's3_upload', got %q", got)
+	}
+}
+
+func TestS3Plugin_Execute_Success(t *testing.T) {
+	p := NewS3Plugin(slog.Default())
+	job := jobs.NewJob("s3_upload", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"bucket":     "my-bucket",
+		"object_key": "data.txt",
+		"data":       "hello world",
+	}
+
+	res, err := p.Execute(context.Background(), job)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	m, ok := res.(map[string]string)
+	if !ok {
+		t.Fatalf("expected map[string]string result")
+	}
+	if m["s3_url"] != "s3://my-bucket/data.txt" {
+		t.Fatalf("unexpected s3_url: %v", m["s3_url"])
+	}
+}
