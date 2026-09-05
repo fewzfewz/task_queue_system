@@ -48,13 +48,14 @@ import (
 func main() {
     client := tq.NewClient("http://localhost:8080", "YOUR_API_KEY")
 
-    job, err := client.Enqueue(context.Background(), tq.EnqueueRequest{
+    job, err := client.Submit(context.Background(), tq.SubmitJobRequest{
         Type:     "email",                     // The type of job
         Payload:  map[string]interface{}{      // The data your worker needs
             "to": "user@example.com",
             "subject": "Welcome!",
             "body": "Thanks for signing up.",
         },
+        DedupKey: "welcome_email_user_123",    // Optional: prevents duplicate enqueues (returns 409 Conflict if already running/pending)
         Priority: 10,                          // 1 (low) to 100 (high)
         Timeout:  30,                          // Maximum execution time in seconds
     })
@@ -64,6 +65,9 @@ func main() {
     }
 
     log.Printf("Successfully enqueued job! ID: %s", job.ID)
+    
+    // You can also bulk-insert thousands of jobs in a single request:
+    // batch, err := client.SubmitBatch(context.Background(), []tq.SubmitJobRequest{...})
 }
 ```
 
@@ -160,3 +164,21 @@ To prevent creating duplicate jobs, you can provide a `dedup_key`.
 }
 ```
 If a job with the same `dedup_key` is already pending, processing, or recently completed, the API will reject the duplicate request and return a `409 Conflict` HTTP status.
+
+### Webhooks (Event Callbacks)
+Instead of polling the API to check job status, you can configure Webhooks to have TaskQueue HTTP POST to your backend when jobs transition to specific states (`created`, `completed`, `failed`).
+
+```bash
+curl -X POST http://localhost:8080/api/v1/webhooks \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://api.example.com/task-queue-events",
+    "events": ["completed", "failed"]
+  }'
+```
+
+Webhooks include an `X-Webhook-Signature` HMAC header so you can cryptographically verify the payload originated from your TaskQueue tenant.
+
+### Tenant Rate Limiting (QoS)
+To prevent your jobs from causing "noisy neighbor" starvation across the cluster, administrators can assign maximum concurrency limits per Tenant. If your tenant submits thousands of jobs instantly, TaskQueue will cap the number of active workers processing your tenant's jobs to your configured limit. Additional jobs are gracefully held in a deferred state and automatically promoted as capacity frees up.

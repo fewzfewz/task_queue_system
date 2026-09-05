@@ -41,7 +41,23 @@ func main() {
 	}
 	fmt.Println("Job queued with ID:", job.ID)
 
-	// 2. Submit a recurring cron job
+	// 2. Submit a one-off job with deduplication
+	dedupJob, err := client.Submit(context.Background(), tq.SubmitJobRequest{
+		Type: "email",
+		Payload: map[string]interface{}{"to": "user@example.com"},
+		DedupKey: "welcome_email_user_123", // prevents duplicate welcome emails!
+	})
+	if err != nil {
+		log.Fatalf("Submit failed: %v", err)
+	}
+
+	// 3. High-Performance Batch Submit (creates thousands of jobs in 1 round trip)
+	batch, err := client.SubmitBatch(context.Background(), []tq.SubmitJobRequest{
+		{Type: "email", Payload: map[string]interface{}{"to": "user1@example.com"}},
+		{Type: "email", Payload: map[string]interface{}{"to": "user2@example.com"}},
+	})
+
+	// 4. Submit a recurring cron job
 	cronJob, err := client.Submit(context.Background(), tq.SubmitJobRequest{
 		Type: "daily-report",
 		Payload: map[string]interface{}{},
@@ -52,7 +68,7 @@ func main() {
 	}
 	fmt.Println("Cron scheduled with ID:", cronJob.ID)
 
-	// 3. Fetch Job Status
+	// 5. Fetch Job Status
 	status, err := client.GetJob(context.Background(), job.ID)
 	if err != nil {
 		log.Fatalf("GetJob failed: %v", err)

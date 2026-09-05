@@ -4,10 +4,13 @@ This repository contains a Go-based distributed task queue system with four bina
 
 ## What it does
 
-- Accepts jobs over HTTP.
+- Accepts jobs over HTTP (including High-Performance Batching).
+- Implements strict Job Deduplication.
 - Persists job state in Redis, PostgreSQL, or both.
 - Processes jobs with pluggable worker handlers.
-- Supports delayed jobs, retries, DLQ inspection, metrics, worker heartbeats, and webhook delivery.
+- Enforces Tenant Rate Limiting and Concurrency QoS.
+- Protects downstream APIs using Worker Circuit Breakers.
+- Supports delayed jobs, retries, bounded DLQ inspection, metrics, worker heartbeats, and webhook delivery.
 
 ## Architecture
 

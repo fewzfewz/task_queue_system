@@ -79,21 +79,24 @@ The task queue system is composed of four independent binaries that coordinate t
 ### Job Submission
 ```
 Client ──POST /jobs──► Auth Middleware ──► DTO Validation
-    ──► JobService.CreateJob()
-        ├── IsAllowed() — tenant rate limit
+    ──► JobService.CreateJob() / CreateJobBatch()
+        ├── Deduplication Check (Postgres unique constraint -> 409 Conflict)
+        ├── IsAllowed() — tenant ingress rate limit
         ├── Size() — queue capacity check
-        ├── store.Save() — persist job record
+        ├── store.Save() / store.SaveBatch() — persist job record
         └── queue.Enqueue() — push to Redis priority list
 ```
 
 ### Job Execution
 ```
 Worker ──Dequeue()──► RedisQueue (BRPOP, weighted fair dequeue)
+    ──► QoS Check (Tenant concurrency limits -> Defer to task_queue:deferred_tenant)
     ──► Idempotency Check (Redis SISMEMBER + DB status)
     ──► store.UpdateStatus(processing)
     ──► JobExecutor.Execute()
         ├── Success: MarkProcessed + UpdateResult(completed) + Ack
         └── Failure:
+            ├── Circuit Breaker Open → Defer job without burning retries
             ├── retries < maxRetries → UpdateStatus(pending) + Enqueue + backoff
             └── retries >= maxRetries → UpdateResult(failed) + Fail(DLQ)
 ```

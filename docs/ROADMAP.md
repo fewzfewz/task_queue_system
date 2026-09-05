@@ -78,4 +78,9 @@ None — all items completed.
 | ✅ | **`created` webhook event** on job submission | — | `handler.go`, `job_service.go` |
 | ✅ | **Custom job types registry** (`email`, `image`, `http` handlers) | `jobtypes/store_test.go` | `internal/jobtypes/` |
 | ✅ | **Webhook payload hardening** (secret excluded from POST body) | `dispatcher_test.go` | `webhooks/dispatcher.go` |
+| ✅ | **Job Deduplication** (Postgres unique constraint + 409 Conflict) | — | `job_service.go`, `migrations` |
+| ✅ | **High-Performance Batching** (True bulk `INSERT` for `/jobs/batch`) | — | `job_service.go`, `postgres.go` |
+| ✅ | **Tenant Rate Limiting & QoS** (Redis `active_tenant` tracking + deferred queue) | — | `redis.go`, `client_handler.go` |
+| ✅ | **Worker Circuit Breaker Backpressure** (Defers instead of burning retries) | — | `worker_processor.go`, `job_executor.go` |
+| ✅ | **DLQ Management Hardening** (Bounded Redis `LTRIM` to prevent OOM) | — | `redis.go` |
 | ✅ | **Swagger docs regenerated** | — | `docs/swagger.yaml` |
