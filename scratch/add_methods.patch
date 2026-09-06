@@ -1,0 +1,56 @@
+--- internal/storage/models/models.go
++++ internal/storage/models/models.go
+@@ -48,6 +48,8 @@
+ 
+ 	// GetByIDs returns multiple jobs by their IDs (for DAG dependency checks).
+ 	GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error)
++	GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error)
++	GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error)
+ 
+ 	// GetQueueLengths returns pending job counts segmented by queue and tenant.
+ 	GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error)
+@@ -194,6 +196,14 @@
+ 	return out, nil
+ }
+ 
++func (s *InMemoryStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
++	return nil, nil // DAGs not supported in memory store
++}
++
++func (s *InMemoryStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
++	return nil, nil // DAGs not supported in memory store
++}
++
+ func (s *InMemoryStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+ 	s.mu.RLock()
+ 	defer s.mu.RUnlock()
+@@ -467,6 +477,14 @@
+ 	return out, nil
+ }
+ 
++func (s *DualStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
++	return s.primary.GetReadyDAGJobs(ctx, limit)
++}
++
++func (s *DualStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
++	return s.primary.GetDependentJobs(ctx, parentID)
++}
++
+ func (s *DualStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+ 	return s.primary.GetQueueLengths(ctx)
+ }
+@@ -824,6 +842,14 @@
+ 	return out, nil
+ }
+ 
++func (s *RedisStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
++	return nil, nil // DAGs not supported in pure redis store
++}
++
++func (s *RedisStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
++	return nil, nil // DAGs not supported in pure redis store
++}
++
+ func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
+ 	res, err := s.client.HGetAll(ctx, jobStoreKey).Result()
+ 	if err != nil {

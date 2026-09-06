@@ -56,6 +56,8 @@ type CreateJobRequest struct {
 	ShardKey string `json:"shard_key,omitempty"`
 	// Webhook is optional.
 	Webhook *WebhookRequest `json:"webhook"`
+	// TTLSeconds is optional. If the job hasn't successfully completed within this many seconds, it permanently fails.
+	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
 
 
@@ -63,6 +65,10 @@ type CreateJobRequest struct {
 func (r *CreateJobRequest) Validate() error {
 	if r.Type == "" {
 		return fmt.Errorf("job type is required")
+	}
+
+	if r.TTLSeconds < 0 {
+		return fmt.Errorf("ttl_seconds cannot be negative")
 	}
 
 	if r.Payload == nil {
@@ -143,6 +149,7 @@ type JobResponse struct {
 	CreatedAt  string                 `json:"created_at"`
 	UpdatedAt  string                 `json:"updated_at"`
 	RunAt      string                 `json:"run_at"`
+	ExpiresAt  string                 `json:"expires_at,omitempty"`
 	CorrelationID string              `json:"correlation_id,omitempty"`
 	Timeout       int                 `json:"timeout,omitempty"`
 	Version       int                 `json:"version"`
@@ -187,6 +194,11 @@ type ErrorResponse struct {
 
 // FromJob converts a domain Job into a JobResponse DTO.
 func FromJob(j *jobs.Job) JobResponse {
+	var expiresAt string
+	if !j.ExpiresAt.IsZero() {
+		expiresAt = j.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
+	}
+
 	return JobResponse{
 		ID:         j.ID,
 		Type:       j.Type,
@@ -202,6 +214,7 @@ func FromJob(j *jobs.Job) JobResponse {
 		CreatedAt:     j.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:     j.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		RunAt:         j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
+		ExpiresAt:     expiresAt,
 		Paused:        j.Paused,
 		Progress:      j.Progress,
 		DedupKey:      j.DedupKey,

@@ -1,0 +1,72 @@
+--- internal/api/handler/handler.go
++++ internal/api/handler/handler.go
+@@ -194,15 +194,54 @@
+ 		Processed: len(req.Jobs),
+ 	}
+ 
++	type batchReq struct {
++		Type             string
++		Payload          map[string]interface{}
++		Labels           map[string]string
++		Priority         string
++		MaxRetries       int
++		BackoffAlgorithm string
++		BackoffJitter    string
++		CronExpr         string
++		RunAt            string
++		CorrelationID    string
++		Timeout          int
++		Version          int
++		TenantID         string
++		Webhook          *jobs.WebhookConfig
++		DedupKey         string
++		Dependencies     []string
++		ShardKey         string
++	}
++	var reqs []batchReq
++
+ 	for i, jr := range req.Jobs {
+ 		if jr.TenantID == "" && middleware.IsClientTenant(ctxTenant) {
+-			req.Jobs[i].TenantID = ctxTenant
+ 			jr.TenantID = ctxTenant
+ 		}
+ 		var webhookConfig *jobs.WebhookConfig
+ 		if jr.Webhook != nil {
+ 			webhookConfig = &jobs.WebhookConfig{
+ 				URL:    jr.Webhook.URL,
+ 				Secret: jr.Webhook.Secret,
+ 				Events: webhooks.NormalizeEvents(jr.Webhook.Events),
+ 			}
+ 			if len(webhookConfig.Events) == 0 {
+ 				webhookConfig.Events = []string{"completed", "failed"}
+ 			}
+ 		}
+-
+-		job, err := h.service.CreateJob(r.Context(), jr.Type, jr.Payload, jr.Labels, jr.Priority, jr.MaxRetries, jr.BackoffAlgorithm, jr.BackoffJitter, jr.CronExpr, jr.RunAt, jr.CorrelationID, jr.Timeout, jr.Version, jr.TenantID, webhookConfig, jr.DedupKey, jr.Dependencies, jr.ShardKey)
+-		if err != nil {
+-			res.Processed--
+-			res.Failed = append(res.Failed, dto.BatchJobError{Index: i, Error: err.Error()})
+-		} else {
+-			res.JobIDs = append(res.JobIDs, job.ID)
+-		}
++		reqs = append(reqs, batchReq{
++			Type: jr.Type, Payload: jr.Payload, Labels: jr.Labels, Priority: jr.Priority,
++			MaxRetries: jr.MaxRetries, BackoffAlgorithm: jr.BackoffAlgorithm, BackoffJitter: jr.BackoffJitter,
++			CronExpr: jr.CronExpr, RunAt: jr.RunAt, CorrelationID: jr.CorrelationID, Timeout: jr.Timeout,
++			Version: jr.Version, TenantID: jr.TenantID, Webhook: webhookConfig,
++			DedupKey: jr.DedupKey, Dependencies: jr.Dependencies, ShardKey: jr.ShardKey,
++		})
+ 	}
+ 
++	createdJobs, err := h.service.CreateJobBatch(r.Context(), reqs)
++	if err != nil {
++		h.writeError(w, http.StatusInternalServerError, apperr.CodeInternal, "failed to create batch: "+err.Error())
++		return
++	}
++
++	for _, j := range createdJobs {
++		res.JobIDs = append(res.JobIDs, j.ID)
++	}
++
+ 	h.writeJSON(w, http.StatusAccepted, res)
+ }

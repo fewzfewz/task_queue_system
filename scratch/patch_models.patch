@@ -1,0 +1,12 @@
+--- internal/storage/models/models.go
++++ internal/storage/models/models.go
+@@ -19,6 +19,9 @@
+ 	// Save persists a job. Overwrites any existing record with the same ID.
+ 	Save(ctx context.Context, job *jobs.Job) error
+ 
++	// SaveBatch persists multiple jobs efficiently.
++	SaveBatch(ctx context.Context, jobs []*jobs.Job) error
++
+ 	// GetByID returns the job with the given ID.
+ 	// Returns ErrJobNotFound if no record exists.
+ 	GetByID(ctx context.Context, id string) (*jobs.Job, error)

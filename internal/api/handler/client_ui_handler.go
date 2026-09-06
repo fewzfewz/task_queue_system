@@ -321,8 +321,9 @@ const landingHTML = `<!DOCTYPE html>
     <h1>TaskQueue</h1>
   </a>
   <div class="nav-links">
-    <a href="#features">Features</a>
-    <a href="/swagger/">Docs</a>
+    <a href="/features">Features</a>
+    <a href="/docs">Docs</a>
+    <a href="/docs/sdk">Dev SDK</a>
     <a href="/client/login">Sign In</a>
     <a href="#register" class="nav-cta">Get Started</a>
   </div>

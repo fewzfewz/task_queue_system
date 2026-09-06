@@ -1,0 +1,152 @@
+--- internal/api/handler/client_ui_handler.go
++++ internal/api/handler/client_ui_handler.go
+@@ -107,6 +107,9 @@
+     <button class="nav-item" id="nav-jobs" onclick="showPage('jobs','My Jobs','All jobs for your tenant'); loadJobs()">
+       <i class="fas fa-list-check"></i> My Jobs
+     </button>
++    <button class="nav-item" id="nav-webhooks" onclick="showPage('webhooks','Webhooks','Manage event notifications'); loadWebhooks()">
++      <i class="fas fa-plug"></i> Webhooks
++    </button>
+ 
+     <div class="nav-label">Settings</div>
+     <button class="nav-item" id="nav-settings" onclick="showPage('settings','Settings','Manage your API key and preferences'); loadSettings()">
+@@ -342,6 +345,55 @@
+     </div>
+   </div>
+ 
++  <!-- WEBHOOKS VIEW -->
++  <div id="view-webhooks" class="view" style="display:none;">
++    <div class="card p-4 mb-4">
++      <h3>Register Webhook</h3>
++      <form onsubmit="event.preventDefault(); registerWebhook();">
++        <div class="form-group">
++          <label>Endpoint URL <span style="color:var(--danger)">*</span></label>
++          <input type="url" id="webhook-url" class="form-control" placeholder="https://your-api.com/webhooks" required>
++        </div>
++        <div class="form-group">
++          <label>Secret Token <span style="color:var(--text-muted); font-size: 0.8rem;">(Optional, for HMAC signature)</span></label>
++          <input type="text" id="webhook-secret" class="form-control" placeholder="super-secret-string">
++        </div>
++        <div class="form-group">
++          <label>Events to Listen For</label>
++          <div style="display:flex; gap: 1rem; margin-top: 0.5rem; flex-wrap: wrap;">
++            <label><input type="checkbox" name="webhook-events" value="created" checked> created</label>
++            <label><input type="checkbox" name="webhook-events" value="processing" checked> processing</label>
++            <label><input type="checkbox" name="webhook-events" value="completed" checked> completed</label>
++            <label><input type="checkbox" name="webhook-events" value="failed" checked> failed</label>
++          </div>
++        </div>
++        <button type="submit" class="btn btn-primary mt-2">
++          <i class="fas fa-plus"></i> Register Webhook
++        </button>
++      </form>
++    </div>
++
++    <div class="card p-4">
++      <h3>Active Webhooks</h3>
++      <div class="table-responsive mt-3">
++        <table class="table" id="webhooks-table">
++          <thead>
++            <tr>
++              <th>ID</th>
++              <th>URL</th>
++              <th>Events</th>
++              <th>Status</th>
++              <th>Created</th>
++              <th style="text-align:right">Actions</th>
++            </tr>
++          </thead>
++          <tbody>
++          </tbody>
++        </table>
++      </div>
++    </div>
++  </div>
++
+   <!-- SETTINGS VIEW -->
+   <div id="view-settings" class="view" style="display:none;">
+     <div class="card p-4 mb-4">
+@@ -539,6 +591,84 @@
+   });
+ }
+ 
++// ── Webhooks ──────────────────────────────────────────────────────────
++async function loadWebhooks() {
++  try {
++    const res = await apiCall('/api/v1/webhooks');
++    const tbody = document.querySelector('#webhooks-table tbody');
++    tbody.innerHTML = '';
++    if(!res || res.length===0) {
++      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted)">No webhooks registered.</td></tr>';
++      return;
++    }
++    res.forEach(w => {
++      let badgeClass = 'bg-success';
++      if(w.last_delivery_status >= 400 || w.last_delivery_status === -1) badgeClass = 'bg-danger';
++      if(!w.last_delivery_status) badgeClass = 'bg-secondary';
++      
++      let evts = (w.events || []).map(e => '<span class="badge bg-secondary">' + e + '</span>').join(' ');
++      let tr = document.createElement('tr');
++      tr.innerHTML = `
++        <td style="font-family:monospace; font-size:0.85rem">${w.id.split('-')[0]}</td>
++        <td>${w.url}</td>
++        <td>${evts}</td>
++        <td><span class="badge ${badgeClass}">${w.last_delivery_status ? (w.last_delivery_status === -1 ? 'failed' : w.last_delivery_status) : 'none'}</span></td>
++        <td>${fmtTime(w.created_at)}</td>
++        <td style="text-align:right">
++          <button class="btn btn-danger" style="padding:0.25rem 0.5rem" onclick="deleteWebhook('${w.id}')"><i class="fas fa-trash"></i></button>
++        </td>
++      `;
++      tbody.appendChild(tr);
++    });
++  } catch(e) {
++    showToast('Failed to load webhooks: ' + e.message, 'error');
++  }
++}
++
++async function registerWebhook() {
++  const url = document.getElementById('webhook-url').value;
++  const secret = document.getElementById('webhook-secret').value;
++  const checkboxes = document.querySelectorAll('input[name="webhook-events"]:checked');
++  const events = Array.from(checkboxes).map(cb => cb.value);
++  
++  if(!url) return;
++  if(events.length === 0) {
++    showToast('Please select at least one event type.', 'error');
++    return;
++  }
++  
++  try {
++    await apiCall('/api/v1/webhooks', {
++      method: 'POST',
++      body: JSON.stringify({ url, secret, events })
++    });
++    showToast('Webhook registered successfully!', 'success');
++    document.getElementById('webhook-url').value = '';
++    document.getElementById('webhook-secret').value = '';
++    loadWebhooks();
++  } catch(e) {
++    showToast('Failed to register webhook: ' + e.message, 'error');
++  }
++}
++
++async function deleteWebhook(id) {
++  if(!confirm('Are you sure you want to delete this webhook?')) return;
++  try {
++    const res = await fetch('/api/v1/webhooks/' + id, {
++      method: 'DELETE',
++      headers: { 'Authorization': 'Bearer ' + getApiKey() }
++    });
++    if(!res.ok) {
++      throw new Error(await res.text());
++    }
++    showToast('Webhook deleted', 'success');
++    loadWebhooks();
++  } catch(e) {
++    showToast('Failed to delete webhook: ' + e.message, 'error');
++  }
++}
++
+ // ── Settings ──────────────────────────────────────────────────────────
+ async function loadSettings() {
+   document.getElementById('current-api-key').value = getApiKey() || '';

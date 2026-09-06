@@ -544,6 +544,7 @@ const appHTML = `<!DOCTYPE html>
                 <div class="form-row">
                   <div class="form-group"><label>Priority</label><input id="create-priority" value="medium" /></div>
                   <div class="form-group"><label>Tenant ID</label><input id="create-tenant" value="tenant-a" /></div>
+                  <div class="form-group"><label>TTL (s)</label><input id="create-ttl" placeholder="Optional" /></div>
                 </div>
                 <div class="form-row">
                   <div class="form-group"><label>Correlation ID</label><input id="create-corr" value="corr-001" /></div>
@@ -1083,6 +1084,7 @@ const appHTML = `<!DOCTYPE html>
         correlation_id:document.getElementById('create-corr').value.trim(),
         dedup_key:document.getElementById('create-dedup').value.trim(),
         shard_key:document.getElementById('create-shard').value.trim(),
+        ttl_seconds:parseInt(document.getElementById('create-ttl').value)||undefined,
         run_at:document.getElementById('create-runat').value.trim()||undefined,
         payload:{}
       };

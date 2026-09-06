@@ -129,7 +129,7 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Labels, req.Priority, req.MaxRetries, req.BackoffAlgorithm, req.BackoffJitter, req.CronExpr, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID, webhookConfig, req.DedupKey, req.Dependencies, req.ShardKey)
+	job, err := h.service.CreateJob(r.Context(), req.Type, req.Payload, req.Labels, req.Priority, req.MaxRetries, req.BackoffAlgorithm, req.BackoffJitter, req.CronExpr, req.RunAt, req.CorrelationID, req.Timeout, req.Version, req.TenantID, webhookConfig, req.DedupKey, req.Dependencies, req.ShardKey, req.TTLSeconds)
 	if err != nil {
 		h.writeAppError(w, err)
 		return
@@ -193,6 +193,7 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 		DedupKey         string
 		Dependencies     []string
 		ShardKey         string
+		TTLSeconds       int
 	}
 
 	for _, jr := range req.Jobs {
@@ -229,6 +230,7 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 			DedupKey         string
 			Dependencies     []string
 			ShardKey         string
+			TTLSeconds       int
 		}{
 			Type: jr.Type, Payload: jr.Payload, Labels: jr.Labels, Priority: jr.Priority, MaxRetries: jr.MaxRetries, BackoffAlgorithm: jr.BackoffAlgorithm, BackoffJitter: jr.BackoffJitter, CronExpr: jr.CronExpr, RunAt: jr.RunAt, CorrelationID: jr.CorrelationID, Timeout: jr.Timeout, Version: jr.Version, TenantID: jr.TenantID, Webhook: webhookConfig, DedupKey: jr.DedupKey, Dependencies: jr.Dependencies, ShardKey: jr.ShardKey,
 		})

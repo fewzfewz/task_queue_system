@@ -1,0 +1,22 @@
+--- internal/service/job_service.go
++++ internal/service/job_service.go
+@@ -218,7 +218,7 @@
+ 	if len(requests) == 0 { return nil, nil }
+ 	var batch []*jobs.Job
+ 	now := time.Now().UTC()
+-	var toEnqueue []struct{ TenantID, ShardKey, JobID string; Priority int }
++	var toEnqueue []*jobs.Job
+ 
+ 	for _, req := range requests {
+ 		prioInt := jobs.GetPriorityInt(jobs.PriorityMedium)
+@@ -250,9 +250,7 @@
+ 
+ 		batch = append(batch, j)
+ 		if len(req.Dependencies) == 0 {
+-			toEnqueue = append(toEnqueue, struct{ TenantID, ShardKey, JobID string; Priority int }{
+-				TenantID: j.TenantID, ShardKey: j.ShardKey, JobID: j.ID, Priority: prioInt,
+-			})
++			toEnqueue = append(toEnqueue, j)
+ 		}
+ 	}
+ 

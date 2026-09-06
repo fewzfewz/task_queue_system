@@ -1,0 +1,27 @@
+--- internal/storage/postgres/postgres.go
++++ internal/storage/postgres/postgres.go
+@@ -415,6 +415,22 @@
+ 	return s.GetByIDs(ctx, ids)
+ }
+ 
++func (s *PostgresStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
++	query := `SELECT id FROM jobs WHERE status = 'pending' AND dependencies @> ('"' || $1 || '"')::jsonb`
++	rows, err := s.pool.Query(ctx, query, parentID)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++	var ids []string
++	for rows.Next() {
++		var id string
++		if err := rows.Scan(&id); err == nil {
++			ids = append(ids, id)
++		}
++	}
++	if len(ids) == 0 {
++		return nil, nil
++	}
++	return s.GetByIDs(ctx, ids)
++}
++
+ func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error) {

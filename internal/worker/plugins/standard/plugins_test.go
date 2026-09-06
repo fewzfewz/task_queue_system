@@ -337,7 +337,7 @@ type MockSubmitter struct {
 	CreatedJobs []*jobs.Job
 }
 
-func (m *MockSubmitter) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error) {
+func (m *MockSubmitter) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string, ttl int) (*jobs.Job, error) {
 	job := &jobs.Job{
 		ID:           "test-job-id-" + jobType,
 		Type:         jobType,

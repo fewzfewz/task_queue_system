@@ -1,0 +1,14 @@
+--- internal/queue/mock.go
++++ internal/queue/mock.go
+@@ -24,8 +24,8 @@
+ 	return m.client.RPush(ctx, "mock_queue", string(data)).Err()
+ }
+ 
+-func (m *MockQueue) EnqueueBatch(ctx context.Context, jobs []struct{ TenantID, ShardKey, JobID string; Priority int }) error {
++func (m *MockQueue) EnqueueBatch(ctx context.Context, jobs []*jobs.Job) error {
+ 	for _, j := range jobs {
+-		m.Enqueue(ctx, j.TenantID, j.ShardKey, j.JobID, j.Priority)
++		m.Enqueue(ctx, j)
+ 	}
+ 	return nil
+ }

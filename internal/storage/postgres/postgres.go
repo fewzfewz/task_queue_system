@@ -225,7 +225,7 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 			attempts, max_attempts, correlation_id, timeout_seconds,
 			version, scheduled_at, created_at, updated_at, processed_by, result, error, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			error_history, dedup_key, dependencies, shard_key, cron_expr
+			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at
 		FROM jobs WHERE id = $1
 	`
 	var cronExp *string
@@ -541,7 +541,7 @@ func (s *PostgresStore) ListJobs(ctx context.Context, tenantID string, status st
 			progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
 			error_history,
-			dedup_key, dependencies, shard_key, cron_expr
+			dedup_key, dependencies, shard_key, cron_expr, expires_at
 		FROM jobs 
 		WHERE ($1 = '' OR tenant_id = $1)
 		  AND ($2 = '' OR status = $2)
@@ -592,7 +592,7 @@ func (s *PostgresStore) SearchJobs(ctx context.Context, filter models.JobFilter)
 			progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
 			error_history,
-			dedup_key, dependencies, shard_key, cron_expr
+			dedup_key, dependencies, shard_key, cron_expr, expires_at
 		FROM jobs 
 		WHERE %s
 		ORDER BY created_at DESC

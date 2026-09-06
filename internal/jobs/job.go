@@ -97,6 +97,7 @@ type Job struct {
 	Dependencies  []string               `json:"dependencies,omitempty"`
 	ShardKey      string                 `json:"shard_key,omitempty"`
 	TraceID       string                 `json:"trace_id,omitempty"`
+	ExpiresAt     time.Time              `json:"expires_at,omitempty"`
 	ErrorHistory  []AttemptError         `json:"error_history,omitempty"`
 }
 

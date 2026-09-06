@@ -67,7 +67,7 @@ func (p *MapReducePlugin) Execute(ctx context.Context, job *jobs.Job) (interface
 			priority = "medium"
 		}
 
-		mapJob, err := submitter.CreateJob(ctx, mapType, payload, nil, priority, 3, "", "", "", "", job.CorrelationID, 0, 1, job.TenantID, nil, "", nil, "")
+		mapJob, err := submitter.CreateJob(ctx, mapType, payload, nil, priority, 3, "", "", "", "", job.CorrelationID, 0, 1, job.TenantID, nil, "", nil, "", 0)
 		if err != nil {
 			return nil, fmt.Errorf("map_reduce plugin: failed to spawn map job %d: %w", i, err)
 		}
@@ -89,7 +89,7 @@ func (p *MapReducePlugin) Execute(ctx context.Context, job *jobs.Job) (interface
 		reducePriority = "medium"
 	}
 
-	reduceJob, err := submitter.CreateJob(ctx, reduceType, reducePayload, nil, reducePriority, 3, "", "", "", "", job.CorrelationID, 0, 1, job.TenantID, nil, "", mapJobIDs, "")
+	reduceJob, err := submitter.CreateJob(ctx, reduceType, reducePayload, nil, reducePriority, 3, "", "", "", "", job.CorrelationID, 0, 1, job.TenantID, nil, "", mapJobIDs, "", 0)
 	if err != nil {
 		return nil, fmt.Errorf("map_reduce plugin: failed to spawn reduce job: %w", err)
 	}

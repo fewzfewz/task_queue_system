@@ -95,6 +95,8 @@ type Store interface {
 
 	// GetByIDs returns multiple jobs by their IDs (for DAG dependency checks).
 	GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error)
+	GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error)
+	GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error)
 
 	// GetQueueLengths returns pending job counts segmented by queue and tenant.
 	GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error)
@@ -417,6 +419,13 @@ func (s *InMemoryStore) IsDedupKeyTaken(_ context.Context, dedupKey, tenantID st
 		}
 	}
 	return false, nil
+}
+
+func (s *InMemoryStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
+	return nil, nil
+}
+func (s *InMemoryStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
+	return nil, nil
 }
 
 func (s *InMemoryStore) GetByIDs(_ context.Context, ids []string) ([]*jobs.Job, error) {
@@ -837,6 +846,14 @@ func (s *RedisStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, e
 		out = append(out, &j)
 	}
 	return out, nil
+}
+
+func (s *RedisStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
+	return nil, nil // DAGs not supported in pure redis store
+}
+
+func (s *RedisStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
+	return nil, nil // DAGs not supported in pure redis store
 }
 
 func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {

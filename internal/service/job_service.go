@@ -105,6 +105,7 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct{
 	DedupKey         string
 	Dependencies     []string
 	ShardKey         string
+	TTLSeconds       int
 }) ([]*jobs.Job, error) {
 	if len(requests) == 0 { return nil, nil }
 	var batch []*jobs.Job
@@ -169,7 +170,7 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct{
 	return batch, nil
 }
 
-func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error) {
+func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string, ttlSeconds int) (*jobs.Job, error) {
 	if !s.isJobTypeAllowed(ctx, jobType) {
 		return nil, apperr.NewInvalidArgument(fmt.Sprintf("unsupported job type %q", jobType))
 	}

@@ -1,0 +1,20 @@
+--- redis.go
++++ redis.go
+@@ -52,14 +52,15 @@
+ }
+ 
+-func (q *RedisQueue) EnqueueBatch(ctx context.Context, jobs []struct{ TenantID, ShardKey, JobID string; Priority int }) error {
++func (q *RedisQueue) EnqueueBatch(ctx context.Context, jobs []*jobspkg.Job) error {
+ 	if len(jobs) == 0 { return nil }
+ 	pipe := q.client.Pipeline()
+ 	for _, j := range jobs {
+ 		queueKey := "task_queue:queue:" + j.TenantID
+ 		if j.ShardKey != "" {
+ 			queueKey += ":" + j.ShardKey
+ 		}
+-		pipe.ZAdd(ctx, queueKey, redis.Z{Score: float64(j.Priority), Member: j.JobID})
++		prioInt := jobspkg.GetPriorityInt(j.Priority)
++		pipe.ZAdd(ctx, queueKey, redis.Z{Score: float64(prioInt), Member: j.ID})
+ 	}
+ 	_, err := pipe.Exec(ctx)
+ 	return err

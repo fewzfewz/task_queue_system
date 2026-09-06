@@ -1,0 +1,56 @@
+--- internal/storage/postgres/postgres.go
++++ internal/storage/postgres/postgres.go
+@@ -370,6 +370,55 @@
+ 	return err
+ }
+ 
++// GetReadyDAGJobs finds pending jobs whose dependencies are all completed.
++func (s *PostgresStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
++	query := `
++		SELECT 
++			id, tenant_id, type, payload, status, priority,
++			attempts, max_attempts, correlation_id, timeout_seconds,
++			version, scheduled_at, created_at, updated_at, processed_by, result, error, progress,
++			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
++			error_history, dedup_key, dependencies, shard_key, cron_expr
++		FROM jobs j
++		WHERE j.status = 'pending'
++		  AND j.scheduled_at <= $1
++		  AND j.dependencies IS NOT NULL 
++		  AND j.dependencies != '[]'::jsonb
++		  AND j.dependencies != 'null'::jsonb
++		  AND NOT EXISTS (
++		      SELECT 1
++		      FROM jsonb_array_elements_text(j.dependencies) AS dep_id
++		      LEFT JOIN jobs d ON d.id = dep_id AND d.status = 'completed'
++		      WHERE d.id IS NULL
++		  )
++		ORDER BY j.priority = 'high' DESC, j.priority = 'medium' DESC, j.scheduled_at ASC
++		LIMIT $2
++	`
++	rows, err := s.pool.Query(ctx, query, time.Now().UTC(), limit)
++	if err != nil {
++		return nil, err
++	}
++	defer rows.Close()
++
++	var readyJobs []*jobs.Job
++	for rows.Next() {
++		j := &jobs.Job{}
++		var payload, events, errHist, deps []byte
++		var status, priority string
++		var cronExp *string
++		if err := rows.Scan(
++			&j.ID, &j.TenantID, &j.Type, &payload, &status, &priority,
++			&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
++			&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &j.ProcessedBy, &j.Result, &j.ErrorHistory, &j.Progress,
++			&j.Webhook.URL, &j.Webhook.Secret, &events, &j.Webhook.LastStatus, &j.Webhook.Attempts,
++			&errHist, &j.DedupKey, &deps, &j.ShardKey, &cronExp,
++		); err == nil {
++			readyJobs = append(readyJobs, j)
++		}
++	}
++	return readyJobs, nil
++}
++
+ func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string, shardKey string) (*jobs.Job, error) {

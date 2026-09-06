@@ -157,6 +157,14 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		return nil
 	}
 
+	// 2.5 Job Expiration / TTL Check
+	if !job.ExpiresAt.IsZero() && time.Now().UTC().After(job.ExpiresAt) {
+		log.Error("job has expired (TTL exceeded), permanently failing")
+		_ = wp.service.Fail(ctx, job.ID, errors.New("job expired (TTL exceeded)"))
+		_ = wp.service.Ack(ctx, job.ID)
+		return nil
+	}
+
 	// 3. Persistent Store Check (Fallback)
 	storedJob, err := wp.service.GetJobStatus(ctx, job.ID)
 	if err == nil && storedJob != nil {
