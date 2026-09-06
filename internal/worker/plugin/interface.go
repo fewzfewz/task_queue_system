@@ -37,3 +37,21 @@ type JobPlugin interface {
 	// It returns an optional result and an error if processing fails.
 	Execute(ctx context.Context, job *jobs.Job) (interface{}, error)
 }
+
+type Submitter interface {
+	CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error)
+}
+
+type submitterKeyType struct{}
+var submitterKey = submitterKeyType{}
+
+func WithSubmitter(ctx context.Context, s Submitter) context.Context {
+	return context.WithValue(ctx, submitterKey, s)
+}
+
+func GetSubmitter(ctx context.Context) Submitter {
+	if s, ok := ctx.Value(submitterKey).(Submitter); ok {
+		return s
+	}
+	return nil
+}

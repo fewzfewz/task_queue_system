@@ -331,3 +331,82 @@ func TestS3Plugin_Execute_Success(t *testing.T) {
 		t.Fatalf("unexpected s3_url: %v", m["s3_url"])
 	}
 }
+
+// MockSubmitter implements plugin.Submitter for testing.
+type MockSubmitter struct {
+	CreatedJobs []*jobs.Job
+}
+
+func (m *MockSubmitter) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string) (*jobs.Job, error) {
+	job := &jobs.Job{
+		ID:           "test-job-id-" + jobType,
+		Type:         jobType,
+		Payload:      payload,
+		Dependencies: dependencies,
+	}
+	m.CreatedJobs = append(m.CreatedJobs, job)
+	return job, nil
+}
+
+func TestMapReducePlugin_Type(t *testing.T) {
+	p := NewMapReducePlugin(slog.Default())
+	if got := p.Type(); got != "map_reduce" {
+		t.Fatalf("expected type 'map_reduce', got %q", got)
+	}
+}
+
+func TestMapReducePlugin_Execute_Success(t *testing.T) {
+	p := NewMapReducePlugin(slog.Default())
+	job := jobs.NewJob("map_reduce", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"items":           []interface{}{"A", "B", "C"},
+		"map_job_type":    "process_item",
+		"reduce_job_type": "aggregate_results",
+	}
+
+	mockSubmitter := &MockSubmitter{}
+	ctx := plugin.WithSubmitter(context.Background(), mockSubmitter)
+
+	res, err := p.Execute(ctx, job)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Should have spawned 3 map jobs + 1 reduce job = 4 total jobs
+	if len(mockSubmitter.CreatedJobs) != 4 {
+		t.Fatalf("expected 4 jobs created, got %d", len(mockSubmitter.CreatedJobs))
+	}
+
+	// Verify the final reduce job has exactly 3 dependencies
+	reduceJob := mockSubmitter.CreatedJobs[3]
+	if reduceJob.Type != "aggregate_results" {
+		t.Fatalf("expected reduce job type 'aggregate_results', got %v", reduceJob.Type)
+	}
+	if len(reduceJob.Dependencies) != 3 {
+		t.Fatalf("expected reduce job to have 3 dependencies, got %d", len(reduceJob.Dependencies))
+	}
+
+	m, ok := res.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map result")
+	}
+	if m["status"] != "fan_out_complete" {
+		t.Fatalf("unexpected status: %v", m["status"])
+	}
+}
+
+func TestMapReducePlugin_Execute_MissingSubmitter(t *testing.T) {
+	p := NewMapReducePlugin(slog.Default())
+	job := jobs.NewJob("map_reduce", nil, nil, jobs.PriorityMedium, 3, time.Time{}, "", 60, 1, "tenant-a")
+	job.Payload = map[string]interface{}{
+		"items":           []interface{}{"A"},
+		"map_job_type":    "process_item",
+		"reduce_job_type": "aggregate_results",
+	}
+
+	// Do NOT inject submitter
+	_, err := p.Execute(context.Background(), job)
+	if err == nil {
+		t.Fatal("expected error for missing submitter")
+	}
+}

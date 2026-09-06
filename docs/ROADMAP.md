@@ -84,3 +84,12 @@ None — all items completed.
 | ✅ | **Worker Circuit Breaker Backpressure** (Defers instead of burning retries) | — | `worker_processor.go`, `job_executor.go` |
 | ✅ | **DLQ Management Hardening** (Bounded Redis `LTRIM` to prevent OOM) | — | `redis.go` |
 | ✅ | **Swagger docs regenerated** | — | `docs/swagger.yaml` |
+
+## Next-Generation (Enterprise) Roadmap
+*(Future capabilities to compete with Temporal/Step Functions)*
+- [x] Multi-Language Worker SDKs (Python/Node.js integration via HTTP Push)
+- [x] Map-Reduce (Fan-out / Fan-in) Primitives
+- [ ] Middleware / Interceptor Pipeline
+- [ ] Operator "Panic Buttons" (Manual Queue Pausing)
+- [ ] Full-Text Payload Search in the UI
+- [ ] Job-Level TTL (Time-To-Live)

@@ -115,3 +115,22 @@ POST /api/v1/jobs
   }
 }
 ```
+
+---
+
+## 7. Map-Reduce (Fan-out / Fan-in)
+**The Problem:** You have a massive array of items (like 10,000 URLs to scrape or 1,000 images to process) and want to process them fully in parallel, but need to aggregate all the results at the very end to generate a final report.
+**The Solution:** The `map_reduce` plugin automatically shards your array into thousands of individual "Map" jobs. It then creates a single "Reduce" job that uses DAG `dependencies` to automatically pause execution until every single Map job is complete!
+
+**Example: Parallel Image Processing**
+```json
+POST /api/v1/jobs
+{
+  "type": "map_reduce",
+  "payload": {
+    "items": ["img1.png", "img2.png", "img3.png"],
+    "map_job_type": "image_compress",
+    "reduce_job_type": "generate_summary_report"
+  }
+}
+```

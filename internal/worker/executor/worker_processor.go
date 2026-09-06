@@ -138,6 +138,9 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	)
 	log.Info("processing job dequeued", "status", jobs.StatusProcessing)
 
+	// Inject the JobService as a Submitter for plugins that need to spawn sub-jobs
+	ctx = plugin.WithSubmitter(ctx, wp.service)
+
 	// 1. Fast Redis Check
 	isDone, _ := wp.service.IsProcessed(ctx, job.ID)
 	if isDone {
