@@ -93,3 +93,6 @@ None — all items completed.
 - [x] Operator "Panic Buttons" (Manual Queue Pausing)
 - [x] Full-Text Payload Search in the UI
 - [ ] Job-Level TTL (Time-To-Live)
+- [x] Job-Level TTL (Time-To-Live)
+- [x] True Dead Letter Queue (DLQ) with isolated storage
+- [x] Global Concurrency Limits (Per Job Type)

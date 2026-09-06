@@ -739,9 +739,10 @@ const appHTML = `<!DOCTYPE html>
               Built-in types: <code>email</code> (simulated SMTP), <code>image</code> (image processing), <code>http</code> (HTTP callback).
               Register custom types that delegate to the <code>http</code> handler for real-world integrations.
             </p>
-            <div class="grid-3">
+            <div class="grid-4">
               <div class="form-group"><label>Name</label><input id="jt-name" placeholder="slack-notify" /></div>
               <div class="form-group"><label>Handler</label><select id="jt-handler"><option value="http">http</option><option value="email">email</option><option value="image">image</option></select></div>
+              <div class="form-group"><label>Concurrency</label><input type="number" id="jt-limit" placeholder="0 (unlimited)" value="0" /></div>
               <div class="form-group"><label>Payload Hint</label><input id="jt-hint" placeholder='{"url":"https://..."}' /></div>
             </div>
             <div class="form-group"><label>Description</label><input id="jt-desc" placeholder="Send Slack notification via webhook" /></div>
@@ -750,7 +751,7 @@ const appHTML = `<!DOCTYPE html>
           <div class="section-card">
             <div class="section-title"><i class="fas fa-list"></i> Available Job Types</div>
             <table>
-              <thead><tr><th>Name</th><th>Handler</th><th>Description</th><th>Built-in</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Handler</th><th>Limit</th><th>Description</th><th>Built-in</th><th></th></tr></thead>
               <tbody id="jt-body"><tr><td colspan="5"><div class="state-box empty"><i class="fas fa-tags"></i> No job types loaded yet.</div></td></tr></tbody>
             </table>
           </div>
@@ -1517,11 +1518,11 @@ const appHTML = `<!DOCTYPE html>
     // ── Webhooks ──
     async function loadWebhooks() {
       const body=document.getElementById('wh-body');
-      body.innerHTML='<tr><td colspan="5">'+stateLoading('Loading webhooks…')+'</td></tr>';
+      body.innerHTML='<tr><td colspan="6">'+stateLoading('Loading webhooks…')+'</td></tr>';
       const out=await api(API_BASE+'/webhooks');
-      if(!out||out._ok===false){body.innerHTML='<tr><td colspan="5">'+stateError((out&&out._error)||'Failed to load webhooks')+'</td></tr>';return;}
+      if(!out||out._ok===false){body.innerHTML='<tr><td colspan="6">'+stateError((out&&out._error)||'Failed to load webhooks')+'</td></tr>';return;}
       const list=Array.isArray(out)?out:[];
-      if(!list.length){body.innerHTML='<tr><td colspan="5">'+stateEmpty('fa-globe','No webhooks registered.')+'</td></tr>';return;}
+      if(!list.length){body.innerHTML='<tr><td colspan="6">'+stateEmpty('fa-globe','No webhooks registered.')+'</td></tr>';return;}
       body.innerHTML=list.map(w=>
         '<tr>'+
         '<td style="font-family:monospace;font-size:12px;">'+esc(w.id)+'</td>'+
@@ -1568,7 +1569,7 @@ const appHTML = `<!DOCTYPE html>
     // ── Job Types ──
     async function loadJobTypes() {
       const body=document.getElementById('jt-body');
-      body.innerHTML='<tr><td colspan="5">'+stateLoading('Loading job types…')+'</td></tr>';
+      body.innerHTML='<tr><td colspan="6">'+stateLoading('Loading job types…')+'</td></tr>';
       const out=await api(API_BASE+'/job-types');
       const list=(out&&out.job_types)||[];
       adminJobTypeRegistry = {};
@@ -1580,14 +1581,15 @@ const appHTML = `<!DOCTYPE html>
         ).join('');
       }
       adminRenderPayloadForm();
-      if(!list.length){body.innerHTML='<tr><td colspan="5">'+stateEmpty('fa-tags','No job types found.')+'</td></tr>';return;}
+      if(!list.length){body.innerHTML='<tr><td colspan="6">'+stateEmpty('fa-tags','No job types found.')+'</td></tr>';return;}
       body.innerHTML=list.map(jt=>
         '<tr>'+
         '<td><span class="pill blue">'+esc(jt.name)+'</span></td>'+
         '<td style="font-family:monospace;font-size:12px;">'+esc(jt.handler||jt.name)+'</td>'+
+        '<td><span class="pill '+(jt.concurrency_limit>0?'warn':'')+'">'+(jt.concurrency_limit>0?jt.concurrency_limit:'&infin;')+'</span></td>'+
         '<td style="color:var(--muted);font-size:12px;">'+esc(jt.description||'')+'</td>'+
         '<td>'+(jt.built_in?'<span class="pill good">yes</span>':'<span class="pill">custom</span>')+'</td>'+
-        '<td>'+(jt.built_in?'':'<button class="btn-danger btn-sm" onclick="deleteJobType(\''+esc(jt.name)+'\')"><i class="fas fa-trash"></i></button>')+'</td>'+
+        '<td>'+(jt.built_in?'':'<button class="btn-secondary btn-sm" onclick="editJobTypeLimit(\''+esc(jt.name)+'\', '+(jt.concurrency_limit||0)+')" style="margin-right:6px" title="Set limit"><i class="fas fa-edit"></i></button><button class="btn-danger btn-sm" onclick="deleteJobType(\''+esc(jt.name)+'\')"><i class="fas fa-trash"></i></button>')+'</td>'+
         '</tr>').join('');
     }
     async function createJobType() {
@@ -1595,6 +1597,7 @@ const appHTML = `<!DOCTYPE html>
         name:document.getElementById('jt-name').value.trim(),
         description:document.getElementById('jt-desc').value.trim(),
         handler:document.getElementById('jt-handler').value,
+        concurrency_limit: parseInt(document.getElementById('jt-limit').value||'0'),
         payload_hint:document.getElementById('jt-hint').value.trim()
       };
       if(!body.name){toast('Name is required','warn');return;}
@@ -1604,6 +1607,14 @@ const appHTML = `<!DOCTYPE html>
       document.getElementById('jt-desc').value='';
       document.getElementById('jt-hint').value='';
       loadJobTypes(); toast('Job type registered');
+    }
+    async function editJobTypeLimit(name, current) {
+      const p = prompt('Set concurrency limit for '+name+' (0 = unlimited):', current);
+      if (p === null) return;
+      const limit = parseInt(p);
+      if (isNaN(limit) || limit < 0) return alert('Invalid limit');
+      await api(API_BASE+'/job-types/'+name, { method:'PATCH', body:JSON.stringify({concurrency_limit: limit, paused: false})});
+      loadJobTypes();
     }
     async function deleteJobType(name) {
       if(!confirmAction('Delete job type '+name+'?'))return;

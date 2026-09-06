@@ -1186,13 +1186,14 @@ func (h *JobHandler) CreateJobType(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 		Handler     string `json:"handler"`
 		PayloadHint string `json:"payload_hint"`
+		ConcurrencyLimit int `json:"concurrency_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON: "+err.Error())
 		return
 	}
 	defer r.Body.Close()
-	jt, err := h.jobTypeStore.Create(r.Context(), req.Name, req.Description, req.Handler, req.PayloadHint)
+	jt, err := h.jobTypeStore.Create(r.Context(), req.Name, req.Description, req.Handler, req.PayloadHint, req.ConcurrencyLimit)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, err.Error())
 		return
@@ -1212,4 +1213,26 @@ func (h *JobHandler) DeleteJobType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// UpdateJobType handles PATCH /api/v1/job-types/{name}
+func (h *JobHandler) UpdateJobType(w http.ResponseWriter, r *http.Request) {
+	if h.jobTypeStore == nil {
+		h.writeError(w, http.StatusServiceUnavailable, apperr.CodeInternal, "job type registry not configured")
+		return
+	}
+	name := r.PathValue("name")
+	var req struct {
+		ConcurrencyLimit int `json:"concurrency_limit"`
+		Paused           bool `json:"paused"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON")
+		return
+	}
+	if err := h.jobTypeStore.Update(r.Context(), name, req.ConcurrencyLimit, req.Paused); err != nil {
+		h.writeError(w, http.StatusInternalServerError, apperr.CodeInternal, err.Error())
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

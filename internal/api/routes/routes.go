@@ -106,6 +106,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	write("POST /api/v1/circuit-breakers/reset/{type}", h.ResetCircuitBreaker)
 	write("POST /api/v1/job-types", h.CreateJobType)
 	write("DELETE /api/v1/job-types/{name}", h.DeleteJobType)
+	write("PATCH /api/v1/job-types/{name}", h.UpdateJobType)
 	write("DELETE /api/v1/clients/{tenant_id}", h.RevokeClient)
 	write("POST /api/v1/clients/{tenant_id}/rotate", h.RotateClientKey)
 	write("PUT /api/v1/clients/{tenant_id}/config", h.UpdateClientConfig)

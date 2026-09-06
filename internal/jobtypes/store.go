@@ -41,7 +41,7 @@ func NewStore(rdb *redis.Client) *Store {
 	return &Store{redis: rdb}
 }
 
-func (s *Store) Create(ctx context.Context, name, description, handler, payloadHint string) (*JobType, error) {
+func (s *Store) Create(ctx context.Context, name, description, handler, payloadHint string, limit int) (*JobType, error) {
 	if name == "" {
 		return nil, fmt.Errorf("job type name is required")
 	}
@@ -63,6 +63,7 @@ func (s *Store) Create(ctx context.Context, name, description, handler, payloadH
 		Description: description,
 		Handler:     handler,
 		PayloadHint: payloadHint,
+		ConcurrencyLimit: limit,
 		CreatedAt:   time.Now().UTC(),
 	}
 	data, err := json.Marshal(jt)
@@ -77,14 +78,20 @@ func (s *Store) Create(ctx context.Context, name, description, handler, payloadH
 
 func (s *Store) GetByName(ctx context.Context, name string) (*JobType, error) {
 	data, err := s.redis.HGet(ctx, storeKey, name).Bytes()
-	if err != nil {
-		return nil, err
+	if err == nil {
+		var jt JobType
+		if err := json.Unmarshal(data, &jt); err == nil {
+			return &jt, nil
+		}
 	}
-	var jt JobType
-	if err := json.Unmarshal(data, &jt); err != nil {
-		return nil, err
+	for _, b := range BuiltIn {
+		if b.Name == name {
+			// If it's in Redis partially (like just limits), it would be caught above. 
+			// Wait, if it wasn't registered, we return the default built-in.
+			return &b, nil
+		}
 	}
-	return &jt, nil
+	return nil, fmt.Errorf("job type not found")
 }
 
 func (s *Store) List(ctx context.Context) ([]JobType, error) {
@@ -92,17 +99,34 @@ func (s *Store) List(ctx context.Context) ([]JobType, error) {
 	if err != nil {
 		return nil, err
 	}
-	custom := make([]JobType, 0, len(all))
-	for _, raw := range all {
+	
+	out := make([]JobType, 0, len(BuiltIn)+len(all))
+	
+	// Start with builtin
+	builtInMap := make(map[string]bool)
+	for _, b := range BuiltIn {
+		if raw, ok := all[b.Name]; ok {
+			var jt JobType
+			if err := json.Unmarshal([]byte(raw), &jt); err == nil {
+				jt.BuiltIn = true // enforce
+				out = append(out, jt)
+				builtInMap[b.Name] = true
+				continue
+			}
+		}
+		out = append(out, b)
+		builtInMap[b.Name] = true
+	}
+	
+	for name, raw := range all {
+		if builtInMap[name] { continue }
 		var jt JobType
 		if err := json.Unmarshal([]byte(raw), &jt); err != nil {
 			continue
 		}
-		custom = append(custom, jt)
+		out = append(out, jt)
 	}
-	out := make([]JobType, 0, len(BuiltIn)+len(custom))
-	out = append(out, BuiltIn...)
-	out = append(out, custom...)
+	
 	return out, nil
 }
 
@@ -138,4 +162,16 @@ func (s *Store) IsAllowed(ctx context.Context, jobType string) bool {
 	}
 	_, err := s.GetByName(ctx, jobType)
 	return err == nil
+}
+
+func (s *Store) Update(ctx context.Context, name string, limit int, paused bool) error {
+	jt, err := s.GetByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	jt.ConcurrencyLimit = limit
+	jt.Paused = paused
+	data, err := json.Marshal(jt)
+	if err != nil { return err }
+	return s.redis.HSet(ctx, storeKey, name, data).Err()
 }

@@ -19,7 +19,7 @@ func TestStore_CreateAndList(t *testing.T) {
 	store := NewStore(rdb)
 	ctx := context.Background()
 
-	jt, err := store.Create(ctx, "slack-notify", "Slack webhook", "http", `{"url":"..."}`)
+	jt, err := store.Create(ctx, "slack-notify", "Slack webhook", "http", `{"url":"..."}`, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

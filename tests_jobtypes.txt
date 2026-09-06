@@ -1,0 +1,67 @@
+ok  	task-queue-system/cmd/api	0.025s
+ok  	task-queue-system/cmd/chaos	(cached)
+ok  	task-queue-system/cmd/cli	(cached)
+ok  	task-queue-system/cmd/scheduler	(cached)
+ok  	task-queue-system/cmd/worker	(cached)
+?   	task-queue-system/docs	[no test files]
+ok  	task-queue-system/internal/api/dto	(cached)
+ok  	task-queue-system/internal/api/handler	0.267s
+ok  	task-queue-system/internal/api/middleware	(cached)
+ok  	task-queue-system/internal/api/routes	0.034s
+ok  	task-queue-system/internal/api/session	(cached)
+ok  	task-queue-system/internal/config	(cached)
+ok  	task-queue-system/internal/errors	(cached)
+ok  	task-queue-system/internal/health	(cached)
+ok  	task-queue-system/internal/jobs	(cached)
+FAIL	task-queue-system/internal/jobtypes [build failed]
+ok  	task-queue-system/internal/logger	(cached)
+ok  	task-queue-system/internal/metrics	(cached)
+ok  	task-queue-system/internal/queue	(cached)
+ok  	task-queue-system/internal/queue/redis	(cached)
+ok  	task-queue-system/internal/secrets	(cached)
+2026/09/06 16:55:18 INFO job result updated job_id=8ee9bc17-34d9-4076-a377-6cab13dbec22 status=completed worker=worker-1
+2026/09/06 16:55:18 INFO reconciling orphaned job job_id=3fbfbbd3-40fe-428e-8f57-c35bb0c3be33 worker_id=worker-1
+2026/09/06 16:55:18 INFO job status updated job_id=3fbfbbd3-40fe-428e-8f57-c35bb0c3be33 status=pending worker=""
+--- FAIL: TestBulkPurgeDLQ (0.00s)
+    job_service_test.go:421: expected 3 deleted jobs, got 0
+FAIL
+FAIL	task-queue-system/internal/service	0.035s
+ok  	task-queue-system/internal/sse	(cached)
+ok  	task-queue-system/internal/storage	(cached)
+ok  	task-queue-system/internal/storage/models	(cached)
+ok  	task-queue-system/internal/storage/postgres	(cached)
+ok  	task-queue-system/internal/tracing	(cached)
+ok  	task-queue-system/internal/webhooks	(cached)
+2026/09/06 16:55:20.627410 job_executor.go:97: ERROR plugin panicked during execution job_type=panicking panic="something went wrong" correlation_id=1fa23f0a-1d30-41c5-93bc-382f30bf9df2
+2026/09/06 16:55:20.627877 job_executor.go:46: WARN plugin registration failed job_type=test_job error="plugin registry: type \"test_job\" already registered"
+2026/09/06 16:55:20.628116 worker_processor.go:139: INFO processing job dequeued worker_id=test-worker job_id=02ef5e49-4312-47b8-9106-c6225a86aaa5 job_type=test correlation_id=25bfba8a-c4af-44fd-bd39-4f7b4b8a8747 worker_id=test-worker status=processing
+2026/09/06 16:55:20.628176 job_service.go:403: INFO job status updated job_id=02ef5e49-4312-47b8-9106-c6225a86aaa5 status=processing worker=test-worker
+2026/09/06 16:55:20.628216 worker_processor.go:239: INFO job succeeded worker_id=test-worker job_id=02ef5e49-4312-47b8-9106-c6225a86aaa5 job_type=test correlation_id=25bfba8a-c4af-44fd-bd39-4f7b4b8a8747 worker_id=test-worker status=completed execution_time_ms=0
+2026/09/06 16:55:20.628235 job_service.go:413: INFO job result updated job_id=02ef5e49-4312-47b8-9106-c6225a86aaa5 status=completed worker=test-worker
+--- FAIL: TestProcessOnce_Success (0.00s)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x38 pc=0xc7916f]
+
+goroutine 44 [running]:
+testing.tRunner.func1.2({0xd950a0, 0x15fdfe0})
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1872 +0x237
+testing.tRunner.func1()
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1875 +0x35b
+panic({0xd950a0?, 0x15fdfe0?})
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/runtime/panic.go:783 +0x132
+task-queue-system/internal/worker/executor.TestProcessOnce_Success(0xc0000a3c00)
+	/home/fewzan/Projects/task-queue-system/internal/worker/executor/worker_processor_test.go:188 +0x1cf
+testing.tRunner(0xc0000a3c00, 0xee78b8)
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1934 +0xea
+created by testing.(*T).Run in goroutine 1
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1997 +0x465
+FAIL	task-queue-system/internal/worker/executor	0.063s
+ok  	task-queue-system/internal/worker/limiter	(cached)
+?   	task-queue-system/internal/worker/middleware	[no test files]
+ok  	task-queue-system/internal/worker/plugin	(cached)
+ok  	task-queue-system/internal/worker/plugins/standard	(cached)
+ok  	task-queue-system/internal/worker/pool	0.084s
+?   	task-queue-system/pkg/tq	[no test files]
+ok  	task-queue-system/test	0.068s
+FAIL
+FAILED
