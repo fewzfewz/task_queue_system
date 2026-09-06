@@ -184,7 +184,7 @@ func TestProcessOnce_Success(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	stored, _ := store.GetByID(context.Background(), job.ID)
+	stored, _ := store.GetFromDLQ(context.Background(), job.ID)
 	if stored.Status != jobs.StatusCompleted {
 		t.Fatalf("expected status completed, got %s", stored.Status)
 	}
@@ -223,7 +223,7 @@ func TestProcessOnce_RetryThenSuccess(t *testing.T) {
 		t.Fatalf("expected no error from second attempt, got %v", err)
 	}
 
-	stored, _ := store.GetByID(context.Background(), job.ID)
+	stored, _ := store.GetFromDLQ(context.Background(), job.ID)
 	if stored.Status != jobs.StatusCompleted {
 		t.Fatalf("expected status completed, got %s", stored.Status)
 	}
@@ -242,7 +242,7 @@ func TestProcessOnce_PermanentFail(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	stored, _ := store.GetByID(context.Background(), job.ID)
+	stored, _ := store.GetFromDLQ(context.Background(), job.ID)
 	if stored.Status != jobs.StatusFailed {
 		t.Fatalf("expected status failed, got %s", stored.Status)
 	}
