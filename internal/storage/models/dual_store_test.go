@@ -10,6 +10,8 @@ import (
 
 // mockStore implements a minimal in-memory Store for testing DualStore delegation.
 type mockStore struct {
+	LogAuditActionFunc func(ctx context.Context, log *AuditLog) error
+	ListAuditLogsFunc func(ctx context.Context, limit, offset int) ([]*AuditLog, error)
 	Store
 	saveCalled          int
 	getByIDCalled       int
@@ -286,3 +288,6 @@ func TestDualStoreDequeueSyncsSecondary(t *testing.T) {
 func TestDualStoreImplementsStore(t *testing.T) {
 	var _ Store = (*DualStore)(nil)
 }
+
+func (m *mockStore) LogAuditAction(ctx context.Context, log *AuditLog) error { if m.LogAuditActionFunc != nil { return m.LogAuditActionFunc(ctx, log) }; return nil }
+func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) { if m.ListAuditLogsFunc != nil { return m.ListAuditLogsFunc(ctx, limit, offset) }; return nil, nil }

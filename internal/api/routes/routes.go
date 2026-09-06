@@ -93,6 +93,7 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	read("GET /api/v1/clients", h.ListClients)
 	read("GET /api/v1/client/me", h.GetClientInfo)
 	read("GET /api/v1/job-types", h.ListJobTypes)
+	read("GET /api/v1/audit-logs", h.ListAuditLogs)
 
 	write("POST /jobs", h.CreateJob)
 	write("POST /jobs/batch", h.CreateJobBatch)

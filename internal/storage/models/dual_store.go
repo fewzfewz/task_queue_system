@@ -189,3 +189,11 @@ func (s *DualStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, er
 func (s *DualStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
 	return s.Primary.DeleteFromDLQ(ctx, jobID)
 }
+
+func (s *DualStore) LogAuditAction(ctx context.Context, log *AuditLog) error {
+	return s.Primary.LogAuditAction(ctx, log)
+}
+
+func (s *DualStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) {
+	return s.Primary.ListAuditLogs(ctx, limit, offset)
+}

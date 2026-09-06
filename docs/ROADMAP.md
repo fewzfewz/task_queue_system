@@ -96,3 +96,5 @@ None — all items completed.
 - [x] Job-Level TTL (Time-To-Live)
 - [x] True Dead Letter Queue (DLQ) with isolated storage
 - [x] Global Concurrency Limits (Per Job Type)
+- [x] RBAC (Role-Based Access Control)
+- [x] Audit Logging for security actions

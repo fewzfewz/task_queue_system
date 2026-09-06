@@ -17,6 +17,8 @@ import (
 
 // mockStore is a minimal Store that only implements RegisterClient / VerifyClient.
 type mockStore struct {
+	LogAuditActionFunc func(ctx context.Context, log *models.AuditLog) error
+	ListAuditLogsFunc func(ctx context.Context, limit, offset int) ([]*models.AuditLog, error)
 	models.Store // embed to satisfy the interface for unused methods
 	clients      map[string]string
 }
@@ -258,3 +260,6 @@ func TestCSRFProtect_SkipsAPIKey(t *testing.T) {
 		t.Errorf("API-key mutation without CSRF: expected 200, got %d", rec.Code)
 	}
 }
+
+func (m *mockStore) LogAuditAction(ctx context.Context, log *models.AuditLog) error { if m.LogAuditActionFunc != nil { return m.LogAuditActionFunc(ctx, log) }; return nil }
+func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*models.AuditLog, error) { if m.ListAuditLogsFunc != nil { return m.ListAuditLogsFunc(ctx, limit, offset) }; return nil, nil }

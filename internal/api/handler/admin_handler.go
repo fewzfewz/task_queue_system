@@ -1,6 +1,10 @@
 package handler
 
 import (
+	"strconv"
+	apperr "task-queue-system/internal/errors"
+	"task-queue-system/internal/storage/models"
+
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -667,3 +671,35 @@ const adminHTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>`
+
+// ListAuditLogs handles GET /api/v1/audit-logs
+func (h *JobHandler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
+	limit := parseIntQuery(r, "limit", 100)
+	offset := parseIntQuery(r, "offset", 0)
+
+	logs, err := h.service.Store().ListAuditLogs(r.Context(), limit, offset)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, apperr.CodeInternal, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []*models.AuditLog{}
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"audit_logs": logs,
+		"limit":      limit,
+		"offset":     offset,
+	})
+}
+
+func parseIntQuery(r *http.Request, key string, def int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return def
+	}
+	if i, err := strconv.Atoi(v); err == nil {
+		return i
+	}
+	return def
+}

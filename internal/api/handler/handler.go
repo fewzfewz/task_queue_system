@@ -2,6 +2,10 @@
 package handler
 
 import (
+	"context"
+
+	"github.com/google/uuid"
+
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1198,6 +1202,7 @@ func (h *JobHandler) CreateJobType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, err.Error())
 		return
 	}
+	h.auditLog(r.Context(), "create_job_type", "job_type", jt.Name, "")
 	h.writeJSON(w, http.StatusCreated, jt)
 }
 
@@ -1234,5 +1239,29 @@ func (h *JobHandler) UpdateJobType(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusInternalServerError, apperr.CodeInternal, err.Error())
 		return
 	}
+	h.auditLog(r.Context(), "update_job_type", "job_type", name, "")
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *JobHandler) auditLog(ctx context.Context, action, targetType, targetID, details string) {
+	actor := "system"
+	if role := middleware.RoleFromContext(ctx); role != "" {
+		actor = role // admin or viewer
+	}
+	if sess := middleware.SessionFromContext(ctx); sess != nil {
+		actor = sess.Username
+	} else if tid := middleware.TenantIDFromContext(ctx); tid != "" {
+		actor = "tenant:" + tid
+	}
+	
+	log := &models.AuditLog{
+		ID:         uuid.New().String(),
+		Timestamp:  time.Now().UTC(),
+		Actor:      actor,
+		Action:     action,
+		TargetType: targetType,
+		TargetID:   targetID,
+		Details:    details,
+	}
+	h.service.Store().LogAuditAction(context.Background(), log) // background ctx so it doesn't cancel
 }

@@ -93,6 +93,8 @@ type Store interface {
 	DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error)
 	GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error)
 	DeleteFromDLQ(ctx context.Context, jobID string) error
+	LogAuditAction(ctx context.Context, log *AuditLog) error
+	ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error)
 
 
 	// ArchiveOldJobs archives or purges jobs that are finalized and older than cutoff.
@@ -1124,3 +1126,20 @@ func (s *InMemoryStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
 	delete(s.dlq, jobID)
 	return nil
 }
+
+// AuditLog represents an administrative action for security tracking.
+type AuditLog struct {
+	ID         string    `json:"id"`
+	Timestamp  time.Time `json:"timestamp"`
+	Actor      string    `json:"actor"`
+	Action     string    `json:"action"`
+	TargetType string    `json:"target_type"`
+	TargetID   string    `json:"target_id"`
+	Details    string    `json:"details,omitempty"`
+}
+
+func (s *RedisStore) LogAuditAction(ctx context.Context, log *AuditLog) error { return nil }
+func (s *RedisStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) { return nil, nil }
+
+func (s *InMemoryStore) LogAuditAction(ctx context.Context, log *AuditLog) error { return nil }
+func (s *InMemoryStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) { return nil, nil }

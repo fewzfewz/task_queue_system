@@ -1,0 +1,44 @@
+ok  	task-queue-system/cmd/api	(cached)
+ok  	task-queue-system/cmd/chaos	(cached)
+ok  	task-queue-system/cmd/cli	(cached)
+ok  	task-queue-system/cmd/scheduler	(cached)
+ok  	task-queue-system/cmd/worker	(cached)
+?   	task-queue-system/docs	[no test files]
+ok  	task-queue-system/internal/api/dto	(cached)
+ok  	task-queue-system/internal/api/handler	(cached)
+ok  	task-queue-system/internal/api/middleware	0.038s
+ok  	task-queue-system/internal/api/routes	(cached)
+ok  	task-queue-system/internal/api/session	(cached)
+ok  	task-queue-system/internal/config	(cached)
+ok  	task-queue-system/internal/errors	(cached)
+ok  	task-queue-system/internal/health	(cached)
+ok  	task-queue-system/internal/jobs	(cached)
+ok  	task-queue-system/internal/jobtypes	(cached)
+ok  	task-queue-system/internal/logger	(cached)
+ok  	task-queue-system/internal/metrics	(cached)
+ok  	task-queue-system/internal/queue	(cached)
+ok  	task-queue-system/internal/queue/redis	(cached)
+ok  	task-queue-system/internal/secrets	(cached)
+2026/09/06 17:07:32 INFO job result updated job_id=cb0e0f04-de8f-49e5-b343-95420a072a5e status=completed worker=worker-1
+2026/09/06 17:07:32 INFO reconciling orphaned job job_id=665e35d8-91ed-4c81-b891-a2ff3cb10b19 worker_id=worker-1
+2026/09/06 17:07:32 INFO job status updated job_id=665e35d8-91ed-4c81-b891-a2ff3cb10b19 status=pending worker=""
+--- FAIL: TestBulkPurgeDLQ (0.00s)
+    job_service_test.go:421: expected 3 deleted jobs, got 0
+FAIL
+FAIL	task-queue-system/internal/service	0.012s
+ok  	task-queue-system/internal/sse	(cached)
+ok  	task-queue-system/internal/storage	(cached)
+FAIL	task-queue-system/internal/storage/models [build failed]
+ok  	task-queue-system/internal/storage/postgres	(cached)
+ok  	task-queue-system/internal/tracing	(cached)
+ok  	task-queue-system/internal/webhooks	(cached)
+ok  	task-queue-system/internal/worker/executor	(cached)
+ok  	task-queue-system/internal/worker/limiter	(cached)
+?   	task-queue-system/internal/worker/middleware	[no test files]
+ok  	task-queue-system/internal/worker/plugin	(cached)
+ok  	task-queue-system/internal/worker/plugins/standard	(cached)
+ok  	task-queue-system/internal/worker/pool	(cached)
+?   	task-queue-system/pkg/tq	[no test files]
+ok  	task-queue-system/test	(cached)
+FAIL
+FAILED

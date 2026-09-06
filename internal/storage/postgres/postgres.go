@@ -1012,3 +1012,36 @@ func (s *PostgresStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
 	}
 	return nil
 }
+
+func (s *PostgresStore) LogAuditAction(ctx context.Context, log *models.AuditLog) error {
+	query := `
+		INSERT INTO audit_logs (id, timestamp, actor, action, target_type, target_id, details)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`
+	_, err := s.pool.Exec(ctx, query, log.ID, log.Timestamp, log.Actor, log.Action, log.TargetType, log.TargetID, log.Details)
+	return err
+}
+
+func (s *PostgresStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*models.AuditLog, error) {
+	query := `
+		SELECT id, timestamp, actor, action, target_type, target_id, COALESCE(details::text, '')
+		FROM audit_logs
+		ORDER BY timestamp DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := s.pool.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*models.AuditLog
+	for rows.Next() {
+		var l models.AuditLog
+		if err := rows.Scan(&l.ID, &l.Timestamp, &l.Actor, &l.Action, &l.TargetType, &l.TargetID, &l.Details); err != nil {
+			return nil, err
+		}
+		logs = append(logs, &l)
+	}
+	return logs, nil
+}

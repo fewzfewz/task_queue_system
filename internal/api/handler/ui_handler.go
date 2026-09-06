@@ -731,6 +731,18 @@ const appHTML = `<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Page: Audit Logs -->
+        <div id="page-audit" class="page">
+          <div class="section-card">
+            <div class="section-title"><i class="fas fa-shield-alt"></i> System Audit Logs</div>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Track operator actions, configuration changes, and bulk deletions for compliance and security auditing.</p>
+            <table>
+              <thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+              <tbody id="audit-body"><tr><td colspan="5"><div class="state-box empty"><i class="fas fa-shield-alt"></i> No audit logs found.</div></td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        
         <!-- Page: Job Types -->
         <div id="page-jobtypes" class="page">
           <div class="section-card">
@@ -776,7 +788,7 @@ const appHTML = `<!DOCTYPE html>
       dlq: 'Dead Letter Queue',
       clients: 'Clients',
       webhooks: 'Webhooks',
-      jobtypes: 'Job Types'
+      jobtypes: 'Job Types', audit: 'Audit Logs'
     };
     const PAGE_DESCS = {
       dashboard: 'System overview and real-time statistics',
@@ -789,7 +801,7 @@ const appHTML = `<!DOCTYPE html>
       dlq: 'Manage failed jobs and retries',
       clients: 'Manage tenant credentials',
       webhooks: 'Configure event-driven HTTP callbacks',
-      jobtypes: 'Register custom job types for workers'
+      jobtypes: 'Register custom job types for workers', audit: 'Review security and administrative actions'
     };
     let SESSION = { authenticated:false, username:'', role:'', csrf_token:'' };
     let idleTimer = null;
@@ -1567,6 +1579,22 @@ const appHTML = `<!DOCTYPE html>
     }
 
     // ── Job Types ──
+    async function loadAudit() {
+      const body=document.getElementById('audit-body');
+      body.innerHTML='<tr><td colspan="5">'+stateLoading('Loading audit logs…')+'</td></tr>';
+      const out=await api(API_BASE+'/audit-logs?limit=50');
+      const list=(out&&out.audit_logs)||[];
+      if(!list.length){body.innerHTML='<tr><td colspan="5">'+stateEmpty('fa-shield-alt','No audit logs recorded yet.')+'</td></tr>';return;}
+      body.innerHTML=list.map(l=>
+        '<tr>'+
+        '<td style="color:var(--muted);font-size:12px;">'+new Date(l.timestamp).toLocaleString()+'</td>'+
+        '<td><span class="pill '+(l.actor==='admin'?'blue':'')+'">'+esc(l.actor)+'</span></td>'+
+        '<td><span class="pill warn">'+esc(l.action)+'</span></td>'+
+        '<td style="font-family:monospace;font-size:12px;">'+esc(l.target_type)+':'+esc(l.target_id)+'</td>'+
+        '<td style="color:var(--muted);font-size:12px;">'+esc(l.details||'')+'</td>'+
+        '</tr>').join('');
+    }
+    
     async function loadJobTypes() {
       const body=document.getElementById('jt-body');
       body.innerHTML='<tr><td colspan="6">'+stateLoading('Loading job types…')+'</td></tr>';
