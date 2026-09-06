@@ -296,6 +296,9 @@ func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 			filter.CreatedBefore = t
 		}
 	}
+	if search := r.URL.Query().Get("search"); search != "" {
+		filter.SearchQuery = search
+	}
 
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page <= 0 { page = 1 }

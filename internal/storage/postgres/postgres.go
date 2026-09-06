@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -558,18 +559,86 @@ func (s *PostgresStore) ListJobs(ctx context.Context, tenantID string, status st
 }
 
 func (s *PostgresStore) SearchJobs(ctx context.Context, filter models.JobFilter) ([]*jobs.Job, error) {
-	return s.ListJobs(ctx, filter.TenantID, filter.Status, filter.Type, filter.Limit, filter.Offset)
+	where := []string{"1=1"}
+	var args []interface{}
+	argID := 1
+
+	if filter.TenantID != "" {
+		where = append(where, fmt.Sprintf("tenant_id = $%d", argID))
+		args = append(args, filter.TenantID)
+		argID++
+	}
+	if filter.Status != "" {
+		where = append(where, fmt.Sprintf("status = $%d", argID))
+		args = append(args, filter.Status)
+		argID++
+	}
+	if filter.Type != "" {
+		where = append(where, fmt.Sprintf("type = $%d", argID))
+		args = append(args, filter.Type)
+		argID++
+	}
+	if filter.SearchQuery != "" {
+		where = append(where, fmt.Sprintf("(id ILIKE $%d OR payload::text ILIKE $%d OR error_history::text ILIKE $%d OR type ILIKE $%d)", argID, argID, argID, argID))
+		args = append(args, "%"+filter.SearchQuery+"%")
+		argID++
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			id, tenant_id, type, payload, status, priority, 
+			attempts, max_attempts, correlation_id, timeout_seconds, 
+			version, scheduled_at, created_at, updated_at, processed_by,
+			progress,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			error_history,
+			dedup_key, dependencies, shard_key, cron_expr
+		FROM jobs 
+		WHERE %s
+		ORDER BY created_at DESC
+		LIMIT $%d OFFSET $%d
+	`, strings.Join(where, " AND "), argID, argID+1)
+
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanJobs(rows)
 }
 
 func (s *PostgresStore) CountJobs(ctx context.Context, filter models.JobFilter) (int64, error) {
-	query := `
-		SELECT COUNT(*) FROM jobs
-		WHERE ($1 = '' OR tenant_id = $1)
-		  AND ($2 = '' OR status = $2)
-		  AND ($3 = '' OR type = $3)
-	`
+	where := []string{"1=1"}
+	var args []interface{}
+	argID := 1
+
+	if filter.TenantID != "" {
+		where = append(where, fmt.Sprintf("tenant_id = $%d", argID))
+		args = append(args, filter.TenantID)
+		argID++
+	}
+	if filter.Status != "" {
+		where = append(where, fmt.Sprintf("status = $%d", argID))
+		args = append(args, filter.Status)
+		argID++
+	}
+	if filter.Type != "" {
+		where = append(where, fmt.Sprintf("type = $%d", argID))
+		args = append(args, filter.Type)
+		argID++
+	}
+	if filter.SearchQuery != "" {
+		where = append(where, fmt.Sprintf("(id ILIKE $%d OR payload::text ILIKE $%d OR error_history::text ILIKE $%d OR type ILIKE $%d)", argID, argID, argID, argID))
+		args = append(args, "%"+filter.SearchQuery+"%")
+		argID++
+	}
+
+	query := fmt.Sprintf("SELECT COUNT(*) FROM jobs WHERE %s", strings.Join(where, " AND "))
 	var count int64
-	err := s.pool.QueryRow(ctx, query, filter.TenantID, filter.Status, filter.Type).Scan(&count)
+	err := s.pool.QueryRow(ctx, query, args...).Scan(&count)
 	return count, err
 }
 

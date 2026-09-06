@@ -23,6 +23,7 @@ type JobFilter struct {
 	TenantID     string
 	Status       string
 	Type         string
+	SearchQuery  string
 	LabelKey     string
 	LabelValue   string
 	CreatedAfter time.Time

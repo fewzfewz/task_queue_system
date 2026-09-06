@@ -91,5 +91,5 @@ None — all items completed.
 - [x] Map-Reduce (Fan-out / Fan-in) Primitives
 - [x] Middleware / Interceptor Pipeline
 - [x] Operator "Panic Buttons" (Manual Queue Pausing)
-- [ ] Full-Text Payload Search in the UI
+- [x] Full-Text Payload Search in the UI
 - [ ] Job-Level TTL (Time-To-Live)

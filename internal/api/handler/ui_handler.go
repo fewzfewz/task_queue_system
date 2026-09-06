@@ -575,10 +575,11 @@ const appHTML = `<!DOCTYPE html>
         <div id="page-search" class="page">
           <div class="section-card">
             <div class="section-title"><i class="fas fa-search"></i> Search Jobs</div>
-            <div class="grid-3">
+            <div class="grid-3" style="grid-template-columns:1fr 1fr 1fr 1fr;">
               <div class="form-group"><label>Filter by Type</label><input id="search-type" value="email" /></div>
               <div class="form-group"><label>Filter by Status</label><input id="search-status" value="" placeholder="pending/processing/completed/failed/recurring" /></div>
               <div class="form-group"><label>Tenant ID</label><input id="search-tenant" placeholder="Optional" /></div>
+              <div class="form-group"><label>Full-Text Payload</label><input id="search-query" placeholder="e.g. error, JSON text" /></div>
             </div>
             <div class="form-row" style="grid-template-columns:1fr 1fr 2fr;margin-bottom:12px;">
               <div class="form-group"><label>Page</label><input id="search-page" type="number" value="1" /></div>
@@ -1107,12 +1108,14 @@ const appHTML = `<!DOCTYPE html>
       const type=document.getElementById('search-type').value.trim();
       const status=document.getElementById('search-status').value.trim();
       const tenant=document.getElementById('search-tenant').value.trim();
+      const query=document.getElementById('search-query').value.trim();
       searchState.page=parseInt(document.getElementById('search-page').value)||1;
       searchState.limit=parseInt(document.getElementById('search-limit').value)||20;
       const p=new URLSearchParams({page:searchState.page,limit:searchState.limit});
       if(type)p.set('type',type);
       if(status)p.set('status',status);
       if(tenant)p.set('tenant_id',tenant);
+      if(query)p.set('search',query);
       const body=document.getElementById('search-body');
       body.innerHTML='<tr><td colspan="9">'+stateLoading('Searching jobs…')+'</td></tr>';
       const out=await api('/jobs?'+p.toString());
