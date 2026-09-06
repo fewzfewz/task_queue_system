@@ -18,6 +18,7 @@ type JobExecutor struct {
 	circuitBreaker *plugin.CircuitBreaker
 	jobTypeStore   *jobtypes.Store
 	logger         *slog.Logger
+	middlewares    []plugin.Middleware
 }
 
 // NewJobExecutor creates a JobExecutor using the system-wide global plugin registry.
@@ -26,11 +27,17 @@ func NewJobExecutor(logger *slog.Logger, jobTypeStore ...*jobtypes.Store) *JobEx
 		registry:       plugin.GetGlobalRegistry(),
 		circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second),
 		logger:         logger,
+		middlewares:    []plugin.Middleware{},
 	}
 	if len(jobTypeStore) > 0 {
 		je.jobTypeStore = jobTypeStore[0]
 	}
 	return je
+}
+
+// Use appends a new middleware to the execution pipeline.
+func (je *JobExecutor) Use(m plugin.Middleware) {
+	je.middlewares = append(je.middlewares, m)
 }
 
 // RegisterPlugin adds a new job type capability to the executor.
@@ -77,20 +84,33 @@ func (je *JobExecutor) Execute(ctx context.Context, job *jobs.Job) (res interfac
 		return nil, fmt.Errorf("job_executor: no plugin for %q: %w", job.Type, err)
 	}
 
-	// ── Fault Isolation: Recover from Panics ────────────────────────────────
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("plugin panicked during execution: %v", r)
-			je.circuitBreaker.RecordFailure(job.Type, err)
-			je.logger.Error("plugin panicked during execution",
-				"job_type", job.Type,
-				"panic", r,
-				"correlation_id", job.CorrelationID,
-			)
+	// ── Build Middleware Chain ──────────────────────────────────────────────
+	finalHandler := func(ctx context.Context, job *jobs.Job) (interface{}, error) {
+		// ── Fault Isolation: Recover from Panics ────────────────────────────────
+		var panicErr error
+		var result interface{}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					panicErr = fmt.Errorf("plugin panicked during execution: %v", r)
+					je.circuitBreaker.RecordFailure(job.Type, panicErr)
+					je.logger.Error("plugin panicked during execution",
+						"job_type", job.Type,
+						"panic", r,
+						"correlation_id", job.CorrelationID,
+					)
+				}
+			}()
+			result, err = p.Execute(ctx, job)
+		}()
+		if panicErr != nil {
+			return nil, panicErr
 		}
-	}()
+		return result, err
+	}
 
-	res, err = p.Execute(ctx, job)
+	chain := plugin.BuildChain(je.middlewares, finalHandler)
+	res, err = chain(ctx, job)
 
 	if err != nil {
 		je.circuitBreaker.RecordFailure(job.Type, err)

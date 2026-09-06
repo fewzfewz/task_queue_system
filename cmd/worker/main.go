@@ -14,14 +14,15 @@ import (
 
 	"task-queue-system/internal/config"
 	"task-queue-system/internal/health"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
 	"task-queue-system/internal/service"
 	"task-queue-system/internal/storage"
 	"task-queue-system/internal/tracing"
-	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/webhooks"
 	"task-queue-system/internal/worker/executor"
+	"task-queue-system/internal/worker/middleware"
 	_ "task-queue-system/internal/worker/plugins/standard" // Dynamic plugin auto-loading
 	"task-queue-system/internal/worker/pool"
 
@@ -44,7 +45,6 @@ func cors(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
 
 func main() {
 	// ── 1. Setup structured logging ───────────────────────────────────────────
@@ -112,6 +112,9 @@ func main() {
 	// The executor automatically picks up plugins registered via init() calls
 	// in the imported packages.
 	jobExec := executor.NewJobExecutor(log, jobtypes.NewStore(redisClient))
+
+	// Add global middleware to the execution pipeline
+	jobExec.Use(middleware.LoggingMiddleware(log))
 
 	// ── 6. Setup Worker Pool ──────────────────────────────────────────────────
 	// Number of concurrent workers. We use 50 as a default for massive load testing.
