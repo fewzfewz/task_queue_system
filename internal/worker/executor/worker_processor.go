@@ -149,7 +149,15 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		return nil
 	}
 
-	// 2. Persistent Store Check (Fallback)
+	// 2. Operator Panic Button Check (Queue Paused)
+	isPaused, err := wp.service.IsJobTypePaused(ctx, job.Type)
+	if err == nil && isPaused {
+		log.Warn("job type is paused by operator (panic button), deferring job", "delay", "10s")
+		wp.deferJob(ctx, context.Background(), job, log)
+		return nil
+	}
+
+	// 3. Persistent Store Check (Fallback)
 	storedJob, err := wp.service.GetJobStatus(ctx, job.ID)
 	if err == nil && storedJob != nil {
 		if storedJob.Status == jobs.StatusCompleted || storedJob.Status == jobs.StatusFailed || storedJob.Status == jobs.StatusCancelled {

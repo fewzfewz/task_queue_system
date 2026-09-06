@@ -498,6 +498,15 @@ const appHTML = `<!DOCTYPE html>
                 <div class="section-title"><i class="fas fa-shield-halved"></i> Circuit Breakers</div>
                 <div id="cb-state"><div class="state-box loading"><span class="spinner-sm"></span> Loading circuit breakers…</div></div>
               </div>
+              <div class="section-card slide-up">
+                <div class="section-title"><i class="fas fa-exclamation-triangle" style="color:var(--danger)"></i> Panic Buttons (Queue Pause)</div>
+                <div id="pb-state"><div class="state-box loading"><span class="spinner-sm"></span> Loading paused queues…</div></div>
+                <div style="display:flex; gap: 8px; margin-top: 8px;">
+                  <input type="text" id="pb-input" placeholder="job_type (e.g. email)" style="flex-grow:1;" />
+                  <button class="btn-danger btn-sm" onclick="pauseQueue()"><i class="fas fa-pause"></i> Pause</button>
+                  <button class="btn-primary btn-sm" onclick="resumeQueue()"><i class="fas fa-play"></i> Resume</button>
+                </div>
+              </div>
             </div>
             <div>
               <div class="section-card slide-up">
@@ -1333,6 +1342,36 @@ const appHTML = `<!DOCTYPE html>
       toast('Reset breaker for '+type); loadCircuitBreakers();
     }
 
+    // ── Panic Buttons ──
+    async function loadPanicButtons() {
+      const container=document.getElementById('pb-state');
+      if(!container)return;
+      const out=await api(API_BASE+'/operator/paused-queues');
+      if(!out||!out._ok){container.innerHTML=stateError((out&&out._error)||'Failed to load paused queues');return;}
+      const paused=out.paused_queues||[];
+      if(paused.length===0){
+        container.innerHTML=stateEmpty('fa-check-circle','All queues running smoothly.');
+        return;
+      }
+      container.innerHTML='<div style="color:var(--danger);font-weight:600;font-size:12px;margin-bottom:8px;">'+paused.length+' paused queue(s)</div>'+
+        paused.map(q=>'<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border);">'+
+        '<span style="font-family:monospace;font-size:12px;">'+esc(q)+'</span>'+
+        '<button class="btn-primary btn-sm" onclick="resumeQueue(\''+esc(q)+'\')">Resume</button></div>').join('');
+    }
+    async function pauseQueue(type) {
+      const q=type||document.getElementById('pb-input').value.trim();
+      if(!q){toast('Enter a job type');return;}
+      if(!confirmAction('Pause all processing for job type: "'+q+'"?'))return;
+      await api(API_BASE+'/operator/queue/'+encodeURIComponent(q)+'/pause',{method:'POST'});
+      toast('Paused queue: '+q); document.getElementById('pb-input').value=''; loadPanicButtons();
+    }
+    async function resumeQueue(type) {
+      const q=type||document.getElementById('pb-input').value.trim();
+      if(!q){toast('Enter a job type');return;}
+      await api(API_BASE+'/operator/queue/'+encodeURIComponent(q)+'/resume',{method:'POST'});
+      toast('Resumed queue: '+q); document.getElementById('pb-input').value=''; loadPanicButtons();
+    }
+
     // ── DLQ ──
     let dlqState={page:1,limit:20,cache:[],total:0};
     async function loadDLQ() {
@@ -1637,7 +1676,8 @@ const appHTML = `<!DOCTYPE html>
         loadCircuitBreakers().catch(function(){}),
         loadRateLimits().catch(function(){}),
         loadWebhooks().catch(function(){}),
-        loadJobTypes().catch(function(){})
+        loadJobTypes().catch(function(){}),
+        loadPanicButtons().catch(function(){})
       ]);
       updateHealthBanner();
     }

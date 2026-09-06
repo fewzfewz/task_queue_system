@@ -70,6 +70,12 @@ type Queue interface {
 	// Cancellations
 	PublishCancellation(ctx context.Context, jobID string) error
 	SubscribeCancellations(ctx context.Context) (<-chan string, error)
+
+	// Operator Panic Buttons
+	PauseJobType(ctx context.Context, jobType string) error
+	ResumeJobType(ctx context.Context, jobType string) error
+	IsJobTypePaused(ctx context.Context, jobType string) (bool, error)
+	GetPausedJobTypes(ctx context.Context) ([]string, error)
 }
 
 
@@ -110,3 +116,4 @@ type PriorityDepthReport struct {
 	PartitionsPerPriority int                           `json:"partitions_per_priority"`
 	ByPriority            map[string]PriorityTierDepth  `json:"by_priority"`
 }
+

@@ -110,6 +110,11 @@ func NewRouter(q queue.Queue, store models.Store, logger *slog.Logger, cfg *conf
 	write("POST /api/v1/clients/{tenant_id}/rotate", h.RotateClientKey)
 	write("PUT /api/v1/clients/{tenant_id}/config", h.UpdateClientConfig)
 
+	// Operator Panic Buttons
+	read("GET /api/v1/operator/paused-queues", h.GetPausedQueues)
+	write("POST /api/v1/operator/queue/{type}/pause", h.PauseQueue)
+	write("POST /api/v1/operator/queue/{type}/resume", h.ResumeQueue)
+
 	// Logout is CSRF-protected but available to any authenticated session.
 	mux.Handle("POST /api/v1/logout", auth(csrf(http.HandlerFunc(h.Logout))))
 

@@ -327,3 +327,9 @@ func (m *mockQ) ReconcileDeferredJobs(ctx context.Context) (int, error) { return
 
 func (m *mockQ) PublishCancellation(ctx context.Context, jobID string) error { return nil }
 func (m *mockQ) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }
+
+// Operator Panic Button Mock Implementations
+func (m *mockQ) PauseJobType(ctx context.Context, jobType string) error { return nil }
+func (m *mockQ) ResumeJobType(ctx context.Context, jobType string) error { return nil }
+func (m *mockQ) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
+func (m *mockQ) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }

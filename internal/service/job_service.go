@@ -854,3 +854,23 @@ func (s *JobService) PromoteReadyDAGJobs(ctx context.Context) (int64, error) {
 	}
 	return count, nil
 }
+
+// PauseJobType pauses execution for a specific job type.
+func (s *JobService) PauseJobType(ctx context.Context, jobType string) error {
+	return s.queue.PauseJobType(ctx, jobType)
+}
+
+// ResumeJobType resumes execution for a specific job type.
+func (s *JobService) ResumeJobType(ctx context.Context, jobType string) error {
+	return s.queue.ResumeJobType(ctx, jobType)
+}
+
+// IsJobTypePaused checks if a specific job type is currently paused.
+func (s *JobService) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) {
+	return s.queue.IsJobTypePaused(ctx, jobType)
+}
+
+// GetPausedJobTypes returns a list of all currently paused job types.
+func (s *JobService) GetPausedJobTypes(ctx context.Context) ([]string, error) {
+	return s.queue.GetPausedJobTypes(ctx)
+}

@@ -990,3 +990,29 @@ func (q *RedisQueue) SubscribeCancellations(ctx context.Context) (<-chan string,
 
 	return out, nil
 }
+
+// ── Operator Panic Buttons ────────────────────────────────────────────────
+
+// PauseJobType pauses execution for a specific job type.
+func (q *RedisQueue) PauseJobType(ctx context.Context, jobType string) error {
+	key := "task_queue:paused:jobtype"
+	return q.client.SAdd(ctx, key, jobType).Err()
+}
+
+// ResumeJobType resumes execution for a specific job type.
+func (q *RedisQueue) ResumeJobType(ctx context.Context, jobType string) error {
+	key := "task_queue:paused:jobtype"
+	return q.client.SRem(ctx, key, jobType).Err()
+}
+
+// IsJobTypePaused checks if a specific job type is currently paused.
+func (q *RedisQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) {
+	key := "task_queue:paused:jobtype"
+	return q.client.SIsMember(ctx, key, jobType).Result()
+}
+
+// GetPausedJobTypes returns a list of all currently paused job types.
+func (q *RedisQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) {
+	key := "task_queue:paused:jobtype"
+	return q.client.SMembers(ctx, key).Result()
+}

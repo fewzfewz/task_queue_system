@@ -89,7 +89,7 @@ None — all items completed.
 *(Future capabilities to compete with Temporal/Step Functions)*
 - [x] Multi-Language Worker SDKs (Python/Node.js integration via HTTP Push)
 - [x] Map-Reduce (Fan-out / Fan-in) Primitives
-- [ ] Middleware / Interceptor Pipeline
-- [ ] Operator "Panic Buttons" (Manual Queue Pausing)
+- [x] Middleware / Interceptor Pipeline
+- [x] Operator "Panic Buttons" (Manual Queue Pausing)
 - [ ] Full-Text Payload Search in the UI
 - [ ] Job-Level TTL (Time-To-Live)

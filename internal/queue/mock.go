@@ -138,3 +138,8 @@ func (m *MockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { re
 
 func (m *MockQueue) PublishCancellation(ctx context.Context, jobID string) error { return nil }
 func (m *MockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }
+
+func (m *MockQueue) PauseJobType(ctx context.Context, jobType string) error { return nil }
+func (m *MockQueue) ResumeJobType(ctx context.Context, jobType string) error { return nil }
+func (m *MockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
+func (m *MockQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
