@@ -296,6 +296,7 @@ func TestGetJobStatus_TenantFilter(t *testing.T) {
 
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
+	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
 
 	req := httptest.NewRequest("GET", "/jobs/"+job.ID, nil)
 	req.SetPathValue("id", job.ID)
@@ -316,6 +317,7 @@ func TestListFailedJobs(t *testing.T) {
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusFailed
 	store.Save(context.Background(), job)
+	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
 
 	req := httptest.NewRequest("GET", "/api/v1/dlq?tenant_id=tenant-a", nil)
 	w := httptest.NewRecorder()
@@ -342,6 +344,7 @@ func TestBulkPurgeDLQ_Success(t *testing.T) {
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusFailed
 	store.Save(context.Background(), job)
+	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
 
 	req := httptest.NewRequest("DELETE", "/api/v1/dlq?older_than=2026-12-31T23:59:59Z", nil)
 	w := httptest.NewRecorder()

@@ -1115,7 +1115,7 @@ func (h *JobHandler) DeleteFailedJob(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 
-	if err := h.service.DeleteJob(r.Context(), id, tenantID); err != nil {
+	if err := h.service.DeleteDLQJob(r.Context(), id, tenantID); err != nil {
 		h.writeAppError(w, err)
 		return
 	}

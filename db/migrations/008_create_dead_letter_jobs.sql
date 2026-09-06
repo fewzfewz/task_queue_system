@@ -1,0 +1,32 @@
+CREATE TABLE IF NOT EXISTS dead_letter_jobs (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    labels JSONB,
+    priority TEXT NOT NULL,
+    status TEXT NOT NULL,
+    retries INT NOT NULL,
+    max_retries INT NOT NULL,
+    backoff_algorithm TEXT,
+    backoff_jitter TEXT,
+    cron_expr TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    run_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ,
+    paused BOOLEAN NOT NULL DEFAULT false,
+    progress FLOAT8 NOT NULL DEFAULT 0.0,
+    webhook_url TEXT,
+    webhook_secret TEXT,
+    webhook_events TEXT,
+    webhook_last_status TEXT,
+    webhook_attempts INT,
+    error_history JSONB,
+    dedup_key TEXT,
+    dependencies JSONB,
+    shard_key TEXT,
+    tenant_id TEXT NOT NULL,
+    dead_letter_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_dlq_tenant ON dead_letter_jobs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_dlq_created ON dead_letter_jobs(created_at);

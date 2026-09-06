@@ -1,0 +1,53 @@
+ok  	task-queue-system/cmd/api	(cached)
+ok  	task-queue-system/cmd/chaos	(cached)
+ok  	task-queue-system/cmd/cli	(cached)
+ok  	task-queue-system/cmd/scheduler	(cached)
+ok  	task-queue-system/cmd/worker	(cached)
+?   	task-queue-system/docs	[no test files]
+ok  	task-queue-system/internal/api/dto	(cached)
+2026/09/06 16:21:54.803730 handler.go:138: INFO job created job_id=6622ff1e-4c91-495e-9645-3b9985115f74 job_type=email correlation_id=c4fc2e2f-ceed-4063-a84f-79bd283cb753
+2026/09/06 16:21:54.806254 handler.go:974: WARN request failed code=TOO_MANY_REQUESTS error="tenant rate limit exceeded"
+2026/09/06 16:21:54.806576 handler.go:138: INFO job created job_id=69b49a11-ae72-4f09-b49c-5d2756297845 job_type=email correlation_id=d1509169-cc90-46a8-88b7-f8d9d0d713a5
+2026/09/06 16:21:54.807002 handler.go:974: WARN request failed code=NOT_FOUND error="job not found: nonexistent"
+--- FAIL: TestListFailedJobs (0.00s)
+    handler_test.go:332: expected 1 job, got 0
+--- FAIL: TestBulkPurgeDLQ_Success (0.00s)
+    handler_test.go:357: expected 1 deleted, got 0
+FAIL
+FAIL	task-queue-system/internal/api/handler	0.338s
+ok  	task-queue-system/internal/api/middleware	(cached)
+ok  	task-queue-system/internal/api/routes	(cached)
+ok  	task-queue-system/internal/api/session	(cached)
+ok  	task-queue-system/internal/config	(cached)
+ok  	task-queue-system/internal/errors	(cached)
+ok  	task-queue-system/internal/health	(cached)
+ok  	task-queue-system/internal/jobs	(cached)
+ok  	task-queue-system/internal/jobtypes	(cached)
+ok  	task-queue-system/internal/logger	(cached)
+ok  	task-queue-system/internal/metrics	(cached)
+ok  	task-queue-system/internal/queue	(cached)
+ok  	task-queue-system/internal/queue/redis	(cached)
+ok  	task-queue-system/internal/secrets	(cached)
+2026/09/06 16:21:56 INFO job result updated job_id=8ee09ac4-cb0e-4302-bc2a-3f17723627c3 status=completed worker=worker-1
+2026/09/06 16:21:56 INFO reconciling orphaned job job_id=270b2dc4-579c-4b2f-82e2-54964e27a3b8 worker_id=worker-1
+2026/09/06 16:21:56 INFO job status updated job_id=270b2dc4-579c-4b2f-82e2-54964e27a3b8 status=pending worker=""
+--- FAIL: TestBulkPurgeDLQ (0.00s)
+    job_service_test.go:419: expected 3 deleted jobs, got 0
+FAIL
+FAIL	task-queue-system/internal/service	0.009s
+ok  	task-queue-system/internal/sse	(cached)
+ok  	task-queue-system/internal/storage	(cached)
+ok  	task-queue-system/internal/storage/models	(cached)
+ok  	task-queue-system/internal/storage/postgres	(cached)
+ok  	task-queue-system/internal/tracing	(cached)
+ok  	task-queue-system/internal/webhooks	(cached)
+ok  	task-queue-system/internal/worker/executor	(cached)
+ok  	task-queue-system/internal/worker/limiter	(cached)
+?   	task-queue-system/internal/worker/middleware	[no test files]
+ok  	task-queue-system/internal/worker/plugin	(cached)
+ok  	task-queue-system/internal/worker/plugins/standard	(cached)
+ok  	task-queue-system/internal/worker/pool	(cached)
+?   	task-queue-system/pkg/tq	[no test files]
+ok  	task-queue-system/test	(cached)
+FAIL
+FAILED

@@ -897,3 +897,118 @@ func (s *PostgresStore) GetDependentJobs(ctx context.Context, parentID string) (
 	}
 	return s.GetByIDs(ctx, ids)
 }
+
+// ── DLQ Implementations ───────────────────────────────────────────────────
+
+func (s *PostgresStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
+	query := `
+		WITH moved AS (
+			DELETE FROM jobs WHERE id = $1 RETURNING *
+		)
+		INSERT INTO dead_letter_jobs (
+			id, type, payload, labels, priority, status, retries, max_retries,
+			backoff_algorithm, backoff_jitter, cron_expr, created_at, updated_at, run_at, expires_at,
+			paused, progress, webhook_url, webhook_secret, webhook_events, webhook_last_status,
+			webhook_attempts, error_history, dedup_key, dependencies, shard_key, tenant_id, dead_letter_reason
+		)
+		SELECT 
+			id, type, payload, labels, priority, status, retries, max_retries,
+			backoff_algorithm, backoff_jitter, cron_expr, created_at, updated_at, run_at, expires_at,
+			paused, progress, webhook_url, webhook_secret, webhook_events, webhook_last_status,
+			webhook_attempts, error_history, dedup_key, dependencies, shard_key, tenant_id, $2
+		FROM moved;
+	`
+	result, err := s.pool.Exec(ctx, query, jobID, reason)
+	if err != nil {
+		return fmt.Errorf("postgres_store: failed to move job %q to dlq: %w", jobID, err)
+	}
+	if result.RowsAffected() == 0 {
+		return models.ErrJobNotFound
+	}
+	return nil
+}
+
+func (s *PostgresStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
+	query := `
+		SELECT id, type, payload, status, priority, retries, max_retries,
+			backoff_algorithm, backoff_jitter, created_at, updated_at, run_at, labels, paused, progress,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at
+		FROM dead_letter_jobs
+		WHERE tenant_id = COALESCE(NULLIF($1, ''), tenant_id)
+		AND type = COALESCE(NULLIF($2, ''), type)
+		ORDER BY created_at DESC
+		LIMIT $3 OFFSET $4
+	`
+	rows, err := s.pool.Query(ctx, query, tenantID, jobType, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("postgres_store: dlq list query failed: %w", err)
+	}
+	defer rows.Close()
+	return s.scanJobs(rows)
+}
+
+func (s *PostgresStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM dead_letter_jobs
+		WHERE tenant_id = COALESCE(NULLIF($1, ''), tenant_id)
+		AND type = COALESCE(NULLIF($2, ''), type)
+	`
+	var count int64
+	err := s.pool.QueryRow(ctx, query, tenantID, jobType).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("postgres_store: dlq count query failed: %w", err)
+	}
+	return count, nil
+}
+
+func (s *PostgresStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	query := `
+		DELETE FROM dead_letter_jobs
+		WHERE tenant_id = COALESCE(NULLIF($1, ''), tenant_id)
+		AND type = COALESCE(NULLIF($2, ''), type)
+		AND updated_at < $3
+	`
+	result, err := s.pool.Exec(ctx, query, tenantID, jobType, before)
+	if err != nil {
+		return 0, fmt.Errorf("postgres_store: dlq bulk delete failed: %w", err)
+	}
+	return result.RowsAffected(), nil
+}
+
+func (s *PostgresStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
+	query := `
+		SELECT id, type, payload, status, priority, retries, max_retries,
+			backoff_algorithm, backoff_jitter, created_at, updated_at, run_at, labels, paused, progress,
+			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
+			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at
+		FROM dead_letter_jobs
+		WHERE id = $1
+	`
+	rows, err := s.pool.Query(ctx, query, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres_store: get from dlq failed: %w", err)
+	}
+	defer rows.Close()
+	jobs, err := s.scanJobs(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, models.ErrJobNotFound
+	}
+	return jobs[0], nil
+}
+
+func (s *PostgresStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	query := "DELETE FROM dead_letter_jobs WHERE id = $1"
+	result, err := s.pool.Exec(ctx, query, jobID)
+	if err != nil {
+		return fmt.Errorf("postgres_store: delete from dlq failed: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return models.ErrJobNotFound
+	}
+	return nil
+}

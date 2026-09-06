@@ -86,6 +86,14 @@ type Store interface {
 
 	// RecoverOrphans resets jobs from crashed workers back to 'pending'.
 	RecoverOrphans(ctx context.Context, timeout time.Duration) (int64, error)
+	// DLQ specific
+	MoveToDLQ(ctx context.Context, jobID string, reason string) error
+	ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error)
+	CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error)
+	DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error)
+	GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error)
+	DeleteFromDLQ(ctx context.Context, jobID string) error
+
 
 	// ArchiveOldJobs archives or purges jobs that are finalized and older than cutoff.
 	ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error)
@@ -134,6 +142,7 @@ var ErrClientNotFound = fmt.Errorf("client not found")
 type InMemoryStore struct {
 	mu      sync.RWMutex
 	data    map[string]*jobs.Job
+	dlq     map[string]*jobs.Job
 	clients map[string]string // apiKeyHash -> tenantID
 }
 
@@ -141,6 +150,7 @@ type InMemoryStore struct {
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		data:    make(map[string]*jobs.Job),
+		dlq:     make(map[string]*jobs.Job),
 		clients: make(map[string]string),
 	}
 }
@@ -1047,4 +1057,70 @@ func (s *RedisStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int6
 	}
 
 	return int64(len(toPurge)), nil
+}
+
+// ── DLQ (No-op in Redis-only for now) ──
+func (s *RedisStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error { return nil }
+func (s *RedisStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) { return nil, nil }
+func (s *RedisStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) { return 0, nil }
+func (s *RedisStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) { return 0, nil }
+func (s *RedisStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) { return nil, ErrJobNotFound }
+func (s *RedisStore) DeleteFromDLQ(ctx context.Context, jobID string) error { return nil }
+
+// ── DLQ (InMemoryStore) ──
+func (s *InMemoryStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j, ok := s.data[jobID]
+	if !ok { return ErrJobNotFound }
+	delete(s.data, jobID)
+	s.dlq[jobID] = j
+	return nil
+}
+func (s *InMemoryStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var res []*jobs.Job
+	for _, j := range s.dlq {
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) {
+			res = append(res, j)
+		}
+	}
+	return res, nil
+}
+func (s *InMemoryStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c := int64(0)
+	for _, j := range s.dlq {
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) { c++ }
+	}
+	return c, nil
+}
+func (s *InMemoryStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := int64(0)
+	for id, j := range s.dlq {
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) && j.UpdatedAt.Before(before) {
+			delete(s.dlq, id)
+			c++
+		}
+	}
+	return c, nil
+}
+func (s *InMemoryStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	j, ok := s.dlq[jobID]
+	if !ok { return nil, ErrJobNotFound }
+	return j, nil
+}
+func (s *InMemoryStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.dlq[jobID]
+	if !ok { return ErrJobNotFound }
+	delete(s.dlq, jobID)
+	return nil
 }

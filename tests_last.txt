@@ -1,0 +1,90 @@
+ok  	task-queue-system/cmd/api	(cached)
+ok  	task-queue-system/cmd/chaos	(cached)
+ok  	task-queue-system/cmd/cli	(cached)
+ok  	task-queue-system/cmd/scheduler	(cached)
+ok  	task-queue-system/cmd/worker	(cached)
+?   	task-queue-system/docs	[no test files]
+ok  	task-queue-system/internal/api/dto	(cached)
+2026/09/06 16:32:36.908843 handler.go:138: INFO job created job_id=2b262332-b4e4-4ba5-9962-6829d302ab9b job_type=email correlation_id=5fa28d76-d825-4728-846d-80fe2e177f76
+2026/09/06 16:32:36.910432 handler.go:974: WARN request failed code=TOO_MANY_REQUESTS error="tenant rate limit exceeded"
+2026/09/06 16:32:36.911052 handler.go:138: INFO job created job_id=d7ff2344-d3c6-4e5b-a9cb-016de92c169f job_type=email correlation_id=444a2749-2365-4ab2-9a28-a8bc08f467e6
+2026/09/06 16:32:36.911759 handler.go:974: WARN request failed code=NOT_FOUND error="job not found: nonexistent"
+--- FAIL: TestListFailedJobs (0.00s)
+    handler_test.go:332: expected 1 job, got 0
+--- FAIL: TestBulkPurgeDLQ_Success (0.00s)
+    handler_test.go:357: expected 1 deleted, got 0
+FAIL
+FAIL	task-queue-system/internal/api/handler	0.602s
+ok  	task-queue-system/internal/api/middleware	(cached)
+ok  	task-queue-system/internal/api/routes	(cached)
+ok  	task-queue-system/internal/api/session	(cached)
+ok  	task-queue-system/internal/config	(cached)
+ok  	task-queue-system/internal/errors	(cached)
+ok  	task-queue-system/internal/health	(cached)
+ok  	task-queue-system/internal/jobs	(cached)
+ok  	task-queue-system/internal/jobtypes	(cached)
+ok  	task-queue-system/internal/logger	(cached)
+ok  	task-queue-system/internal/metrics	(cached)
+ok  	task-queue-system/internal/queue	(cached)
+ok  	task-queue-system/internal/queue/redis	(cached)
+ok  	task-queue-system/internal/secrets	(cached)
+2026/09/06 16:32:39 INFO job result updated job_id=94a18001-c777-4301-8c03-3c50ed3668e8 status=completed worker=worker-1
+2026/09/06 16:32:39 INFO reconciling orphaned job job_id=6eb232e0-2982-48d8-844a-e36a1d7c06bb worker_id=worker-1
+2026/09/06 16:32:39 INFO job status updated job_id=6eb232e0-2982-48d8-844a-e36a1d7c06bb status=pending worker=""
+--- FAIL: TestBulkPurgeDLQ (0.00s)
+    job_service_test.go:419: expected 3 deleted jobs, got 0
+FAIL
+FAIL	task-queue-system/internal/service	0.062s
+ok  	task-queue-system/internal/sse	(cached)
+ok  	task-queue-system/internal/storage	(cached)
+ok  	task-queue-system/internal/storage/models	(cached)
+ok  	task-queue-system/internal/storage/postgres	(cached)
+ok  	task-queue-system/internal/tracing	(cached)
+ok  	task-queue-system/internal/webhooks	(cached)
+2026/09/06 16:32:42.135502 job_executor.go:97: ERROR plugin panicked during execution job_type=panicking panic="something went wrong" correlation_id=9e2a6253-cc1f-4e00-996d-bdad10d570a8
+2026/09/06 16:32:42.136112 job_executor.go:46: WARN plugin registration failed job_type=test_job error="plugin registry: type \"test_job\" already registered"
+2026/09/06 16:32:42.136404 worker_processor.go:139: INFO processing job dequeued worker_id=test-worker job_id=c66a8fda-a931-4d46-86eb-7b937f4310e0 job_type=test correlation_id=14fce586-cb10-486e-ad6e-4a4c39d821f7 worker_id=test-worker status=processing
+2026/09/06 16:32:42.136521 job_service.go:403: INFO job status updated job_id=c66a8fda-a931-4d46-86eb-7b937f4310e0 status=processing worker=test-worker
+2026/09/06 16:32:42.136599 worker_processor.go:239: INFO job succeeded worker_id=test-worker job_id=c66a8fda-a931-4d46-86eb-7b937f4310e0 job_type=test correlation_id=14fce586-cb10-486e-ad6e-4a4c39d821f7 worker_id=test-worker status=completed execution_time_ms=0
+2026/09/06 16:32:42.136644 job_service.go:413: INFO job result updated job_id=c66a8fda-a931-4d46-86eb-7b937f4310e0 status=completed worker=test-worker
+2026/09/06 16:32:42.136954 worker_processor.go:139: INFO processing job dequeued worker_id=test-worker job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 job_type=test correlation_id=a9093eb2-d92b-4e4d-861f-bee57edd4048 worker_id=test-worker status=processing
+2026/09/06 16:32:42.137040 job_service.go:403: INFO job status updated job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 status=processing worker=test-worker
+2026/09/06 16:32:42.137131 worker_processor.go:265: ERROR job execution failed worker_id=test-worker job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 job_type=test correlation_id=a9093eb2-d92b-4e4d-861f-bee57edd4048 worker_id=test-worker status=error error="temporary error" execution_time_ms=0 retries_used=0 max_retries=3
+2026/09/06 16:32:42.137440 job_service.go:403: INFO job status updated job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 status=pending worker=test-worker
+2026/09/06 16:32:42.137477 worker_processor.go:314: WARN scheduling job for retry with backoff worker_id=test-worker job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 job_type=test correlation_id=a9093eb2-d92b-4e4d-861f-bee57edd4048 worker_id=test-worker next_attempt=2 max_retries=3 delay=2s
+2026/09/06 16:32:44.138956 worker_processor.go:139: INFO processing job dequeued worker_id=test-worker job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 job_type=test correlation_id=a9093eb2-d92b-4e4d-861f-bee57edd4048 worker_id=test-worker status=processing
+2026/09/06 16:32:44.139239 job_service.go:403: INFO job status updated job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 status=processing worker=test-worker
+2026/09/06 16:32:44.140232 worker_processor.go:239: INFO job succeeded worker_id=test-worker job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 job_type=test correlation_id=a9093eb2-d92b-4e4d-861f-bee57edd4048 worker_id=test-worker status=completed execution_time_ms=0
+2026/09/06 16:32:44.142797 job_service.go:413: INFO job result updated job_id=3becacd3-93f5-48a8-92d0-415b59f67e77 status=completed worker=test-worker
+2026/09/06 16:32:44.143158 worker_processor.go:139: INFO processing job dequeued worker_id=test-worker job_id=bc2eb904-ebf1-4b54-a2a0-2a39eec59881 job_type=test correlation_id=7b7f1984-6c2a-466b-8208-ce057d6f1403 worker_id=test-worker status=processing
+2026/09/06 16:32:44.143198 job_service.go:403: INFO job status updated job_id=bc2eb904-ebf1-4b54-a2a0-2a39eec59881 status=processing worker=test-worker
+2026/09/06 16:32:44.143258 worker_processor.go:265: ERROR job execution failed worker_id=test-worker job_id=bc2eb904-ebf1-4b54-a2a0-2a39eec59881 job_type=test correlation_id=7b7f1984-6c2a-466b-8208-ce057d6f1403 worker_id=test-worker status=error error="fatal error" execution_time_ms=0 retries_used=0 max_retries=0
+2026/09/06 16:32:44.143300 job_service.go:413: INFO job result updated job_id=bc2eb904-ebf1-4b54-a2a0-2a39eec59881 status=failed worker=test-worker
+2026/09/06 16:32:44.143316 worker_processor.go:376: ERROR job exhausted all retries, marking as failed worker_id=test-worker job_id=bc2eb904-ebf1-4b54-a2a0-2a39eec59881 job_type=test correlation_id=7b7f1984-6c2a-466b-8208-ce057d6f1403 worker_id=test-worker total_attempts=1
+--- FAIL: TestProcessOnce_PermanentFail (0.00s)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x38 pc=0xc792af]
+
+goroutine 37 [running]:
+testing.tRunner.func1.2({0xd94060, 0x15fcfe0})
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1872 +0x237
+testing.tRunner.func1()
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1875 +0x35b
+panic({0xd94060?, 0x15fcfe0?})
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/runtime/panic.go:783 +0x132
+task-queue-system/internal/worker/executor.TestProcessOnce_PermanentFail(0xc000183180)
+	/home/fewzan/Projects/task-queue-system/internal/worker/executor/worker_processor_test.go:246 +0x16f
+testing.tRunner(0xc000183180, 0xee67f8)
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1934 +0xea
+created by testing.(*T).Run in goroutine 1
+	/home/fewzan/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.25.0.linux-amd64/src/testing/testing.go:1997 +0x465
+FAIL	task-queue-system/internal/worker/executor	2.073s
+ok  	task-queue-system/internal/worker/limiter	(cached)
+?   	task-queue-system/internal/worker/middleware	[no test files]
+ok  	task-queue-system/internal/worker/plugin	(cached)
+ok  	task-queue-system/internal/worker/plugins/standard	(cached)
+ok  	task-queue-system/internal/worker/pool	(cached)
+?   	task-queue-system/pkg/tq	[no test files]
+ok  	task-queue-system/test	(cached)
+FAIL
+FAILED

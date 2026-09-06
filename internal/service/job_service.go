@@ -329,6 +329,12 @@ func (s *JobService) Ack(ctx context.Context, jobID string) error {
 
 // Fail proxies the failure report to the underlying queue.
 func (s *JobService) Fail(ctx context.Context, jobID string, err error) error {
+	// Move to DLQ in Postgres
+	reason := ""
+	if err != nil { reason = err.Error() }
+	if moveErr := s.store.MoveToDLQ(ctx, jobID, reason); moveErr != nil {
+		s.logger.Error("failed to move job to dlq", "job_id", jobID, "error", moveErr)
+	}
 	return s.queue.Fail(ctx, jobID, err)
 }
 
@@ -685,16 +691,12 @@ func (s *JobService) ListQueueLengths(ctx context.Context) (map[string]map[strin
 // ─── DLQ Methods ──────────────────────────────────────────────────────────────
 
 func (s *JobService) ListFailedJobs(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
-	return s.store.ListJobs(ctx, tenantID, string(jobs.StatusFailed), jobType, limit, offset)
+	return s.store.ListDLQ(ctx, tenantID, jobType, limit, offset)
 }
 
 // CountFailedJobs returns the total number of permanently failed jobs matching filters.
 func (s *JobService) CountFailedJobs(ctx context.Context, tenantID, jobType string) (int64, error) {
-	return s.store.CountJobs(ctx, models.JobFilter{
-		TenantID: tenantID,
-		Type:     jobType,
-		Status:   string(jobs.StatusFailed),
-	})
+	return s.store.CountDLQ(ctx, tenantID, jobType)
 }
 
 // JobStatusCounts returns job counts grouped by status, optionally scoped to a tenant.
@@ -752,10 +754,18 @@ func (s *JobService) UpdateTenantConfig(ctx context.Context, tenantID string, co
 }
 
 func (s *JobService) ReplayJob(ctx context.Context, jobID, tenantID string) (*jobs.Job, error) {
-	job, err := s.store.GetByID(ctx, jobID)
+	job, err := s.store.GetFromDLQ(ctx, jobID)
 	if err != nil {
-		return nil, err
+		// Fallback for older failed jobs still in main table
+		job, err = s.store.GetByID(ctx, jobID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// It's in DLQ, let's delete it from there
+		s.store.DeleteFromDLQ(ctx, jobID)
 	}
+
 	if tenantID != "" && tenantID != "operator" && job.TenantID != tenantID {
 		return nil, apperr.NewForbidden("you do not own this job")
 	}
@@ -804,7 +814,7 @@ func (s *JobService) PurgeJobsBefore(ctx context.Context, olderThan time.Time) (
 }
 
 func (s *JobService) BulkPurgeDLQ(ctx context.Context, tenantID, jobType string, olderThan time.Time) (int64, error) {
-	return s.store.DeleteJobsBefore(ctx, tenantID, string(jobs.StatusFailed), jobType, olderThan)
+	return s.store.DeleteDLQBefore(ctx, tenantID, jobType, olderThan)
 }
 
 
@@ -874,4 +884,17 @@ func (s *JobService) IsJobTypePaused(ctx context.Context, jobType string) (bool,
 // GetPausedJobTypes returns a list of all currently paused job types.
 func (s *JobService) GetPausedJobTypes(ctx context.Context) ([]string, error) {
 	return s.queue.GetPausedJobTypes(ctx)
+}
+
+
+func (s *JobService) DeleteDLQJob(ctx context.Context, jobID, tenantID string) error {
+	job, err := s.store.GetFromDLQ(ctx, jobID)
+	if err != nil {
+		// Fallback
+		return s.DeleteJob(ctx, jobID, tenantID)
+	}
+	if tenantID != "" && tenantID != "operator" && job.TenantID != tenantID {
+		return apperr.NewForbidden("you do not own this job")
+	}
+	return s.store.DeleteFromDLQ(ctx, jobID)
 }

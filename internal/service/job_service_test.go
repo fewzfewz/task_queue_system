@@ -402,12 +402,14 @@ func TestBulkPurgeDLQ(t *testing.T) {
 		job.Status = jobs.StatusFailed
 		job.CreatedAt = old
 		store.Save(context.Background(), job)
+	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
 	}
 	for i := 0; i < 2; i++ {
 		job, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
 		job.Status = jobs.StatusFailed
 		job.CreatedAt = recent
 		store.Save(context.Background(), job)
+	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
 	}
 
 	cutoff := time.Now().Add(-24 * time.Hour)

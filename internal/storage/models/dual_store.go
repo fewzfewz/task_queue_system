@@ -167,3 +167,25 @@ func (s *DualStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64
 	// Archive in primary
 	return s.Primary.ArchiveOldJobs(ctx, cutoff)
 }
+
+// ── DLQ (Delegate to Postgres) ──
+func (s *DualStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
+	// Remove from Redis if it was there
+	s.Secondary.DeleteJob(ctx, jobID)
+	return s.Primary.MoveToDLQ(ctx, jobID, reason)
+}
+func (s *DualStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
+	return s.Primary.ListDLQ(ctx, tenantID, jobType, limit, offset)
+}
+func (s *DualStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
+	return s.Primary.CountDLQ(ctx, tenantID, jobType)
+}
+func (s *DualStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	return s.Primary.DeleteDLQBefore(ctx, tenantID, jobType, before)
+}
+func (s *DualStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
+	return s.Primary.GetFromDLQ(ctx, jobID)
+}
+func (s *DualStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	return s.Primary.DeleteFromDLQ(ctx, jobID)
+}
