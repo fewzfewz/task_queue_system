@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/redisutil"
 	"task-queue-system/internal/health"
 	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/logger"
@@ -80,12 +80,7 @@ func main() {
 	}()
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisHost,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-		PoolSize: 128,
-	})
+	redisClient := redisutil.NewClient(cfg)
 
 	// PING Redis to ensure the connection is alive
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

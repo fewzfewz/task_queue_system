@@ -98,3 +98,4 @@ None — all items completed.
 - [x] Global Concurrency Limits (Per Job Type)
 - [x] RBAC (Role-Based Access Control)
 - [x] Audit Logging for security actions
+- [x] Redis Sentinel / Cluster Support (HA)

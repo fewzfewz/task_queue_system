@@ -17,10 +17,10 @@ import (
 
 	_ "task-queue-system/docs"
 
-	"github.com/redis/go-redis/v9"
 
 	"task-queue-system/internal/api/routes"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/redisutil"
 	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
@@ -61,11 +61,7 @@ func run() error {
 	}()
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisHost,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-	})
+	redisClient := redisutil.NewClient(cfg)
 
 	// PING Redis to ensure the connection is alive
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -112,7 +112,7 @@ var reclaimTimedOutJobsScript = redis.NewScript(`
 // It uses a Redis list for the pending queue and a Redis hash to track
 // jobs that are currently being processed, enabling safe Ack and Fail semantics.
 type RedisQueue struct {
-	client  *redis.Client
+	client  redis.UniversalClient
 	qHigh   string // high priority list
 	qMedium string // medium priority list
 	qLow    string // low priority list
@@ -131,12 +131,12 @@ type RedisQueue struct {
 
 // New creates a new RedisQueue. The provided client must already be connected.
 // Pass an empty queueName to use the default key.
-func New(client *redis.Client, queueName string) *RedisQueue {
+func New(client redis.UniversalClient, queueName string) *RedisQueue {
 	return NewWithRateLimit(client, queueName, 10)
 }
 
 // NewWithRateLimit creates a new RedisQueue with a configurable per-tenant rate limit.
-func NewWithRateLimit(client *redis.Client, queueName string, rateLimit int64) *RedisQueue {
+func NewWithRateLimit(client redis.UniversalClient, queueName string, rateLimit int64) *RedisQueue {
 	baseKey := defaultQueueKey
 	if queueName != "" {
 		baseKey = "task_queue:" + queueName

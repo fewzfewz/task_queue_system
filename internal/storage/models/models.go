@@ -535,11 +535,11 @@ const jobStoreKey = "task_queue:store:jobs"
 // RedisStore persists job records as JSON in a Redis Hash.
 // This allows multiple distributed instances to share a consistent view of job states.
 type RedisStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisStore creates a RedisStore.
-func NewRedisStore(client *redis.Client) *RedisStore {
+func NewRedisStore(client redis.UniversalClient) *RedisStore {
 	return &RedisStore{client: client}
 }
 

@@ -9,7 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func newTestRedis(t *testing.T) *redis.Client {
+func newTestRedis(t *testing.T) redis.UniversalClient {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

@@ -98,7 +98,7 @@ func (r *deliveryReceiver) lastSigValid() (bool, bool) {
 	return r.sigValid[len(r.sigValid)-1], true
 }
 
-func newTestDispatcher(rdb *redis.Client, timeout time.Duration, cfg DispatcherConfig) *Dispatcher {
+func newTestDispatcher(rdb redis.UniversalClient, timeout time.Duration, cfg DispatcherConfig) *Dispatcher {
 	return &Dispatcher{
 		redis:  rdb,
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),

@@ -33,7 +33,7 @@ type jobResponse struct {
 type liveClient struct {
 	apiURL     string
 	apiKey     string
-	redis      *redis.Client
+	redis      redis.UniversalClient
 	docker     *client.Client
 	dockerErr  error
 	httpClient *http.Client
@@ -43,7 +43,7 @@ type liveClient struct {
 func newLiveClient(cfg *Config) (*liveClient, error) {
 	ctx := context.Background()
 
-	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
+	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{cfg.RedisAddr}})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("redis %s unreachable: %w", cfg.RedisAddr, err)
 	}

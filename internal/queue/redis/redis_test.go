@@ -13,7 +13,7 @@ import (
 	"task-queue-system/internal/jobs"
 )
 
-func newTestQueue(t *testing.T) (*miniredis.Miniredis, *RedisQueue, *redis.Client, context.Context) {
+func newTestQueue(t *testing.T) (*miniredis.Miniredis, *RedisQueue, redis.UniversalClient, context.Context) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

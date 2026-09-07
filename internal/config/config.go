@@ -14,6 +14,12 @@ type Config struct {
 
 	// RedisHost is the Redis server address, e.g. "localhost:6379".
 	RedisHost string
+	// RedisSentinelAddrs is a comma-separated list of sentinel addresses.
+	RedisSentinelAddrs string
+	// RedisSentinelMaster is the name of the sentinel master.
+	RedisSentinelMaster string
+	// RedisClusterAddrs is a comma-separated list of cluster node addresses.
+	RedisClusterAddrs string
 
 	// RedisPassword is the password to authenticate with Redis, if any.
 	RedisPassword string
@@ -111,6 +117,9 @@ func Load() *Config {
 	return &Config{
 		ServerPort:        getEnvOrDefault("PORT", "8080"),
 		RedisHost:         getEnvOrDefault("REDIS_HOST", "localhost:6379"),
+		RedisSentinelAddrs: getEnvOrDefault("REDIS_SENTINEL_ADDRS", ""),
+		RedisSentinelMaster: getEnvOrDefault("REDIS_SENTINEL_MASTER", ""),
+		RedisClusterAddrs: getEnvOrDefault("REDIS_CLUSTER_ADDRS", ""),
 		RedisPassword:     getEnvOrDefault("REDIS_PASSWORD", ""),
 		RedisDB:           getEnvAsInt("REDIS_DB", 0),
 		ApiKey:            getEnvOrDefault("API_KEY", "secret-api-key"),
@@ -140,8 +149,11 @@ func Load() *Config {
 
 // Validate checks for critical configuration errors.
 func (c *Config) Validate() error {
-	if c.RedisHost == "" {
-		return fmt.Errorf("REDIS_HOST is required")
+	if c.RedisHost == "" && c.RedisSentinelAddrs == "" && c.RedisClusterAddrs == "" {
+		return fmt.Errorf("one of REDIS_HOST, REDIS_SENTINEL_ADDRS, or REDIS_CLUSTER_ADDRS is required")
+	}
+	if c.RedisSentinelAddrs != "" && c.RedisSentinelMaster == "" {
+		return fmt.Errorf("REDIS_SENTINEL_MASTER is required when using REDIS_SENTINEL_ADDRS")
 	}
 	if c.ServerPort == "" {
 		return fmt.Errorf("PORT is required")

@@ -34,10 +34,10 @@ type JobType struct {
 
 // Store persists admin-registered custom job types in Redis.
 type Store struct {
-	redis *redis.Client
+	redis redis.UniversalClient
 }
 
-func NewStore(rdb *redis.Client) *Store {
+func NewStore(rdb redis.UniversalClient) *Store {
 	return &Store{redis: rdb}
 }
 

@@ -69,13 +69,13 @@ type WebhookPayload struct {
 }
 
 type Dispatcher struct {
-	redis  *redis.Client
+	redis  redis.UniversalClient
 	logger *slog.Logger
 	client *http.Client
 	config DispatcherConfig
 }
 
-func NewDispatcher(rdb *redis.Client, logger *slog.Logger, cfg ...DispatcherConfig) *Dispatcher {
+func NewDispatcher(rdb redis.UniversalClient, logger *slog.Logger, cfg ...DispatcherConfig) *Dispatcher {
 	c := DispatcherConfig{}.defaults()
 	if len(cfg) > 0 {
 		c = cfg[0].defaults()

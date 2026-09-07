@@ -32,7 +32,7 @@ type DeliveryRecord struct {
 }
 
 // RecordDelivery persists a delivery attempt to a per-URL bounded history list.
-func RecordDelivery(ctx context.Context, rdb *redis.Client, rec DeliveryRecord) error {
+func RecordDelivery(ctx context.Context, rdb redis.UniversalClient, rec DeliveryRecord) error {
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return fmt.Errorf("webhook: marshal delivery record: %w", err)
@@ -49,7 +49,7 @@ func RecordDelivery(ctx context.Context, rdb *redis.Client, rec DeliveryRecord) 
 }
 
 // ListDeliveries returns the most recent delivery records for a URL, newest first.
-func ListDeliveries(ctx context.Context, rdb *redis.Client, url string, limit int) ([]DeliveryRecord, error) {
+func ListDeliveries(ctx context.Context, rdb redis.UniversalClient, url string, limit int) ([]DeliveryRecord, error) {
 	if limit <= 0 || limit > MaxDeliveriesPerURL {
 		limit = MaxDeliveriesPerURL
 	}

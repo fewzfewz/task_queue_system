@@ -11,7 +11,7 @@ import (
 )
 
 // InitStore creates the requested storage backend based on configuration.
-func InitStore(ctx context.Context, cfg *config.Config, rdb *redis.Client) (models.Store, error) {
+func InitStore(ctx context.Context, cfg *config.Config, rdb redis.UniversalClient) (models.Store, error) {
 	redisStore := models.NewRedisStore(rdb)
 
 	switch cfg.StoreBackend {

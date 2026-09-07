@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/redisutil"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/logger"
 	"task-queue-system/internal/storage/postgres"
@@ -55,11 +55,7 @@ func run() error {
 
 		ctx := context.Background()
 
-		rdb := redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisHost,
-			Password: cfg.RedisPassword,
-			DB:       cfg.RedisDB,
-		})
+		rdb := redisutil.NewClient(cfg)
 
 		pgStore, err := postgres.New(ctx, cfg.PostgresConnStr)
 		if err != nil {

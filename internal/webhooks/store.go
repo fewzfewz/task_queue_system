@@ -22,10 +22,10 @@ type RegisteredWebhook struct {
 }
 
 type WebhookStore struct {
-	redis *redis.Client
+	redis redis.UniversalClient
 }
 
-func NewWebhookStore(rdb *redis.Client) *WebhookStore {
+func NewWebhookStore(rdb redis.UniversalClient) *WebhookStore {
 	return &WebhookStore{redis: rdb}
 }
 

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
 	"task-queue-system/internal/config"
+	"task-queue-system/internal/redisutil"
 	"task-queue-system/internal/health"
 	"task-queue-system/internal/logger"
 	"task-queue-system/internal/service"
@@ -51,11 +51,7 @@ func run() error {
 	}()
 
 	// ── 3. Connect to Redis ───────────────────────────────────────────────────
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     cfg.RedisHost,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-	})
+	redisClient := redisutil.NewClient(cfg)
 
 	if err := redisClient.Ping(context.Background()).Err(); err != nil {
 		return fmt.Errorf("failed to connect to redis: %w", err)
