@@ -50,22 +50,22 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	// Setup System
 	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log, 0)
+	svc := service.New(q, store, log, 0, 1)
 	
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-success"}
 	exec.RegisterPlugin(p)
 	
-	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
+	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0, 1)
 
 	// 1. Submit Job
-	job, err := svc.CreateJob(ctx, "test-success", nil, nil, "medium", 3, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0)
+	job, err := svc.CreateJob(ctx, "test-success", nil, nil, "medium", 3, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0, 1)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
 
 	// 2. Execute
-	err = proc.ProcessOnce(ctx)
+	err = proc.ProcessBatch(ctx, 1)
 	if err != nil {
 		t.Fatalf("process once failed: %v", err)
 	}
@@ -95,16 +95,16 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 
 	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log, 0)
+	svc := service.New(q, store, log, 0, 1)
 	
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-fail", ShouldFail: true} // This worker will fail
 	exec.RegisterPlugin(p)
 	
-	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
+	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0, 1)
 
 	// Submit Job with 1 retry
-	job, err := svc.CreateJob(ctx, "test-fail", nil, nil, "medium", 1, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0)
+	job, err := svc.CreateJob(ctx, "test-fail", nil, nil, "medium", 1, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0, 1)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -119,11 +119,11 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	
 	// Let's run it.
 	go func() {
-		_ = proc.ProcessOnce(ctx)
+		_ = proc.ProcessBatch(ctx, 1)
 	}()
 
 	// Wait a bit for the first attempt to finish
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond, 1)
 
 	dbJob, err := store.GetByID(ctx, job.ID)
 	if err != nil || dbJob == nil {
@@ -151,23 +151,23 @@ func TestIntegration_Scheduling(t *testing.T) {
 
 	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log, 0)
+	svc := service.New(q, store, log, 0, 1)
 	
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-scheduled"}
 	exec.RegisterPlugin(p)
 	
-	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0)
+	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0, 1)
 
 	// Submit Job scheduled 1 second in the future
 	runAt := time.Now().Add(1 * time.Second).Format(time.RFC3339)
-	job, err := svc.CreateJob(ctx, "test-scheduled", nil, nil, "medium", 3, "", "", "", runAt, "", 0, 0, "", nil, "", nil, "", 0)
+	job, err := svc.CreateJob(ctx, "test-scheduled", nil, nil, "medium", 3, "", "", "", runAt, "", 0, 0, "", nil, "", nil, "", 0, 1)
 	if err != nil {
 		t.Fatalf("failed to create scheduled job: %v", err)
 	}
 
 	// Attempt to process immediately (should find no jobs since it's scheduled)
-	_ = proc.ProcessOnce(ctx)
+	_ = proc.ProcessBatch(ctx, 1)
 	dbJob, _ := store.GetByID(ctx, job.ID)
 	if dbJob != nil && dbJob.Status == jobs.StatusCompleted {
 		t.Errorf("job should not have been processed immediately")
@@ -183,7 +183,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 	}
 
 	// Process
-	_ = proc.ProcessOnce(ctx)
+	_ = proc.ProcessBatch(ctx, 1)
 
 	// Verify
 	dbJob, _ = store.GetByID(ctx, job.ID)

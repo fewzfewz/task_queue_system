@@ -898,3 +898,8 @@ func (s *JobService) DeleteDLQJob(ctx context.Context, jobID, tenantID string) e
 	}
 	return s.store.DeleteFromDLQ(ctx, jobID)
 }
+
+// DequeueBatch pops up to 'max' jobs from the queue.
+func (s *JobService) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
+	return s.queue.DequeueBatch(ctx, max)
+}

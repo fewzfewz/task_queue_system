@@ -1,0 +1,45 @@
+FAIL	task-queue-system/internal/worker/executor [setup failed]
+ok  	task-queue-system/cmd/api	(cached)
+ok  	task-queue-system/cmd/chaos	(cached)
+ok  	task-queue-system/cmd/cli	(cached)
+ok  	task-queue-system/cmd/scheduler	(cached)
+ok  	task-queue-system/cmd/worker	(cached)
+?   	task-queue-system/docs	[no test files]
+ok  	task-queue-system/internal/api/dto	(cached)
+ok  	task-queue-system/internal/api/handler	1.091s
+ok  	task-queue-system/internal/api/middleware	(cached)
+ok  	task-queue-system/internal/api/routes	(cached)
+ok  	task-queue-system/internal/api/session	(cached)
+ok  	task-queue-system/internal/config	(cached)
+ok  	task-queue-system/internal/errors	(cached)
+ok  	task-queue-system/internal/health	(cached)
+ok  	task-queue-system/internal/jobs	(cached)
+ok  	task-queue-system/internal/jobtypes	(cached)
+ok  	task-queue-system/internal/logger	(cached)
+ok  	task-queue-system/internal/metrics	(cached)
+ok  	task-queue-system/internal/queue	(cached)
+ok  	task-queue-system/internal/queue/redis	(cached)
+?   	task-queue-system/internal/redisutil	[no test files]
+ok  	task-queue-system/internal/secrets	(cached)
+2026/09/07 10:55:57 INFO job result updated job_id=30a74950-9952-4ca8-8f33-50678d6a2ecd status=completed worker=worker-1
+2026/09/07 10:55:57 INFO reconciling orphaned job job_id=dacf5822-a268-4790-9505-13196ee7505c worker_id=worker-1
+2026/09/07 10:55:57 INFO job status updated job_id=dacf5822-a268-4790-9505-13196ee7505c status=pending worker=""
+--- FAIL: TestBulkPurgeDLQ (0.00s)
+    job_service_test.go:421: expected 3 deleted jobs, got 0
+FAIL
+FAIL	task-queue-system/internal/service	0.028s
+ok  	task-queue-system/internal/sse	(cached)
+ok  	task-queue-system/internal/storage	(cached)
+ok  	task-queue-system/internal/storage/models	(cached)
+ok  	task-queue-system/internal/storage/postgres	(cached)
+ok  	task-queue-system/internal/tracing	(cached)
+ok  	task-queue-system/internal/webhooks	(cached)
+ok  	task-queue-system/internal/worker/limiter	(cached)
+?   	task-queue-system/internal/worker/middleware	[no test files]
+ok  	task-queue-system/internal/worker/plugin	(cached)
+ok  	task-queue-system/internal/worker/plugins/standard	(cached)
+ok  	task-queue-system/internal/worker/pool	(cached)
+?   	task-queue-system/pkg/tq	[no test files]
+FAIL	task-queue-system/test [build failed]
+FAIL
+FAILED

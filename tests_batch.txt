@@ -1,0 +1,39 @@
+ok  	task-queue-system/cmd/api	0.068s
+ok  	task-queue-system/cmd/chaos	(cached)
+ok  	task-queue-system/cmd/cli	(cached)
+ok  	task-queue-system/cmd/scheduler	0.058s
+ok  	task-queue-system/cmd/worker	3.181s
+?   	task-queue-system/docs	[no test files]
+ok  	task-queue-system/internal/api/dto	(cached)
+FAIL	task-queue-system/internal/api/handler [build failed]
+ok  	task-queue-system/internal/api/middleware	(cached)
+ok  	task-queue-system/internal/api/routes	0.061s
+ok  	task-queue-system/internal/api/session	(cached)
+ok  	task-queue-system/internal/config	(cached)
+ok  	task-queue-system/internal/errors	(cached)
+ok  	task-queue-system/internal/health	(cached)
+ok  	task-queue-system/internal/jobs	(cached)
+ok  	task-queue-system/internal/jobtypes	(cached)
+ok  	task-queue-system/internal/logger	(cached)
+ok  	task-queue-system/internal/metrics	(cached)
+ok  	task-queue-system/internal/queue	(cached)
+ok  	task-queue-system/internal/queue/redis	(cached)
+?   	task-queue-system/internal/redisutil	[no test files]
+ok  	task-queue-system/internal/secrets	(cached)
+FAIL	task-queue-system/internal/service [build failed]
+ok  	task-queue-system/internal/sse	(cached)
+ok  	task-queue-system/internal/storage	(cached)
+ok  	task-queue-system/internal/storage/models	(cached)
+ok  	task-queue-system/internal/storage/postgres	(cached)
+ok  	task-queue-system/internal/tracing	(cached)
+ok  	task-queue-system/internal/webhooks	(cached)
+FAIL	task-queue-system/internal/worker/executor [build failed]
+ok  	task-queue-system/internal/worker/limiter	(cached)
+?   	task-queue-system/internal/worker/middleware	[no test files]
+ok  	task-queue-system/internal/worker/plugin	(cached)
+ok  	task-queue-system/internal/worker/plugins/standard	(cached)
+ok  	task-queue-system/internal/worker/pool	0.115s
+?   	task-queue-system/pkg/tq	[no test files]
+FAIL	task-queue-system/test [build failed]
+FAIL
+FAILED

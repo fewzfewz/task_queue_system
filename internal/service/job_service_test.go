@@ -432,3 +432,12 @@ func (m *mockQueue) PauseJobType(ctx context.Context, jobType string) error { re
 func (m *mockQueue) ResumeJobType(ctx context.Context, jobType string) error { return nil }
 func (m *mockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
 func (m *mockQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
+
+func (m *mockQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
+	if max <= 0 { max = 1 }
+	job, err := m.Dequeue(ctx)
+	if err != nil || job == nil {
+		return nil, err
+	}
+	return []*jobs.Job{job}, nil
+}

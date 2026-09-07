@@ -167,7 +167,7 @@ func setupProcessor(t *testing.T, executeFn func(ctx context.Context, job *jobs.
 	})
 	je := &JobExecutor{registry: reg, circuitBreaker: plugin.NewCircuitBreaker(5, 30*time.Second), logger: slog.Default()}
 
-	wp := NewWorkerProcessor("test-worker", svc, je, nil, slog.Default(), 0)
+	wp := NewWorkerProcessor("test-worker", svc, je, nil, slog.Default(), 0, 1)
 	return wp, store, q
 }
 
@@ -179,7 +179,7 @@ func TestProcessOnce_Success(t *testing.T) {
 	job := jobs.NewJob("test", map[string]interface{}{"key": "val"}, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
-	err := wp.ProcessOnce(context.Background())
+	err := wp.ProcessBatch(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -212,13 +212,13 @@ func TestProcessOnce_RetryThenSuccess(t *testing.T) {
 	store.Save(context.Background(), job)
 
 	// First attempt should fail and retry
-	err := wp.ProcessOnce(context.Background())
+	err := wp.ProcessBatch(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("expected no error from first attempt, got %v", err)
 	}
 
 	// Second attempt (retried job is now back in queue)
-	err = wp.ProcessOnce(context.Background())
+	err = wp.ProcessBatch(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("expected no error from second attempt, got %v", err)
 	}
@@ -237,7 +237,7 @@ func TestProcessOnce_PermanentFail(t *testing.T) {
 	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 0, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
 
-	err := wp.ProcessOnce(context.Background())
+	err := wp.ProcessBatch(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -270,7 +270,7 @@ func TestProcessOnce_AlreadyProcessed(t *testing.T) {
 		return found, nil
 	}
 
-	err := wp.ProcessOnce(context.Background())
+	err := wp.ProcessBatch(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -283,13 +283,13 @@ func TestProcessOnce_AlreadyProcessed(t *testing.T) {
 func TestProcessOnce_EmptyQueue(t *testing.T) {
 	wp, _, _ := setupProcessor(t, nil)
 
-	err := wp.ProcessOnce(context.Background())
+	err := wp.ProcessBatch(context.Background(), 1)
 	if err == nil {
 		t.Fatal("expected error for empty queue")
 	}
 }
 
-func TestIsEmptyQueueErr(t *testing.T) {
+func TestIsEmptyQueueErr(t *testing.T, 1) {
 	tests := []struct {
 		err  error
 		want bool
@@ -333,3 +333,12 @@ func (m *mockQ) PauseJobType(ctx context.Context, jobType string) error { return
 func (m *mockQ) ResumeJobType(ctx context.Context, jobType string) error { return nil }
 func (m *mockQ) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
 func (m *mockQ) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
+
+func (m *mockQ) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
+	if max <= 0 { max = 1 }
+	job, err := m.Dequeue(ctx)
+	if err != nil || job == nil {
+		return nil, err
+	}
+	return []*jobs.Job{job}, nil
+}

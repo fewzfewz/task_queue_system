@@ -1016,3 +1016,39 @@ func (q *RedisQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) {
 	key := "task_queue:paused:jobtype"
 	return q.client.SMembers(ctx, key).Result()
 }
+
+func (q *RedisQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
+	if max <= 0 { max = 1 }
+	var batch []*jobs.Job
+	
+	for i := 0; i < max; i++ {
+		// First item can block, subsequent items should not block
+		// We use a short timeout for subsequent pulls to avoid waiting
+		var timeoutCtx context.Context
+		var cancel context.CancelFunc
+		
+		if i == 0 {
+			timeoutCtx, cancel = context.WithCancel(ctx)
+		} else {
+			timeoutCtx, cancel = context.WithTimeout(ctx, 10*time.Millisecond) // short wait
+		}
+		
+		job, err := q.Dequeue(timeoutCtx)
+		cancel()
+		
+		if err != nil {
+			if len(batch) > 0 {
+				// If we already have jobs, ignore the timeout/error for the rest
+				break
+			}
+			return nil, err
+		}
+		if job != nil {
+			batch = append(batch, job)
+		} else {
+			break
+		}
+	}
+	
+	return batch, nil
+}

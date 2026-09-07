@@ -55,3 +55,13 @@ func GetSubmitter(ctx context.Context) Submitter {
 	}
 	return nil
 }
+
+// BatchJobPlugin extends JobPlugin to support processing multiple jobs in a single execution.
+type BatchJobPlugin interface {
+	JobPlugin
+	// BatchExecute processes a batch of jobs. 
+	// It returns a slice of results and a slice of errors, exactly matching the length and order of the input jobs.
+	BatchExecute(ctx context.Context, batch []*jobs.Job) ([]interface{}, []error)
+	// MaxBatchSize returns the maximum number of jobs this plugin wants to receive in a single batch.
+	MaxBatchSize() int
+}

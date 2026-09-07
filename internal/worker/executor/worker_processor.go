@@ -1,6 +1,8 @@
 package executor
 
 import (
+	"fmt"
+
 	"context"
 	"errors"
 	"log/slog"
@@ -27,6 +29,7 @@ const defaultSLATarget = 5 * time.Second
 // It is meant to be embedded inside a goroutine (e.g. pool.Pool) and driven
 // by Run, but ProcessOnce can be called directly in tests or one-shot scripts.
 type WorkerProcessor struct {
+	batchSize int
 	name    string
 	service *service.JobService
 	exec    *JobExecutor
@@ -46,7 +49,7 @@ type WorkerProcessor struct {
 // NewWorkerProcessor creates a WorkerProcessor.
 // name is used for log attribution and job metadata. limiter can be nil if no rate limiting applies.
 // slaTarget of 0 means use the default (5s).
-func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l limiter.RateLimiter, logger *slog.Logger, slaTarget time.Duration) *WorkerProcessor {
+func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l limiter.RateLimiter, logger *slog.Logger, slaTarget time.Duration, batchSize int) *WorkerProcessor {
 	if slaTarget <= 0 {
 		slaTarget = defaultSLATarget
 	}
@@ -57,6 +60,7 @@ func NewWorkerProcessor(name string, svc *service.JobService, je *JobExecutor, l
 		limiter:   l,
 		logger:    logger.With("worker_id", name),
 		slaTarget: slaTarget,
+		batchSize: batchSize,
 	}
 }
 
@@ -81,7 +85,7 @@ func (wp *WorkerProcessor) Run(ctx context.Context) {
 		default:
 		}
 
-		if err := wp.ProcessOnce(ctx); err != nil {
+		if err := wp.ProcessBatch(ctx, wp.batchSize); err != nil {
 			if ctx.Err() != nil {
 				return // clean shutdown, not a real error
 			}
@@ -112,15 +116,7 @@ func isEmptyQueueErr(err error) bool {
 // full success / retry / fail lifecycle. Returns an error only for transient
 // infrastructure failures (e.g. queue unavailable) — job-level failures are
 // handled internally and do NOT bubble up as errors here.
-func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
-	// ── 1. Dequeue ──────────────────────────────────────────────────────
-	// We access the queue through the service layer or directly if exposed.
-	// For this refactor, we'll expose the queue field or a method on the service.
-	// Since I own the service code, I'll just reach in or add a helper.
-	job, err := wp.service.Dequeue(ctx)
-	if err != nil {
-		return err // transient; caller (Run) will back off
-	}
+func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin, job *jobs.Job) {
 
 	// Identify this worker on the job object.
 	job.ProcessedBy = wp.name
@@ -146,7 +142,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	if isDone {
 		log.Info("skipping duplicate execution; job already marked as processed in Redis")
 		_ = wp.service.Ack(ctx, job.ID)
-		return nil
+		return
 	}
 
 	// 2. Operator Panic Button Check (Queue Paused)
@@ -154,7 +150,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	if err == nil && isPaused {
 		log.Warn("job type is paused by operator (panic button), deferring job", "delay", "10s")
 		wp.deferJob(ctx, context.Background(), job, log)
-		return nil
+		return
 	}
 
 	// 2.5 Job Expiration / TTL Check
@@ -162,7 +158,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		log.Error("job has expired (TTL exceeded), permanently failing")
 		_ = wp.service.Fail(ctx, job.ID, errors.New("job expired (TTL exceeded)"))
 		_ = wp.service.Ack(ctx, job.ID)
-		return nil
+		return
 	}
 
 	// 3. Persistent Store Check (Fallback)
@@ -171,7 +167,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		if storedJob.Status == jobs.StatusCompleted || storedJob.Status == jobs.StatusFailed || storedJob.Status == jobs.StatusCancelled {
 			log.Info("skipping duplicate execution; job already finished in database", "final_status", storedJob.Status)
 			_ = wp.service.Ack(ctx, job.ID) // clear from broker
-			return nil
+			return
 		}
 	}
 
@@ -203,7 +199,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		if err := wp.limiter.Wait(ctx); err != nil {
 			// If context cancels while waiting for a token, we safely abandon.
 			// The in-flight job will be rescued by the reaper/DLQ reconciler natively.
-			return err
+			return // We just abandon
 		}
 	}
 
@@ -257,7 +253,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 		}
 		metrics.JobSLACompliance.WithLabelValues(job.Type, job.TenantID, compliant).Inc()
 
-		return nil
+		return
 	}
 
 
@@ -296,7 +292,7 @@ func (wp *WorkerProcessor) ProcessOnce(ctx context.Context) error {
 	}
 	metrics.JobSLACompliance.WithLabelValues(job.Type, job.TenantID, compliant).Inc()
 
-	return nil
+	return
 }
 
 // ── private helpers ───────────────────────────────────────────────────────────
@@ -384,4 +380,81 @@ func (wp *WorkerProcessor) permanentlyFail(ctx context.Context, job *jobs.Job, r
 func (wp *WorkerProcessor) SetCancelHooks(register func(jobID string, cancel context.CancelFunc), unregister func(jobID string)) {
 	wp.onRegister = register
 	wp.onUnregister = unregister
+}
+
+
+// ProcessBatch pulls a batch of jobs and processes them grouped by type.
+func (wp *WorkerProcessor) ProcessBatch(ctx context.Context, batchSize int) error {
+	batchJobs, err := wp.service.DequeueBatch(ctx, batchSize)
+	if err != nil {
+		return err
+	}
+	if len(batchJobs) == 0 {
+		return nil // nothing to do
+	}
+
+	if wp.onBusy != nil {
+		wp.onBusy()
+		defer wp.onIdle()
+	}
+
+	// Group jobs by type
+	groups := make(map[string][]*jobs.Job)
+	for _, j := range batchJobs {
+		groups[j.Type] = append(groups[j.Type], j)
+	}
+
+	for jobType, group := range groups {
+		p := wp.exec.GetPlugin(jobType)
+		if p == nil {
+			// Fail all jobs in this group
+			for _, j := range group {
+				wp.logger.Error("no plugin registered for job type", "job_type", jobType, "job_id", j.ID)
+				_ = wp.service.Fail(ctx, j.ID, fmt.Errorf("no plugin registered for job type: %s", jobType))
+			}
+			continue
+		}
+
+		// If it's a BatchJobPlugin, execute them together
+		if bp, ok := p.(plugin.BatchJobPlugin); ok {
+			wp.executeBatchPlugin(ctx, bp, group)
+		} else {
+			// Otherwise, execute them sequentially or concurrently
+			for _, j := range group {
+				wp.executeSingle(ctx, p, j) // We will extract the logic of ProcessOnce into executeSingle
+			}
+		}
+	}
+	return nil
+}
+
+func (wp *WorkerProcessor) executeBatchPlugin(ctx context.Context, bp plugin.BatchJobPlugin, batch []*jobs.Job) {
+	// A simple wrapper to execute a batch using a BatchJobPlugin
+	if len(batch) == 0 { return }
+	
+	wp.logger.Info("executing batch", "job_type", batch[0].Type, "size", len(batch))
+	
+	execCtx := context.WithoutCancel(ctx)
+	timeout := 60 * time.Second
+	jobCtx, cancel := context.WithTimeout(execCtx, timeout)
+	defer cancel()
+
+	results, errorsList := bp.BatchExecute(jobCtx, batch)
+	
+	for i, job := range batch {
+		if i < len(errorsList) && errorsList[i] != nil {
+			// Fail
+			_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusFailed, wp.name, errorsList[i].Error())
+			wp.permanentlyFail(execCtx, job, errorsList[i], wp.logger)
+		} else {
+			// Success
+			_ = wp.service.MarkProcessed(execCtx, job.ID)
+			_ = wp.service.UpdateJobProgress(execCtx, job.ID, 100)
+			
+			var res interface{}
+			if i < len(results) { res = results[i] }
+			_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusCompleted, wp.name, res)
+			_ = wp.service.Ack(execCtx, job.ID)
+		}
+	}
 }

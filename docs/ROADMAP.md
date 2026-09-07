@@ -99,3 +99,4 @@ None — all items completed.
 - [x] RBAC (Role-Based Access Control)
 - [x] Audit Logging for security actions
 - [x] Redis Sentinel / Cluster Support (HA)
+- [x] Batch Processing (ability for a worker to pull 50-100 jobs off the queue at once and pass them to the plugin as an array)

@@ -22,6 +22,8 @@ type Config struct {
 	NumWorkers int
 	// JobsPerSecond limits the global processing rate across all workers.
 	// A value of 0 means no limit.
+	// BatchSize limits the maximum number of jobs to pull at once. Default 1.
+	BatchSize int
 	JobsPerSecond float64
 	// SLATarget is the duration within which a job is considered SLA-compliant.
 	// Default 5s.
@@ -94,7 +96,7 @@ func (p *Pool) Start(ctx context.Context) {
 
 	for i := 0; i < p.cfg.NumWorkers; i++ {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
-		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger, p.cfg.SLATarget)
+		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger, p.cfg.SLATarget, p.cfg.BatchSize)
 		
 		w.SetCancelHooks(p.RegisterActiveJob, p.UnregisterActiveJob)
 		w.SetHooks(

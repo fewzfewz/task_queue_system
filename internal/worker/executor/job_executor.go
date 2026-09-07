@@ -41,6 +41,12 @@ func (je *JobExecutor) Use(m plugin.Middleware) {
 }
 
 // RegisterPlugin adds a new job type capability to the executor.
+
+func (je *JobExecutor) GetPlugin(jobType string) plugin.JobPlugin {
+	p, _ := je.registry.Get(jobType)
+	return p
+}
+
 func (je *JobExecutor) RegisterPlugin(p plugin.JobPlugin) {
 	if err := je.registry.Register(p); err != nil {
 		je.logger.Warn("plugin registration failed", "job_type", p.Type(), "error", err)

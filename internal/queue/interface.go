@@ -20,6 +20,7 @@ type Queue interface {
 	// Dequeue blocks and retrieves the next available job from the queue.
 	// The context can be used to cancel a long-polling operation.
 	Dequeue(ctx context.Context) (*jobs.Job, error)
+	DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error)
 
 	// Ack acknowledges that a job was processed successfully.
 	// This usually removes the job from the backend or marks it completed.

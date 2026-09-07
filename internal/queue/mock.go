@@ -8,6 +8,7 @@ import (
 )
 
 type MockQueue struct {
+	DequeueBatchFunc func(ctx context.Context, max int) ([]*jobs.Job, error)
 	jobs      chan *jobs.Job
 	failed    chan *jobs.Job
 	processed map[string]bool
@@ -143,3 +144,10 @@ func (m *MockQueue) PauseJobType(ctx context.Context, jobType string) error { re
 func (m *MockQueue) ResumeJobType(ctx context.Context, jobType string) error { return nil }
 func (m *MockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
 func (m *MockQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
+
+func (m *MockQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
+	if m.DequeueBatchFunc != nil {
+		return m.DequeueBatchFunc(ctx, max)
+	}
+	return nil, nil
+}
