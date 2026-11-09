@@ -50,7 +50,7 @@ func newPostgresStore(t *testing.T) (*postgres.PostgresStore, context.Context) {
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)
 	}
-	_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS jobs, schema_migrations CASCADE`)
+	_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS jobs, clients, jobs_archive, dead_letter_jobs, audit_logs, schema_migrations CASCADE`)
 	pool.Close()
 	store, err := postgres.New(ctx, conn)
 	if err != nil {

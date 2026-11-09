@@ -2,8 +2,11 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -199,5 +202,126 @@ func TestEnsureSchemaMigrationsTable(t *testing.T) {
 
 	if err := ensureSchemaMigrationsTable(ctx, pool); err != nil {
 		t.Fatalf("ensureSchemaMigrationsTable (idempotent) failed: %v", err)
+	}
+}
+
+func resolveRepoMigrationsDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "db/migrations"
+	}
+	for {
+		candidate := filepath.Join(dir, "db", "migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "db/migrations"
+		}
+		dir = parent
+	}
+}
+
+func TestMigrationsDirectoryIntegrity(t *testing.T) {
+	dir := resolveRepoMigrationsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read migrations directory %s: %v", dir, err)
+	}
+
+	var upFiles []string
+	rollbackMap := make(map[string]bool)
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), "_rollback.sql") {
+			rollbackMap[e.Name()] = true
+			info, err := e.Info()
+			if err != nil || info.Size() == 0 {
+				t.Fatalf("rollback file %s is empty or inaccessible", e.Name())
+			}
+		} else {
+			upFiles = append(upFiles, e.Name())
+			info, err := e.Info()
+			if err != nil || info.Size() == 0 {
+				t.Fatalf("migration file %s is empty or inaccessible", e.Name())
+			}
+		}
+	}
+
+	if len(upFiles) == 0 {
+		t.Fatal("no migration files found in migrations directory")
+	}
+
+	sort.Strings(upFiles)
+
+	for i, name := range upFiles {
+		expectedPrefix := fmt.Sprintf("%03d_", i+1)
+		if !strings.HasPrefix(name, expectedPrefix) {
+			t.Fatalf("migration %s does not match sequential prefix %s", name, expectedPrefix)
+		}
+
+		baseVersion := strings.TrimSuffix(name, ".sql")
+		expectedRollback := baseVersion + "_rollback.sql"
+		if !rollbackMap[expectedRollback] {
+			t.Fatalf("migration %s is missing its required rollback file %s", name, expectedRollback)
+		}
+	}
+}
+
+func TestFullMigrationCycle_Up_Down_Up(t *testing.T) {
+	connStr := os.Getenv("POSTGRES_CONN_STR")
+	if connStr == "" {
+		t.Skip("skipping; set POSTGRES_CONN_STR to run live Postgres migration test")
+	}
+
+	ctx := context.Background()
+	pool := connectPool(t, connStr)
+
+	// Clean all tables before test
+	_, _ = pool.Exec(ctx, `DROP TABLE IF EXISTS jobs, clients, jobs_archive, dead_letter_jobs, audit_logs, schema_migrations CASCADE`)
+
+	dir := resolveRepoMigrationsDir()
+
+	// 1. Migrate UP to latest
+	if err := RunMigrations(ctx, pool, dir, nil); err != nil {
+		t.Fatalf("RunMigrations (UP) failed: %v", err)
+	}
+
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
+		t.Fatalf("failed to query schema_migrations: %v", err)
+	}
+	if count != 10 {
+		t.Fatalf("expected 10 applied migrations, got %d", count)
+	}
+
+	// 2. Rollback DOWN to zero
+	for i := 0; i < 10; i++ {
+		if err := RollbackLastMigration(ctx, connStr, dir, nil); err != nil {
+			t.Fatalf("RollbackLastMigration step %d failed: %v", i+1, err)
+		}
+	}
+
+	// Verify schema_migrations is empty
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
+		t.Fatalf("failed to query schema_migrations after rollback: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 applied migrations after full rollback, got %d", count)
+	}
+
+	// 3. Migrate back UP to latest
+	if err := RunMigrations(ctx, pool, dir, nil); err != nil {
+		t.Fatalf("RunMigrations (re-apply UP) failed: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
+		t.Fatalf("failed to query schema_migrations after re-apply: %v", err)
+	}
+	if count != 10 {
+		t.Fatalf("expected 10 applied migrations after re-apply, got %d", count)
 	}
 }

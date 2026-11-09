@@ -11,6 +11,7 @@ RUN apk add --no-cache ca-certificates tzdata && \
     adduser -D -u 10001 appuser
 WORKDIR /app
 COPY --from=builder /scheduler /app/scheduler
+COPY db/migrations /app/db/migrations
 USER appuser
 EXPOSE 8082
 CMD ["./scheduler"]

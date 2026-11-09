@@ -2,12 +2,12 @@ package postgres
 
 import (
 	"context"
-	"strings"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -130,8 +130,8 @@ func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 			attempts, max_attempts, correlation_id, timeout_seconds,
 			version, scheduled_at, updated_at, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			dedup_key, dependencies, shard_key, cron_expr
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+			dedup_key, dependencies, shard_key, cron_expr, expires_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		ON CONFLICT (id) DO UPDATE SET
 			status = EXCLUDED.status,
 			attempts = EXCLUDED.attempts,
@@ -140,18 +140,23 @@ func (s *PostgresStore) Save(ctx context.Context, job *jobs.Job) error {
 			result = EXCLUDED.result,
 			error = EXCLUDED.error,
 			scheduled_at = EXCLUDED.scheduled_at,
-			cron_expr = EXCLUDED.cron_expr
+			cron_expr = EXCLUDED.cron_expr,
+			expires_at = EXCLUDED.expires_at
 	`
 	dedup := nullIfEmpty(job.DedupKey)
 	shard := nullIfEmpty(job.ShardKey)
 	cronExp := nullIfEmpty(job.CronExpr)
+	var expAt *time.Time
+	if !job.ExpiresAt.IsZero() {
+		expAt = &job.ExpiresAt
+	}
 	_, err := s.pool.Exec(ctx, query,
 		job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 		job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout,
 		job.Version, job.RunAt, time.Now().UTC(),
 		job.Progress,
 		url, secret, events, lastStatus, attempts,
-		dedup, string(depsJSON), shard, cronExp,
+		dedup, string(depsJSON), shard, cronExp, expAt,
 	)
 	return err
 }
@@ -167,10 +172,10 @@ func (s *PostgresStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error 
 			attempts, max_attempts, correlation_id, timeout_seconds,
 			version, scheduled_at, updated_at, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			dedup_key, dependencies, shard_key, cron_expr
+			dedup_key, dependencies, shard_key, cron_expr, expires_at
 		) VALUES `
 
-	args := make([]interface{}, 0, len(batch)*23)
+	args := make([]interface{}, 0, len(batch)*24)
 	for i, job := range batch {
 		payload, _ := json.Marshal(job.Payload)
 		depsJSON, _ := json.Marshal(job.Dependencies)
@@ -188,16 +193,20 @@ func (s *PostgresStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error 
 		if i > 0 {
 			query += ", "
 		}
-		
-		offset := i * 23
-		query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+
+		offset := i * 24
+		query += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
 			offset+1, offset+2, offset+3, offset+4, offset+5, offset+6, offset+7, offset+8, offset+9, offset+10,
 			offset+11, offset+12, offset+13, offset+14, offset+15, offset+16, offset+17, offset+18, offset+19, offset+20,
-			offset+21, offset+22, offset+23)
+			offset+21, offset+22, offset+23, offset+24)
 
+		var expAt *time.Time
+		if !job.ExpiresAt.IsZero() {
+			expAt = &job.ExpiresAt
+		}
 		args = append(args, job.ID, job.TenantID, job.Type, payload, string(job.Status), string(job.Priority),
 			job.Retries, job.MaxRetries, job.CorrelationID, job.Timeout, job.Version, job.RunAt, time.Now().UTC(),
-			job.Progress, url, secret, events, lastStatus, attempts, nullIfEmpty(job.DedupKey), string(depsJSON), nullIfEmpty(job.ShardKey), nullIfEmpty(job.CronExpr))
+			job.Progress, url, secret, events, lastStatus, attempts, nullIfEmpty(job.DedupKey), string(depsJSON), nullIfEmpty(job.ShardKey), nullIfEmpty(job.CronExpr), expAt)
 	}
 
 	_, err := s.pool.Exec(ctx, query, args...)
@@ -218,6 +227,8 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 	var errHistoryJSON []byte
 	var dedupKey, shardKey *string
 	var depsJSON []byte
+	var cronExp *string
+	var expiresAt *time.Time
 
 	query := `
 		SELECT 
@@ -228,13 +239,12 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at
 		FROM jobs WHERE id = $1
 	`
-	var cronExp *string
 	err := s.pool.QueryRow(ctx, query, id).Scan(
 		&j.ID, &j.TenantID, &j.Type, &payload, &status, &priority,
 		&j.Retries, &j.MaxRetries, &j.CorrelationID, &j.Timeout,
 		&j.Version, &j.RunAt, &j.CreatedAt, &j.UpdatedAt, &processedBy, &res, &errStr, &j.Progress,
 		&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
-		&errHistoryJSON, &dedupKey, &depsJSON, &shardKey, &cronExp,
+		&errHistoryJSON, &dedupKey, &depsJSON, &shardKey, &cronExp, &expiresAt,
 	)
 
 	if err != nil {
@@ -284,6 +294,9 @@ func (s *PostgresStore) GetByID(ctx context.Context, id string) (*jobs.Job, erro
 	}
 	if cronExp != nil {
 		j.CronExpr = *cronExp
+	}
+	if expiresAt != nil {
+		j.ExpiresAt = *expiresAt
 	}
 
 	return &j, nil
@@ -377,7 +390,7 @@ func (s *PostgresStore) GetByWorkerAndStatus(ctx context.Context, workerID strin
 			progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
 			error_history,
-			dedup_key, dependencies, shard_key
+			dedup_key, dependencies, shard_key, cron_expr, expires_at
 		FROM jobs WHERE processed_by = $1 AND status = $2
 	`
 	rows, err := s.pool.Query(ctx, query, workerID, string(status))
@@ -496,7 +509,7 @@ func (s *PostgresStore) Dequeue(ctx context.Context, tenantID string, shardKey s
 	err = tx.QueryRow(ctx, query, time.Now().UTC(), tenantID, shardKey).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil 
+			return nil, nil
 		}
 		return nil, err
 	}
@@ -696,7 +709,7 @@ func (s *PostgresStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job
 		        progress,
 		        webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
 		        error_history,
-		        dedup_key, dependencies, shard_key
+		        dedup_key, dependencies, shard_key, cron_expr, expires_at
 		 FROM jobs WHERE id = ANY($1)`, ids)
 	if err != nil {
 		return nil, err
@@ -800,6 +813,7 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		var errHistoryJSON []byte
 		var dedupKey, shardKey, cronExp *string
 		var depsJSON []byte
+		var expiresAt *time.Time
 
 		err := rows.Scan(
 			&j.ID, &j.TenantID, &j.Type, &payload, &stat, &priority,
@@ -808,7 +822,7 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 			&j.Progress,
 			&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
 			&errHistoryJSON,
-			&dedupKey, &depsJSON, &shardKey, &cronExp,
+			&dedupKey, &depsJSON, &shardKey, &cronExp, &expiresAt,
 		)
 		if err != nil {
 			return nil, err
@@ -845,6 +859,9 @@ func (s *PostgresStore) scanJobs(rows pgx.Rows) ([]*jobs.Job, error) {
 		}
 		if cronExp != nil {
 			j.CronExpr = *cronExp
+		}
+		if expiresAt != nil {
+			j.ExpiresAt = *expiresAt
 		}
 		results = append(results, &j)
 	}
@@ -906,16 +923,16 @@ func (s *PostgresStore) MoveToDLQ(ctx context.Context, jobID string, reason stri
 			DELETE FROM jobs WHERE id = $1 RETURNING *
 		)
 		INSERT INTO dead_letter_jobs (
-			id, type, payload, labels, priority, status, retries, max_retries,
-			backoff_algorithm, backoff_jitter, cron_expr, created_at, updated_at, run_at, expires_at,
-			paused, progress, webhook_url, webhook_secret, webhook_events, webhook_last_status,
-			webhook_attempts, error_history, dedup_key, dependencies, shard_key, tenant_id, dead_letter_reason
+			id, tenant_id, type, payload, priority, status, retries, max_retries,
+			cron_expr, created_at, updated_at, run_at, expires_at,
+			progress, webhook_url, webhook_secret, webhook_events, webhook_last_status,
+			webhook_attempts, error_history, dedup_key, dependencies, shard_key, dead_letter_reason
 		)
 		SELECT 
-			id, type, payload, labels, priority, status, retries, max_retries,
-			backoff_algorithm, backoff_jitter, cron_expr, created_at, updated_at, run_at, expires_at,
-			paused, progress, webhook_url, webhook_secret, webhook_events, webhook_last_status,
-			webhook_attempts, error_history, dedup_key, dependencies, shard_key, tenant_id, $2
+			id, tenant_id, type, payload, priority, status, attempts, max_attempts,
+			cron_expr, created_at, updated_at, scheduled_at, expires_at,
+			progress, webhook_url, webhook_secret, array_to_string(webhook_events, ','), webhook_last_status::text,
+			webhook_attempts, error_history, dedup_key, dependencies, shard_key, $2
 		FROM moved;
 	`
 	result, err := s.pool.Exec(ctx, query, jobID, reason)
@@ -930,10 +947,10 @@ func (s *PostgresStore) MoveToDLQ(ctx context.Context, jobID string, reason stri
 
 func (s *PostgresStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
 	query := `
-		SELECT id, type, payload, status, priority, retries, max_retries,
-			backoff_algorithm, backoff_jitter, created_at, updated_at, run_at, labels, paused, progress,
+		SELECT id, tenant_id, type, payload, status, priority, retries, max_retries,
+			run_at, created_at, updated_at, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at
+			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at, dead_letter_reason
 		FROM dead_letter_jobs
 		WHERE tenant_id = COALESCE(NULLIF($1, ''), tenant_id)
 		AND type = COALESCE(NULLIF($2, ''), type)
@@ -945,7 +962,7 @@ func (s *PostgresStore) ListDLQ(ctx context.Context, tenantID, jobType string, l
 		return nil, fmt.Errorf("postgres_store: dlq list query failed: %w", err)
 	}
 	defer rows.Close()
-	return s.scanJobs(rows)
+	return s.scanDLQJobs(rows)
 }
 
 func (s *PostgresStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
@@ -979,10 +996,10 @@ func (s *PostgresStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType s
 
 func (s *PostgresStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
 	query := `
-		SELECT id, type, payload, status, priority, retries, max_retries,
-			backoff_algorithm, backoff_jitter, created_at, updated_at, run_at, labels, paused, progress,
+		SELECT id, tenant_id, type, payload, status, priority, retries, max_retries,
+			run_at, created_at, updated_at, progress,
 			webhook_url, webhook_secret, webhook_events, webhook_last_status, webhook_attempts,
-			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at
+			error_history, dedup_key, dependencies, shard_key, cron_expr, expires_at, dead_letter_reason
 		FROM dead_letter_jobs
 		WHERE id = $1
 	`
@@ -991,7 +1008,7 @@ func (s *PostgresStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job
 		return nil, fmt.Errorf("postgres_store: get from dlq failed: %w", err)
 	}
 	defer rows.Close()
-	jobs, err := s.scanJobs(rows)
+	jobs, err := s.scanDLQJobs(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -999,6 +1016,88 @@ func (s *PostgresStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job
 		return nil, models.ErrJobNotFound
 	}
 	return jobs[0], nil
+}
+
+func (s *PostgresStore) scanDLQJobs(rows pgx.Rows) ([]*jobs.Job, error) {
+	var results []*jobs.Job
+	for rows.Next() {
+		var j jobs.Job
+		var payload []byte
+		var priority string
+		var stat string
+		var webhookURL, webhookSecret *string
+		var webhookEvents *string
+		var webhookLastStatus *string
+		var webhookAttempts *int
+		var errHistoryJSON []byte
+		var dedupKey, shardKey, cronExp *string
+		var depsJSON []byte
+		var expiresAt *time.Time
+		var deadLetterReason *string
+
+		err := rows.Scan(
+			&j.ID, &j.TenantID, &j.Type, &payload, &stat, &priority,
+			&j.Retries, &j.MaxRetries,
+			&j.RunAt, &j.CreatedAt, &j.UpdatedAt,
+			&j.Progress,
+			&webhookURL, &webhookSecret, &webhookEvents, &webhookLastStatus, &webhookAttempts,
+			&errHistoryJSON,
+			&dedupKey, &depsJSON, &shardKey, &cronExp, &expiresAt, &deadLetterReason,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		j.Status = jobs.JobStatus(stat)
+		j.Priority = jobs.JobPriority(priority)
+		if payload != nil {
+			_ = json.Unmarshal(payload, &j.Payload)
+		}
+		if webhookURL != nil {
+			var events []string
+			if webhookEvents != nil && *webhookEvents != "" {
+				events = strings.Split(*webhookEvents, ",")
+			}
+			var lastStatus int
+			if webhookLastStatus != nil {
+				_, _ = fmt.Sscanf(*webhookLastStatus, "%d", &lastStatus)
+			}
+			var attempts int
+			if webhookAttempts != nil {
+				attempts = *webhookAttempts
+			}
+			j.Webhook = &jobs.WebhookConfig{
+				URL:        *webhookURL,
+				Secret:     *webhookSecret,
+				Events:     events,
+				LastStatus: lastStatus,
+				Attempts:   attempts,
+			}
+		}
+		if dedupKey != nil {
+			j.DedupKey = *dedupKey
+		}
+		if len(depsJSON) > 0 {
+			_ = json.Unmarshal(depsJSON, &j.Dependencies)
+		}
+		if shardKey != nil {
+			j.ShardKey = *shardKey
+		}
+		if errHistoryJSON != nil {
+			_ = json.Unmarshal(errHistoryJSON, &j.ErrorHistory)
+		}
+		if cronExp != nil {
+			j.CronExpr = *cronExp
+		}
+		if expiresAt != nil {
+			j.ExpiresAt = *expiresAt
+		}
+		if deadLetterReason != nil && *deadLetterReason != "" {
+			j.Result = *deadLetterReason
+		}
+		results = append(results, &j)
+	}
+	return results, nil
 }
 
 func (s *PostgresStore) DeleteFromDLQ(ctx context.Context, jobID string) error {

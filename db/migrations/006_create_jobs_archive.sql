@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS jobs_archive (
 );
 
 -- Indexes for performance and multi-tenancy isolation
-CREATE INDEX idx_jobs_archive_tenant_status ON jobs_archive(tenant_id, status);
-CREATE INDEX idx_jobs_archive_type_status_scheduled ON jobs_archive(type, status, scheduled_at);
-CREATE INDEX idx_jobs_archive_correlation_id ON jobs_archive(correlation_id);
-CREATE INDEX idx_jobs_archive_worker_status ON jobs_archive(processed_by, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_archive_tenant_status ON jobs_archive(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_archive_type_status_scheduled ON jobs_archive(type, status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_archive_correlation_id ON jobs_archive(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_archive_worker_status ON jobs_archive(processed_by, status);

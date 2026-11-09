@@ -32,9 +32,9 @@ func setupPostgresStore(t *testing.T) (*postgres.PostgresStore, *pgxpool.Pool, c
 	if err != nil {
 		t.Fatalf("connect pool: %v", err)
 	}
-	// Drop the jobs table and migration ledger so the latest schema applies
+	// Drop all tables and migration ledger so the latest schema applies
 	// fresh even if a previous run created the tables from an older migration.
-	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS jobs, schema_migrations CASCADE`); err != nil {
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS jobs, clients, jobs_archive, dead_letter_jobs, audit_logs, schema_migrations CASCADE`); err != nil {
 		pool.Close()
 		t.Fatalf("drop tables: %v", err)
 	}

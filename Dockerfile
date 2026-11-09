@@ -9,10 +9,11 @@ RUN go mod download
 # Copy the rest of the source code
 COPY . .
 
-# Build both binaries statically
+# Build binaries statically
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /worker ./cmd/worker
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /scheduler ./cmd/scheduler
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /cli ./cmd/cli
 
 # Final lightweight stage
 FROM alpine:latest
@@ -26,6 +27,8 @@ RUN apk add --no-cache tzdata ca-certificates
 COPY --from=builder /api /app/api
 COPY --from=builder /worker /app/worker
 COPY --from=builder /scheduler /app/scheduler
+COPY --from=builder /cli /app/cli
+COPY db/migrations /app/db/migrations
 
 # Running as a non-root user for security
 RUN adduser -D appuser
