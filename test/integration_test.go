@@ -39,7 +39,7 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	}
 	ctx := context.Background()
 	log := logger.Setup()
-	
+
 	// Setup Redis
 	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -50,16 +50,16 @@ func TestIntegration_SubmissionAndExecution(t *testing.T) {
 	// Setup System
 	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log, 0, 1)
-	
+	svc := service.New(q, store, log, 0)
+
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-success"}
 	exec.RegisterPlugin(p)
-	
+
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0, 1)
 
 	// 1. Submit Job
-	job, err := svc.CreateJob(ctx, "test-success", nil, nil, "medium", 3, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0, 1)
+	job, err := svc.CreateJob(ctx, "test-success", nil, nil, "medium", 3, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	}
 	ctx := context.Background()
 	log := logger.Setup()
-	
+
 	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	if err := client.Ping(ctx).Err(); err != nil {
 		t.Skip("Redis not available, skipping")
@@ -95,16 +95,16 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 
 	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log, 0, 1)
-	
+	svc := service.New(q, store, log, 0)
+
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-fail", ShouldFail: true} // This worker will fail
 	exec.RegisterPlugin(p)
-	
+
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0, 1)
 
 	// Submit Job with 1 retry
-	job, err := svc.CreateJob(ctx, "test-fail", nil, nil, "medium", 1, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0, 1)
+	job, err := svc.CreateJob(ctx, "test-fail", nil, nil, "medium", 1, "", "", "", "", "", 0, 0, "", nil, "", nil, "", 0)
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
 	}
@@ -113,17 +113,17 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	// We handle the backoff by mocking the sleep or just letting it run if short.
 	// Actually, WorkerProcessor.retry sleeps. This might slow down tests.
 	// For integration tests, we'll just verify it transition to Pending and incremented retries.
-	
+
 	// We need to run ProcessOnce in a goroutine because it might block if we don't handle the retry sleep.
 	// Actually, ProcessOnce calls retry() which sleeps.
-	
+
 	// Let's run it.
 	go func() {
 		_ = proc.ProcessBatch(ctx, 1)
 	}()
 
 	// Wait a bit for the first attempt to finish
-	time.Sleep(500 * time.Millisecond, 1)
+	time.Sleep(500 * time.Millisecond)
 
 	dbJob, err := store.GetByID(ctx, job.ID)
 	if err != nil || dbJob == nil {
@@ -132,7 +132,7 @@ func TestIntegration_RetryMechanism(t *testing.T) {
 	if dbJob.Status != jobs.StatusPending {
 		t.Errorf("expected status pending (for retry), got %s", dbJob.Status)
 	}
-	
+
 	// Since we set max_retries=1, and it failed once, it should have been re-enqueued.
 }
 
@@ -142,7 +142,7 @@ func TestIntegration_Scheduling(t *testing.T) {
 	}
 	ctx := context.Background()
 	log := logger.Setup()
-	
+
 	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	if err := client.Ping(ctx).Err(); err != nil {
 		t.Skip("Redis not available, skipping")
@@ -151,17 +151,17 @@ func TestIntegration_Scheduling(t *testing.T) {
 
 	store := models.NewInMemoryStore()
 	q := queue_redis.New(client, "test_queue")
-	svc := service.New(q, store, log, 0, 1)
-	
+	svc := service.New(q, store, log, 0)
+
 	exec := executor.NewJobExecutor(log)
 	p := &TestPlugin{JobType: "test-scheduled"}
 	exec.RegisterPlugin(p)
-	
+
 	proc := executor.NewWorkerProcessor("worker-1", svc, exec, nil, log, 0, 1)
 
 	// Submit Job scheduled 1 second in the future
 	runAt := time.Now().Add(1 * time.Second).Format(time.RFC3339)
-	job, err := svc.CreateJob(ctx, "test-scheduled", nil, nil, "medium", 3, "", "", "", runAt, "", 0, 0, "", nil, "", nil, "", 0, 1)
+	job, err := svc.CreateJob(ctx, "test-scheduled", nil, nil, "medium", 3, "", "", "", runAt, "", 0, 0, "", nil, "", nil, "", 0)
 	if err != nil {
 		t.Fatalf("failed to create scheduled job: %v", err)
 	}

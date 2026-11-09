@@ -69,7 +69,9 @@ func (m *mockQ) IsAllowed(ctx context.Context, tenantID string) (bool, error) {
 	}
 	return true, nil
 }
-func (m *mockQ) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error { return nil }
+func (m *mockQ) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error {
+	return nil
+}
 func (m *mockQ) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
 	if m.rateLimitStatusFunc != nil {
 		return m.rateLimitStatusFunc(ctx)
@@ -289,7 +291,7 @@ func TestProcessOnce_EmptyQueue(t *testing.T) {
 	}
 }
 
-func TestIsEmptyQueueErr(t *testing.T, 1) {
+func TestIsEmptyQueueErr(t *testing.T) {
 	tests := []struct {
 		err  error
 		want bool
@@ -323,19 +325,147 @@ func TestWorkerProcessor_Run_StopsOnContextCancel(t *testing.T) {
 	wp.Run(ctx)
 }
 
+func TestProcessOnce_NonBlockingRetryTiming(t *testing.T) {
+	wp, store, q := setupProcessor(t, func(ctx context.Context, job *jobs.Job) (interface{}, error) {
+		return nil, errors.New("transient database connection error")
+	})
+
+	var enqueuedJob *jobs.Job
+	q.enqueueFunc = func(ctx context.Context, job *jobs.Job) error {
+		enqueuedJob = job
+		return store.Save(ctx, job)
+	}
+	ackedID := ""
+	q.ackFunc = func(ctx context.Context, jobID string) error {
+		ackedID = jobID
+		return nil
+	}
+
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	store.Save(context.Background(), job)
+
+	start := time.Now()
+	err := wp.ProcessBatch(context.Background(), 1)
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected no error from ProcessBatch, got %v", err)
+	}
+
+	// Verify that the worker did NOT block for the retry backoff duration (which is 2s for attempt 1).
+	if duration > 500*time.Millisecond {
+		t.Fatalf("expected worker to complete non-blocking retry immediately, took %v", duration)
+	}
+
+	if enqueuedJob == nil {
+		t.Fatal("expected retry job to be re-enqueued")
+	}
+	if enqueuedJob.Retries != 1 {
+		t.Fatalf("expected job retries to be 1, got %d", enqueuedJob.Retries)
+	}
+	if !enqueuedJob.RunAt.After(start) {
+		t.Fatalf("expected job RunAt to be in the future, got %v vs start %v", enqueuedJob.RunAt, start)
+	}
+	if ackedID != job.ID {
+		t.Fatalf("expected old in-flight job %s to be acked, got %s", job.ID, ackedID)
+	}
+
+	// Verify job in store was updated with RunAt in the future and pending status
+	stored, err := store.GetByID(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("failed to retrieve job from store: %v", err)
+	}
+	if stored.Status != jobs.StatusPending {
+		t.Fatalf("expected stored job status to be pending, got %s", stored.Status)
+	}
+	if stored.Retries != 1 {
+		t.Fatalf("expected stored job retries to be 1, got %d", stored.Retries)
+	}
+}
+
+func TestProcessOnce_RetryExhaustionDLQ(t *testing.T) {
+	wp, store, _ := setupProcessor(t, func(ctx context.Context, job *jobs.Job) (interface{}, error) {
+		return nil, errors.New("permanent failure")
+	})
+
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 2, zeroTime, "", 60, 1, "tenant-a")
+	job.Retries = 2 // Already reached MaxRetries (2)
+	store.Save(context.Background(), job)
+
+	err := wp.ProcessBatch(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("expected no error from ProcessBatch, got %v", err)
+	}
+
+	// The job should now be in DLQ
+	dlqJob, err := store.GetFromDLQ(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("expected job to be in DLQ, got error: %v", err)
+	}
+	if dlqJob.Status != jobs.StatusFailed {
+		t.Fatalf("expected DLQ job status to be failed, got %s", dlqJob.Status)
+	}
+	if dlqJob.Result != "permanent failure" {
+		t.Fatalf("expected DLQ job result to be %q, got %v", "permanent failure", dlqJob.Result)
+	}
+}
+
+func TestProcessOnce_CircuitBreakerNonBlockingDeferral(t *testing.T) {
+	wp, store, q := setupProcessor(t, func(ctx context.Context, job *jobs.Job) (interface{}, error) {
+		return nil, ErrCircuitOpen
+	})
+
+	var enqueuedJob *jobs.Job
+	q.enqueueFunc = func(ctx context.Context, job *jobs.Job) error {
+		enqueuedJob = job
+		return store.Save(ctx, job)
+	}
+
+	job := jobs.NewJob("test", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
+	store.Save(context.Background(), job)
+
+	start := time.Now()
+	err := wp.ProcessBatch(context.Background(), 1)
+	duration := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("expected no error from ProcessBatch, got %v", err)
+	}
+
+	if duration > 500*time.Millisecond {
+		t.Fatalf("expected circuit breaker deferral to be non-blocking, took %v", duration)
+	}
+
+	if enqueuedJob == nil {
+		t.Fatal("expected deferred job to be re-enqueued")
+	}
+	// Circuit breaker deferral does NOT increment retries
+	if enqueuedJob.Retries != 0 {
+		t.Fatalf("expected retries to remain 0, got %d", enqueuedJob.Retries)
+	}
+	if !enqueuedJob.RunAt.After(start.Add(4 * time.Second)) {
+		t.Fatalf("expected RunAt to be delayed by ~5 seconds, got %v", enqueuedJob.RunAt)
+	}
+}
+
 func (m *mockQ) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }
 
 func (m *mockQ) PublishCancellation(ctx context.Context, jobID string) error { return nil }
-func (m *mockQ) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }
+func (m *mockQ) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
+	ch := make(chan string)
+	return ch, nil
+}
 
 // Operator Panic Button Mock Implementations
-func (m *mockQ) PauseJobType(ctx context.Context, jobType string) error { return nil }
-func (m *mockQ) ResumeJobType(ctx context.Context, jobType string) error { return nil }
+func (m *mockQ) PauseJobType(ctx context.Context, jobType string) error            { return nil }
+func (m *mockQ) ResumeJobType(ctx context.Context, jobType string) error           { return nil }
 func (m *mockQ) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
-func (m *mockQ) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
+func (m *mockQ) GetPausedJobTypes(ctx context.Context) ([]string, error)           { return nil, nil }
 
 func (m *mockQ) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
-	if max <= 0 { max = 1 }
+	if max <= 0 {
+		max = 1
+	}
 	job, err := m.Dequeue(ctx)
 	if err != nil || job == nil {
 		return nil, err

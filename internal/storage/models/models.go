@@ -20,16 +20,16 @@ const dedupKeyTTL = 24 * time.Hour
 
 // JobFilter holds search parameters for querying jobs.
 type JobFilter struct {
-	TenantID     string
-	Status       string
-	Type         string
-	SearchQuery  string
-	LabelKey     string
-	LabelValue   string
-	CreatedAfter time.Time
+	TenantID      string
+	Status        string
+	Type          string
+	SearchQuery   string
+	LabelKey      string
+	LabelValue    string
+	CreatedAfter  time.Time
 	CreatedBefore time.Time
-	Limit        int
-	Offset       int
+	Limit         int
+	Offset        int
 }
 
 // ─── Store interface ──────────────────────────────────────────────────────────
@@ -96,7 +96,6 @@ type Store interface {
 	LogAuditAction(ctx context.Context, log *AuditLog) error
 	ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error)
 
-
 	// ArchiveOldJobs archives or purges jobs that are finalized and older than cutoff.
 	ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error)
 
@@ -127,9 +126,6 @@ type ClientRecord struct {
 	TenantID  string    `json:"tenant_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
-
-
-
 
 // ErrJobNotFound is returned when a job ID does not exist in the store.
 var ErrJobNotFound = fmt.Errorf("job not found")
@@ -249,7 +245,6 @@ func (s *InMemoryStore) GetByWorkerAndStatus(_ context.Context, workerID string,
 	}
 	return results, nil
 }
-
 
 func (s *InMemoryStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return s.Save(ctx, job)
@@ -501,7 +496,7 @@ func (s *InMemoryStore) VerifyClient(_ context.Context, apiKeyHash string) (stri
 func (s *InMemoryStore) ListClients(_ context.Context) ([]*ClientRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Deduplicate tenants
 	seen := make(map[string]bool)
 	var out []*ClientRecord
@@ -531,6 +526,7 @@ func (s *InMemoryStore) RevokeClient(_ context.Context, tenantID string) error {
 // ─── Redis Store ──────────────────────────────────────────────────────────────
 
 const jobStoreKey = "task_queue:store:jobs"
+const dlqStoreKey = "task_queue:store:dlq"
 
 // RedisStore persists job records as JSON in a Redis Hash.
 // This allows multiple distributed instances to share a consistent view of job states.
@@ -544,7 +540,9 @@ func NewRedisStore(client redis.UniversalClient) *RedisStore {
 }
 
 func (s *RedisStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
-	if len(batch) == 0 { return nil }
+	if len(batch) == 0 {
+		return nil
+	}
 	pipe := s.client.Pipeline()
 	for _, job := range batch {
 		data, err := json.Marshal(job)
@@ -681,7 +679,6 @@ func (s *RedisStore) GetByWorkerAndStatus(ctx context.Context, workerID string, 
 	}
 	return results, nil
 }
-
 
 func (s *RedisStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return s.Save(ctx, job)
@@ -858,10 +855,16 @@ func (s *RedisStore) IsDedupKeyTaken(ctx context.Context, dedupKey, tenantID str
 	if dedupKey == "" {
 		return false, nil
 	}
-	// Use a Redis SET with TTL for dedup keys.
+	// Use a Redis string key with TTL for dedup keys.
 	key := fmt.Sprintf("dedup:%s:%s", tenantID, dedupKey)
-	// SETNX returns true if key was set (didn't exist).
-	return s.client.SetNX(ctx, key, "1", 24*time.Hour).Result()
+	// SETNX returns true if the key was set (i.e. did not exist previously).
+	// If set == true, the key was available and has now been claimed, so it was NOT taken.
+	// If set == false, the key already existed, so it IS taken (duplicate).
+	set, err := s.client.SetNX(ctx, key, "1", dedupKeyTTL).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis_store: SetNX failed for dedup key %s: %w", key, err)
+	}
+	return !set, nil
 }
 
 func (s *RedisStore) GetByIDs(ctx context.Context, ids []string) ([]*jobs.Job, error) {
@@ -1061,20 +1064,186 @@ func (s *RedisStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int6
 	return int64(len(toPurge)), nil
 }
 
-// ── DLQ (No-op in Redis-only for now) ──
-func (s *RedisStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error { return nil }
-func (s *RedisStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) { return nil, nil }
-func (s *RedisStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) { return 0, nil }
-func (s *RedisStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) { return 0, nil }
-func (s *RedisStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) { return nil, ErrJobNotFound }
-func (s *RedisStore) DeleteFromDLQ(ctx context.Context, jobID string) error { return nil }
+// ── DLQ (RedisStore) ──
+func (s *RedisStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
+	if jobID == "" {
+		return fmt.Errorf("redis_store: jobID must not be empty")
+	}
+
+	val, err := s.client.HGet(ctx, jobStoreKey, jobID).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			// Check if already in DLQ (idempotency)
+			exists, errCheck := s.client.HExists(ctx, dlqStoreKey, jobID).Result()
+			if errCheck == nil && exists {
+				return nil
+			}
+			return fmt.Errorf("%w: %s", ErrJobNotFound, jobID)
+		}
+		return fmt.Errorf("redis_store: HGet failed for job %s: %w", jobID, err)
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(val), &job); err != nil {
+		return fmt.Errorf("redis_store: failed to unmarshal job %s: %w", jobID, err)
+	}
+
+	job.Status = jobs.StatusFailed
+	job.UpdatedAt = time.Now().UTC()
+	if reason != "" {
+		if job.Payload == nil {
+			job.Payload = make(map[string]interface{})
+		}
+		job.Payload["_error_reason"] = reason
+		job.ErrorHistory = append(job.ErrorHistory, jobs.AttemptError{
+			Error:     reason,
+			Timestamp: job.UpdatedAt,
+			Attempt:   job.Retries,
+		})
+	}
+
+	data, err := json.Marshal(&job)
+	if err != nil {
+		return fmt.Errorf("redis_store: failed to marshal dlq job %s: %w", jobID, err)
+	}
+
+	pipe := s.client.TxPipeline()
+	pipe.HDel(ctx, jobStoreKey, jobID)
+	pipe.HSet(ctx, dlqStoreKey, jobID, data)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("redis_store: MoveToDLQ pipeline failed for job %s: %w", jobID, err)
+	}
+	return nil
+}
+
+func (s *RedisStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
+	vals, err := s.client.HVals(ctx, dlqStoreKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis_store: ListDLQ failed: %w", err)
+	}
+
+	var filtered []*jobs.Job
+	for _, val := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(val), &j); err != nil {
+			continue
+		}
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) {
+			copy := j
+			filtered = append(filtered, &copy)
+		}
+	}
+
+	// Sort newest-first by CreatedAt to match PostgreSQL: ORDER BY created_at DESC
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+
+	if offset >= len(filtered) {
+		return []*jobs.Job{}, nil
+	}
+	filtered = filtered[offset:]
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+
+	return filtered, nil
+}
+
+func (s *RedisStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
+	if tenantID == "" && jobType == "" {
+		return s.client.HLen(ctx, dlqStoreKey).Result()
+	}
+
+	vals, err := s.client.HVals(ctx, dlqStoreKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis_store: CountDLQ failed: %w", err)
+	}
+
+	var count int64
+	for _, val := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(val), &j); err != nil {
+			continue
+		}
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *RedisStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	vals, err := s.client.HVals(ctx, dlqStoreKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis_store: DeleteDLQBefore failed: %w", err)
+	}
+
+	var toDelete []string
+	for _, val := range vals {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(val), &j); err != nil {
+			continue
+		}
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) && j.UpdatedAt.Before(before) {
+			toDelete = append(toDelete, j.ID)
+		}
+	}
+
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+
+	deleted, err := s.client.HDel(ctx, dlqStoreKey, toDelete...).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis_store: HDel in DeleteDLQBefore failed: %w", err)
+	}
+	return deleted, nil
+}
+
+func (s *RedisStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("redis_store: jobID must not be empty")
+	}
+
+	val, err := s.client.HGet(ctx, dlqStoreKey, jobID).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("%w: %s", ErrJobNotFound, jobID)
+		}
+		return nil, fmt.Errorf("redis_store: HGet from DLQ failed for job %s: %w", jobID, err)
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(val), &job); err != nil {
+		return nil, fmt.Errorf("redis_store: failed to unmarshal DLQ job %s: %w", jobID, err)
+	}
+	return &job, nil
+}
+
+func (s *RedisStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("redis_store: jobID must not be empty")
+	}
+
+	n, err := s.client.HDel(ctx, dlqStoreKey, jobID).Result()
+	if err != nil {
+		return fmt.Errorf("redis_store: HDel DLQ failed for job %s: %w", jobID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrJobNotFound, jobID)
+	}
+	return nil
+}
 
 // ── DLQ (InMemoryStore) ──
 func (s *InMemoryStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	j, ok := s.data[jobID]
-	if !ok { return ErrJobNotFound }
+	if !ok {
+		return ErrJobNotFound
+	}
 	delete(s.data, jobID)
 	s.dlq[jobID] = j
 	return nil
@@ -1095,7 +1264,9 @@ func (s *InMemoryStore) CountDLQ(ctx context.Context, tenantID, jobType string) 
 	defer s.mu.RUnlock()
 	c := int64(0)
 	for _, j := range s.dlq {
-		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) { c++ }
+		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) {
+			c++
+		}
 	}
 	return c, nil
 }
@@ -1115,14 +1286,18 @@ func (s *InMemoryStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	j, ok := s.dlq[jobID]
-	if !ok { return nil, ErrJobNotFound }
+	if !ok {
+		return nil, ErrJobNotFound
+	}
 	return j, nil
 }
 func (s *InMemoryStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, ok := s.dlq[jobID]
-	if !ok { return ErrJobNotFound }
+	if !ok {
+		return ErrJobNotFound
+	}
 	delete(s.dlq, jobID)
 	return nil
 }
@@ -1139,7 +1314,11 @@ type AuditLog struct {
 }
 
 func (s *RedisStore) LogAuditAction(ctx context.Context, log *AuditLog) error { return nil }
-func (s *RedisStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) { return nil, nil }
+func (s *RedisStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) {
+	return nil, nil
+}
 
 func (s *InMemoryStore) LogAuditAction(ctx context.Context, log *AuditLog) error { return nil }
-func (s *InMemoryStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) { return nil, nil }
+func (s *InMemoryStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) {
+	return nil, nil
+}

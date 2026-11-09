@@ -158,20 +158,20 @@ func (s *DualStore) RevokeClient(ctx context.Context, tenantID string) error {
 	return s.Primary.RevokeClient(ctx, tenantID)
 }
 
-
 // ArchiveOldJobs archives jobs in both stores. It primarily relies on the primary store's count.
 func (s *DualStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
 	// Archive in secondary first
 	_, _ = s.Secondary.ArchiveOldJobs(ctx, cutoff)
-	
+
 	// Archive in primary
 	return s.Primary.ArchiveOldJobs(ctx, cutoff)
 }
 
-// ── DLQ (Delegate to Postgres) ──
+// ── DLQ (Delegate to Postgres with Secondary Sync) ──
 func (s *DualStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
-	// Remove from Redis if it was there
-	s.Secondary.DeleteJob(ctx, jobID)
+	if s.Secondary != nil {
+		_ = s.Secondary.MoveToDLQ(ctx, jobID, reason)
+	}
 	return s.Primary.MoveToDLQ(ctx, jobID, reason)
 }
 func (s *DualStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
@@ -181,12 +181,18 @@ func (s *DualStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int
 	return s.Primary.CountDLQ(ctx, tenantID, jobType)
 }
 func (s *DualStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	if s.Secondary != nil {
+		_, _ = s.Secondary.DeleteDLQBefore(ctx, tenantID, jobType, before)
+	}
 	return s.Primary.DeleteDLQBefore(ctx, tenantID, jobType, before)
 }
 func (s *DualStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
 	return s.Primary.GetFromDLQ(ctx, jobID)
 }
 func (s *DualStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	if s.Secondary != nil {
+		_ = s.Secondary.DeleteFromDLQ(ctx, jobID)
+	}
 	return s.Primary.DeleteFromDLQ(ctx, jobID)
 }
 

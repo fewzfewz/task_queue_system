@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +30,9 @@ var (
 	buildOnce sync.Once
 	workerBin string
 	buildErr  error
+	schedOnce sync.Once
+	schedBin  string
+	schedErr  error
 	randSrc   = rand.NewSource(time.Now().UnixNano())
 )
 
@@ -69,6 +73,65 @@ func buildWorkerBinary(t *testing.T) string {
 		t.Fatalf("build worker binary: %v", buildErr)
 	}
 	return workerBin
+}
+
+func buildSchedulerBinary(t *testing.T) string {
+	t.Helper()
+	schedOnce.Do(func() {
+		wd, err := os.Getwd()
+		if err != nil {
+			schedErr = err
+			return
+		}
+		binDir := os.TempDir()
+		binPath := filepath.Join(binDir, fmt.Sprintf("scheduler-chaos-%d", time.Now().UnixNano()))
+		cmd := exec.Command("go", "build", "-o", binPath, "../cmd/scheduler")
+		cmd.Dir = wd
+		cmd.Env = append(os.Environ(), "GOFLAGS=")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			schedErr = fmt.Errorf("failed to build scheduler binary: %w output=%s", err, string(out))
+			return
+		}
+		schedBin = binPath
+	})
+	if schedErr != nil {
+		t.Fatalf("build scheduler binary: %v", schedErr)
+	}
+	return schedBin
+}
+
+func getFreePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
+	defer ln.Close()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to split host port: %v", err)
+	}
+	return port
+}
+
+func startSchedulerProcess(t *testing.T, binary, redisHost, port string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command(binary)
+	cmd.Env = append(os.Environ(),
+		"REDIS_HOST="+redisHost,
+		"REDIS_DB=0",
+		"STORE_BACKEND=redis",
+		"SCHEDULER_PORT="+port,
+		"API_KEY=secret-api-key",
+		"LOG_LEVEL=info",
+	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start scheduler process: %v", err)
+	}
+	return cmd
 }
 
 func startWorkerProcess(t *testing.T, binary, redisHost string) *exec.Cmd {
@@ -149,10 +212,23 @@ func randomSuffix() string {
 }
 
 func newRedisContainer(t *testing.T, cli *docker.Client) (string, string, func()) {
+	return createRedisContainer(t, cli, false)
+}
+
+func newPersistentRedisContainer(t *testing.T, cli *docker.Client) (string, string, func()) {
+	return createRedisContainer(t, cli, true)
+}
+
+func createRedisContainer(t *testing.T, cli *docker.Client, persistent bool) (string, string, func()) {
 	t.Helper()
 	ctx := context.Background()
+	var cmd []string
+	if persistent {
+		cmd = []string{"redis-server", "--appendonly", "yes", "--appendfsync", "always"}
+	}
 	config := &container.Config{
 		Image: "redis:7-alpine",
+		Cmd:   cmd,
 		ExposedPorts: nat.PortSet{
 			nat.Port("6379/tcp"): struct{}{},
 		},
@@ -162,9 +238,10 @@ func newRedisContainer(t *testing.T, cli *docker.Client) (string, string, func()
 		t.Fatalf("failed to pull redis image: %v", err)
 	}
 	_ = reader.Close()
+	freePort := getFreePort(t)
 	hostConfig := &container.HostConfig{
 		PortBindings: nat.PortMap{
-			nat.Port("6379/tcp"): []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: ""}},
+			nat.Port("6379/tcp"): []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: freePort}},
 		},
 	}
 	resp, err := cli.ContainerCreate(ctx, config, hostConfig, &network.NetworkingConfig{}, nil, "")

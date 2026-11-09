@@ -47,28 +47,31 @@ var promoteScheduledJobsScript = redis.NewScript(`
 	local numPartitions = tonumber(ARGV[2])
 	local jobs = redis.call('ZRANGEBYSCORE', delayedKey, 0, now)
 	
+	local count = 0
 	for _, job in ipairs(jobs) do
-		local decoded = cjson.decode(job)
-		local targetKey = KEYS[2] -- medium by default
-		if decoded.priority == 'high' then
-			targetKey = KEYS[3]
-		elseif decoded.priority == 'low' then
-			targetKey = KEYS[4]
-		end
-		
-		-- Partition hash matching Go implementation
-		local sum = 0
-		local id = decoded.id
-		for i = 1, #id do
-			sum = sum + string.byte(id, i)
-		end
-		local partition = (sum % numPartitions) + 1
-		local partitionKey = targetKey .. ":" .. partition
+		if redis.call('ZREM', delayedKey, job) == 1 then
+			local decoded = cjson.decode(job)
+			local targetKey = KEYS[2] -- medium by default
+			if decoded.priority == 'high' then
+				targetKey = KEYS[3]
+			elseif decoded.priority == 'low' then
+				targetKey = KEYS[4]
+			end
+			
+			-- Partition hash matching Go implementation
+			local sum = 0
+			local id = decoded.id
+			for i = 1, #id do
+				sum = sum + string.byte(id, i)
+			end
+			local partition = (sum % numPartitions) + 1
+			local partitionKey = targetKey .. ":" .. partition
 
-		redis.call('LPUSH', partitionKey, job)
-		redis.call('ZREM', delayedKey, job)
+			redis.call('LPUSH', partitionKey, job)
+			count = count + 1
+		end
 	end
-	return #jobs
+	return count
 `)
 
 // reclaimTimedOutJobsScript moves expired in-flight jobs back to priority lists.
@@ -79,45 +82,57 @@ var reclaimTimedOutJobsScript = redis.NewScript(`
 	local numPartitions = tonumber(ARGV[2])
 	local jobs = redis.call('ZRANGEBYSCORE', inFlightKey, 0, now)
 	
+	local count = 0
 	for _, id in ipairs(jobs) do
-		local payload = redis.call('HGET', payloadKey, id)
-		if payload then
-			local decoded = cjson.decode(payload)
-			local targetKey = KEYS[3] -- medium by default
-			if decoded.priority == 'high' then
-				targetKey = KEYS[4]
-			elseif decoded.priority == 'low' then
-				targetKey = KEYS[5]
+		if redis.call('ZREM', inFlightKey, id) == 1 then
+			local activeKey = redis.call('GET', 'task_queue:job_active_key:' .. id)
+			if activeKey then
+				redis.call('ZREM', activeKey, id)
+				redis.call('DEL', 'task_queue:job_active_key:' .. id)
 			end
-			
-			-- Partition hash matching Go implementation
-			local sum = 0
-			for i = 1, #id do
-				sum = sum + string.byte(id, i)
+			local activeTenantKey = redis.call('GET', 'task_queue:job_active_tenant_key:' .. id)
+			if activeTenantKey then
+				redis.call('ZREM', activeTenantKey, id)
+				redis.call('DEL', 'task_queue:job_active_tenant_key:' .. id)
 			end
-			local partition = (sum % numPartitions) + 1
-			local partitionKey = targetKey .. ":" .. partition
 
-			redis.call('LPUSH', partitionKey, payload)
+			local payload = redis.call('HGET', payloadKey, id)
+			if payload then
+				local decoded = cjson.decode(payload)
+				local targetKey = KEYS[3] -- medium by default
+				if decoded.priority == 'high' then
+					targetKey = KEYS[4]
+				elseif decoded.priority == 'low' then
+					targetKey = KEYS[5]
+				end
+				
+				-- Partition hash matching Go implementation
+				local sum = 0
+				for i = 1, #id do
+					sum = sum + string.byte(id, i)
+				end
+				local partition = (sum % numPartitions) + 1
+				local partitionKey = targetKey .. ":" .. partition
+
+				redis.call('LPUSH', partitionKey, payload)
+			end
+			redis.call('HDEL', payloadKey, id)
+			count = count + 1
 		end
-		redis.call('ZREM', inFlightKey, id)
-		redis.call('HDEL', payloadKey, id)
 	end
-	return #jobs
+	return count
 `)
-
-
 
 // RedisQueue is a Redis-backed implementation of the queue.Queue interface.
 // It uses a Redis list for the pending queue and a Redis hash to track
 // jobs that are currently being processed, enabling safe Ack and Fail semantics.
 type RedisQueue struct {
-	client  redis.UniversalClient
-	qHigh   string // high priority list
-	qMedium string // medium priority list
-	qLow    string // low priority list
-	qDelayed string // scheduled jobs ZSET
-	dlqKey  string // dead letter queue key
+	client        redis.UniversalClient
+	qHigh         string // high priority list
+	qMedium       string // medium priority list
+	qLow          string // low priority list
+	qDelayed      string // scheduled jobs ZSET
+	dlqKey        string // dead letter queue key
 	numPartitions int
 
 	metricsTotal     string
@@ -142,7 +157,7 @@ func NewWithRateLimit(client redis.UniversalClient, queueName string, rateLimit 
 		baseKey = "task_queue:" + queueName
 	}
 	return &RedisQueue{
-		rateLimit: rateLimit,
+		rateLimit:        rateLimit,
 		client:           client,
 		qHigh:            baseKey + ":high",
 		qMedium:          baseKey + ":medium",
@@ -203,8 +218,6 @@ func (q *RedisQueue) getFairPartitionKeys() []string {
 	return keys
 }
 
-
-
 // Enqueue serialises the job as JSON and pushes it to the left of the Redis list.
 // BRPOP pops from the right (FIFO ordering).
 // Uses the job's Priority to determine the target queue.
@@ -245,13 +258,25 @@ func (q *RedisQueue) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return nil
 }
 
-// Size returns the total number of pending jobs across all priority queues.
+// Size returns the total number of pending jobs across all priority queues and partitions.
 func (q *RedisQueue) Size(ctx context.Context) (int64, error) {
-	// We sum up high, medium, and low priority lists.
-	hLen, _ := q.client.LLen(ctx, q.qHigh).Result()
-	mLen, _ := q.client.LLen(ctx, q.qMedium).Result()
-	lLen, _ := q.client.LLen(ctx, q.qLow).Result()
-	return hLen + mLen + lLen, nil
+	numPartitions := q.numPartitions
+	if numPartitions <= 0 {
+		numPartitions = 1
+	}
+
+	var total int64
+	for i := 1; i <= numPartitions; i++ {
+		for _, base := range []string{q.qHigh, q.qMedium, q.qLow} {
+			key := fmt.Sprintf("%s:%d", base, i)
+			n, err := q.client.LLen(ctx, key).Result()
+			if err != nil {
+				return 0, fmt.Errorf("queue: LLen failed for %s: %w", key, err)
+			}
+			total += n
+		}
+	}
+	return total, nil
 }
 
 // Dequeue blocks until a job becomes available or the context is cancelled.
@@ -350,7 +375,11 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 			return nil, fmt.Errorf("queue: failed to serialise processing job %s: %w", job.ID, err)
 		}
 
-		timeoutAt := time.Now().Add(visibilityTimeout).Unix()
+		vTimeout := visibilityTimeout
+		if job.Timeout > 0 {
+			vTimeout = time.Duration(job.Timeout) * time.Second
+		}
+		timeoutAt := time.Now().Add(vTimeout).Unix()
 
 		pipe := q.client.TxPipeline()
 		pipe.HSet(ctx, "task_queue:payloads", job.ID, updated)
@@ -358,19 +387,19 @@ func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 			Score:  float64(timeoutAt),
 			Member: job.ID,
 		})
-		
+
 		// Track active concurrency
 		pipe.ZAdd(ctx, activeKey, redis.Z{
 			Score:  float64(timeoutAt),
 			Member: job.ID,
 		})
-		pipe.Set(ctx, "task_queue:job_active_key:"+job.ID, activeKey, visibilityTimeout+time.Hour)
+		pipe.Set(ctx, "task_queue:job_active_key:"+job.ID, activeKey, vTimeout+time.Hour)
 
 		pipe.ZAdd(ctx, activeTenantKey, redis.Z{
 			Score:  float64(timeoutAt),
 			Member: job.ID,
 		})
-		pipe.Set(ctx, "task_queue:job_active_tenant_key:"+job.ID, activeTenantKey, visibilityTimeout+time.Hour)
+		pipe.Set(ctx, "task_queue:job_active_tenant_key:"+job.ID, activeTenantKey, vTimeout+time.Hour)
 
 		if _, err := pipe.Exec(ctx); err != nil {
 			return nil, fmt.Errorf("queue: Dequeue tracking failed: %w", err)
@@ -404,7 +433,7 @@ func (q *RedisQueue) getJobTypeState(ctx context.Context, jobType string) (int, 
 		}
 		return 0, false, err
 	}
-	
+
 	var partial struct {
 		ConcurrencyLimit int  `json:"concurrency_limit"`
 		Paused           bool `json:"paused"`
@@ -427,19 +456,19 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 	// Simple approach for this refactor: scan the ZSET.
 	// Production-ready optimization: also keep a mapping of ID -> full payload.
 	// For "simple but safe", we'll use a scan or just store ID in ZSET and keep payload in Hash.
-	
+
 	// Refined approach: Use a Hash for [ID -> Payload] and ZSET for [ID -> Timeout].
 	// This makes ID-based lookups O(1) while allowing time-based queries.
-	
+
 	// Let's stick to the ZSET-only approach for now but we need the payload to remove it.
 	// Actually, it's easier to remove by ID if we only store the ID in the ZSET.
 	// I'll update Dequeue to store ONLY THE ID in the ZSET, and keep the ID -> JSON in a Hash.
-	
+
 	// Removing from both atomically.
 	pipe := q.client.TxPipeline()
 	pipe.HDel(ctx, "task_queue:payloads", jobID)
 	pipe.ZRem(ctx, processingSetKey, jobID)
-	
+
 	// Remove from concurrency tracking
 	activeKey, _ := q.client.Get(ctx, "task_queue:job_active_key:"+jobID).Result()
 	if activeKey != "" {
@@ -452,7 +481,7 @@ func (q *RedisQueue) Ack(ctx context.Context, jobID string) error {
 		pipe.ZRem(ctx, activeTenantKey, jobID)
 		pipe.Del(ctx, "task_queue:job_active_tenant_key:"+jobID)
 	}
-	
+
 	cmds, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("queue: Ack pipeline failed: %w", err)
@@ -495,7 +524,7 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 	pipe := q.client.TxPipeline()
 	pipe.HDel(ctx, "task_queue:payloads", jobID)
 	pipe.ZRem(ctx, processingSetKey, jobID)
-	
+
 	activeKey, _ := q.client.Get(ctx, "task_queue:job_active_key:"+jobID).Result()
 	if activeKey != "" {
 		pipe.ZRem(ctx, activeKey, jobID)
@@ -507,7 +536,7 @@ func (q *RedisQueue) Fail(ctx context.Context, jobID string, reason error) error
 		pipe.ZRem(ctx, activeTenantKey, jobID)
 		pipe.Del(ctx, "task_queue:job_active_tenant_key:"+jobID)
 	}
-	
+
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("queue: Fail cleanup failed: %w", err)
 	}
@@ -643,16 +672,16 @@ func (q *RedisQueue) GetActiveWorkers(ctx context.Context) ([]queue.WorkerInfo, 
 // to the active processing queues. Returns the number of promoted jobs.
 func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 	now := Now().Unix()
-	
+
 	// KEYS: [delayed_jobs, qMedium, qHigh, qLow]
 	res, err := promoteScheduledJobsScript.Run(ctx, q.client, []string{
 		q.qDelayed, q.qMedium, q.qHigh, q.qLow,
 	}, now, q.numPartitions).Int()
-	
+
 	if err != nil && err != redis.Nil {
 		return 0, fmt.Errorf("queue: failed to execute promotion script: %w", err)
 	}
-	
+
 	return res, nil
 }
 
@@ -660,16 +689,16 @@ func (q *RedisQueue) PromoteScheduledJobs(ctx context.Context) (int, error) {
 // and moves them back to the active queues for another attempt.
 func (q *RedisQueue) ReclaimTimedOutJobs(ctx context.Context) (int, error) {
 	now := Now().Unix()
-	
+
 	// KEYS: [inFlightKey, payloadsKey, qMedium, qHigh, qLow]
 	res, err := reclaimTimedOutJobsScript.Run(ctx, q.client, []string{
 		processingSetKey, "task_queue:payloads", q.qMedium, q.qHigh, q.qLow,
 	}, now, q.numPartitions).Int()
-	
+
 	if err != nil && err != redis.Nil {
 		return 0, fmt.Errorf("queue: failed to execute reclaim script: %w", err)
 	}
-	
+
 	return res, nil
 }
 
@@ -697,7 +726,6 @@ func (q *RedisQueue) MarkProcessed(ctx context.Context, jobID string) error {
 func (q *RedisQueue) CleanupProcessedIDs(ctx context.Context) (int64, error) {
 	return 0, nil
 }
-
 
 // IsAllowed implements per-tenant rate limiting using a Redis-backed fixed window.
 func (q *RedisQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error) {
@@ -815,7 +843,6 @@ func (q *RedisQueue) PublishWebhookEvent(ctx context.Context, event interface{})
 	}).Err()
 }
 
-
 // ReconcileDeferredJobs moves jobs from deferred queues back to the main queue
 // if their job type concurrency limits allow it.
 func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
@@ -840,7 +867,7 @@ func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
 		}
 
 		deferredKey := "task_queue:deferred:" + typeName
-		
+
 		// Check if there are any deferred jobs for this type
 		deferredCount, err := q.client.LLen(ctx, deferredKey).Result()
 		if err != nil || deferredCount == 0 {
@@ -891,7 +918,7 @@ func (q *RedisQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) {
 			}
 		}
 	}
-	
+
 	// 2. Fetch all registered tenants to get their limits.
 	allTenants, err := q.client.HGetAll(ctx, "task_queue:tenants:registered").Result()
 	if err == nil {
@@ -962,7 +989,7 @@ func (q *RedisQueue) PublishCancellation(ctx context.Context, jobID string) erro
 // SubscribeCancellations listens for job cancellation signals globally.
 func (q *RedisQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
 	pubsub := q.client.Subscribe(ctx, "task_queue:cancellations")
-	
+
 	// Ensure subscription is successful before proceeding
 	_, err := pubsub.Receive(ctx)
 	if err != nil {
@@ -1018,24 +1045,26 @@ func (q *RedisQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) {
 }
 
 func (q *RedisQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
-	if max <= 0 { max = 1 }
+	if max <= 0 {
+		max = 1
+	}
 	var batch []*jobs.Job
-	
+
 	for i := 0; i < max; i++ {
 		// First item can block, subsequent items should not block
 		// We use a short timeout for subsequent pulls to avoid waiting
 		var timeoutCtx context.Context
 		var cancel context.CancelFunc
-		
+
 		if i == 0 {
 			timeoutCtx, cancel = context.WithCancel(ctx)
 		} else {
 			timeoutCtx, cancel = context.WithTimeout(ctx, 10*time.Millisecond) // short wait
 		}
-		
+
 		job, err := q.Dequeue(timeoutCtx)
 		cancel()
-		
+
 		if err != nil {
 			if len(batch) > 0 {
 				// If we already have jobs, ignore the timeout/error for the rest
@@ -1049,6 +1078,6 @@ func (q *RedisQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, er
 			break
 		}
 	}
-	
+
 	return batch, nil
 }

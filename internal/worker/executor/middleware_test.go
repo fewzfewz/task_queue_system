@@ -56,7 +56,7 @@ func TestJobExecutor_MiddlewareChain(t *testing.T) {
 
 	job := jobs.NewJob("test_job", nil, nil, "medium", 1, time.Now(), "", 0, 1, "t1")
 	res, err := executor.Execute(context.Background(), job)
-	
+
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -95,7 +95,7 @@ func TestJobExecutor_MiddlewareAbort(t *testing.T) {
 
 	job := jobs.NewJob("test_job", nil, nil, "medium", 1, time.Now(), "", 0, 1, "t1")
 	_, err := executor.Execute(context.Background(), job)
-	
+
 	if err == nil || err.Error() != "aborted by middleware" {
 		t.Fatalf("expected abort error, got %v", err)
 	}

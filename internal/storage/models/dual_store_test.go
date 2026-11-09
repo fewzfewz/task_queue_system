@@ -11,28 +11,28 @@ import (
 // mockStore implements a minimal in-memory Store for testing DualStore delegation.
 type mockStore struct {
 	LogAuditActionFunc func(ctx context.Context, log *AuditLog) error
-	ListAuditLogsFunc func(ctx context.Context, limit, offset int) ([]*AuditLog, error)
+	ListAuditLogsFunc  func(ctx context.Context, limit, offset int) ([]*AuditLog, error)
 	Store
-	saveCalled          int
-	getByIDCalled       int
-	updateStatusCalled  int
-	updateProgressCalled int
-	updateResultCalled  int
-	deleteJobCalled     int
+	saveCalled             int
+	getByIDCalled          int
+	updateStatusCalled     int
+	updateProgressCalled   int
+	updateResultCalled     int
+	deleteJobCalled        int
 	deleteJobsBeforeCalled int
-	enqueueCalled       int
-	dequeueCalled       int
-	heartbeatCalled     int
-	completeCalled      int
-	failCalled          int
-	listJobsCalled      int
-	searchJobsCalled    int
-	recoverOrphansCalled int
-	dedupCalled         int
-	getByIDsCalled      int
-	getQueueLengthsCalled int
-	getByWorkerCalled   int
-	jobs                map[string]*jobs.Job
+	enqueueCalled          int
+	dequeueCalled          int
+	heartbeatCalled        int
+	completeCalled         int
+	failCalled             int
+	listJobsCalled         int
+	searchJobsCalled       int
+	recoverOrphansCalled   int
+	dedupCalled            int
+	getByIDsCalled         int
+	getQueueLengthsCalled  int
+	getByWorkerCalled      int
+	jobs                   map[string]*jobs.Job
 }
 
 func newMockStore() *mockStore {
@@ -149,12 +149,14 @@ func (m *mockStore) GetByWorkerAndStatus(ctx context.Context, workerID string, s
 	return nil, nil
 }
 
-func (m *mockStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error { return nil }
+func (m *mockStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error {
+	return nil
+}
 func (m *mockStore) VerifyClient(ctx context.Context, apiKeyHash string) (string, error) {
 	return "", ErrClientNotFound
 }
 func (m *mockStore) ListClients(ctx context.Context) ([]*ClientRecord, error) { return nil, nil }
-func (m *mockStore) RevokeClient(ctx context.Context, tenantID string) error { return nil }
+func (m *mockStore) RevokeClient(ctx context.Context, tenantID string) error  { return nil }
 
 func TestDualStoreSave(t *testing.T) {
 	primary := newMockStore()
@@ -238,14 +240,38 @@ func TestDualStoreDelegatesToPrimaryOnly(t *testing.T) {
 		name  string
 		check func(p, s *mockStore) (primaryCalls, secondaryCalls int)
 	}{
-		{"GetByID", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).GetByID(ctx, "j1"); return p.getByIDCalled, s.getByIDCalled }},
-		{"ListJobs", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).ListJobs(ctx, "", "", "", 0, 0); return p.listJobsCalled, s.listJobsCalled }},
-		{"SearchJobs", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).SearchJobs(ctx, JobFilter{}); return p.searchJobsCalled, s.searchJobsCalled }},
-		{"RecoverOrphans", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).RecoverOrphans(ctx, time.Minute); return p.recoverOrphansCalled, s.recoverOrphansCalled }},
-		{"IsDedupKeyTaken", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).IsDedupKeyTaken(ctx, "k", "t"); return p.dedupCalled, s.dedupCalled }},
-		{"GetByIDs", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).GetByIDs(ctx, nil); return p.getByIDsCalled, s.getByIDsCalled }},
-		{"GetQueueLengths", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).GetQueueLengths(ctx); return p.getQueueLengthsCalled, s.getQueueLengthsCalled }},
-		{"GetByWorkerAndStatus", func(p, s *mockStore) (int, int) { _, _ = NewDualStore(p, s).GetByWorkerAndStatus(ctx, "w", jobs.StatusProcessing); return p.getByWorkerCalled, s.getByWorkerCalled }},
+		{"GetByID", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).GetByID(ctx, "j1")
+			return p.getByIDCalled, s.getByIDCalled
+		}},
+		{"ListJobs", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).ListJobs(ctx, "", "", "", 0, 0)
+			return p.listJobsCalled, s.listJobsCalled
+		}},
+		{"SearchJobs", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).SearchJobs(ctx, JobFilter{})
+			return p.searchJobsCalled, s.searchJobsCalled
+		}},
+		{"RecoverOrphans", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).RecoverOrphans(ctx, time.Minute)
+			return p.recoverOrphansCalled, s.recoverOrphansCalled
+		}},
+		{"IsDedupKeyTaken", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).IsDedupKeyTaken(ctx, "k", "t")
+			return p.dedupCalled, s.dedupCalled
+		}},
+		{"GetByIDs", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).GetByIDs(ctx, nil)
+			return p.getByIDsCalled, s.getByIDsCalled
+		}},
+		{"GetQueueLengths", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).GetQueueLengths(ctx)
+			return p.getQueueLengthsCalled, s.getQueueLengthsCalled
+		}},
+		{"GetByWorkerAndStatus", func(p, s *mockStore) (int, int) {
+			_, _ = NewDualStore(p, s).GetByWorkerAndStatus(ctx, "w", jobs.StatusProcessing)
+			return p.getByWorkerCalled, s.getByWorkerCalled
+		}},
 	}
 
 	for _, tt := range tests {
@@ -289,5 +315,15 @@ func TestDualStoreImplementsStore(t *testing.T) {
 	var _ Store = (*DualStore)(nil)
 }
 
-func (m *mockStore) LogAuditAction(ctx context.Context, log *AuditLog) error { if m.LogAuditActionFunc != nil { return m.LogAuditActionFunc(ctx, log) }; return nil }
-func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) { if m.ListAuditLogsFunc != nil { return m.ListAuditLogsFunc(ctx, limit, offset) }; return nil, nil }
+func (m *mockStore) LogAuditAction(ctx context.Context, log *AuditLog) error {
+	if m.LogAuditActionFunc != nil {
+		return m.LogAuditActionFunc(ctx, log)
+	}
+	return nil
+}
+func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*AuditLog, error) {
+	if m.ListAuditLogsFunc != nil {
+		return m.ListAuditLogsFunc(ctx, limit, offset)
+	}
+	return nil, nil
+}

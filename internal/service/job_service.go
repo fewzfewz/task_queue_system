@@ -7,26 +7,26 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"strings"
 	"time"
-	"github.com/google/uuid"
 
 	"github.com/robfig/cron/v3"
+	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/queue"
 	"task-queue-system/internal/sse"
 	"task-queue-system/internal/storage/models"
 	"task-queue-system/internal/webhooks"
-	apperr "task-queue-system/internal/errors"
 )
 
 // allowedJobTypes is the set of built-in job types (test types for CI only).
 var allowedJobTypes = map[string]struct{}{
-	"email": {},
-	"image": {},
-	"http":  {},
+	"email":          {},
+	"image":          {},
+	"http":           {},
 	"test":           {},
 	"test-success":   {},
 	"test-fail":      {},
@@ -38,13 +38,13 @@ const defaultMaxRetries = 3
 // JobService orchestrates job creation, state transitions, and coordination
 // between the queue backend and the persistent datastore.
 type JobService struct {
-	queue         queue.Queue
-	store         models.Store
-	logger        *slog.Logger
-	maxQueueSize  int64
-	webhookStore  *webhooks.WebhookStore
-	jobTypeStore  *jobtypes.Store
-	sseBroker     *sse.Broker
+	queue        queue.Queue
+	store        models.Store
+	logger       *slog.Logger
+	maxQueueSize int64
+	webhookStore *webhooks.WebhookStore
+	jobTypeStore *jobtypes.Store
+	sseBroker    *sse.Broker
 }
 
 // SetSSEBroker attaches an SSE broker for real-time job event streaming.
@@ -87,7 +87,7 @@ func (s *JobService) isJobTypeAllowed(ctx context.Context, jobType string) bool 
 func (s *JobService) Store() models.Store { return s.store }
 
 // CreateJob validates a new request, saves it to the DB, and enqueues it.
-func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct{
+func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct {
 	Type             string
 	Payload          map[string]interface{}
 	Labels           map[string]string
@@ -107,15 +107,19 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct{
 	ShardKey         string
 	TTLSeconds       int
 }) ([]*jobs.Job, error) {
-	if len(requests) == 0 { return nil, nil }
+	if len(requests) == 0 {
+		return nil, nil
+	}
 	var batch []*jobs.Job
 	now := time.Now().UTC()
 	var toEnqueue []*jobs.Job
 
 	for _, req := range requests {
 		maxR := req.MaxRetries
-		if maxR == 0 { maxR = 3 }
-		
+		if maxR == 0 {
+			maxR = 3
+		}
+
 		runAtTime := now
 		if req.RunAt != "" {
 			if parsed, err := time.Parse(time.RFC3339, req.RunAt); err == nil {
@@ -124,28 +128,34 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct{
 		}
 
 		j := &jobs.Job{
-			ID:               uuid.New().String(),
-			Type:             req.Type,
-			Payload:          req.Payload,
-			Status:           jobs.StatusPending,
-			Priority:         jobs.JobPriority(req.Priority),
-			MaxRetries:       maxR,
-			CorrelationID:    req.CorrelationID,
-			Timeout:          req.Timeout,
-			Version:          req.Version,
-			TenantID:         req.TenantID,
-			Webhook:          req.Webhook,
-			DedupKey:         req.DedupKey,
-			Dependencies:     req.Dependencies,
-			ShardKey:         req.ShardKey,
-			CronExpr:         req.CronExpr,
-			RunAt:            runAtTime,
-			CreatedAt:        now,
-			UpdatedAt:        now,
+			ID:            uuid.New().String(),
+			Type:          req.Type,
+			Payload:       req.Payload,
+			Status:        jobs.StatusPending,
+			Priority:      jobs.JobPriority(req.Priority),
+			MaxRetries:    maxR,
+			CorrelationID: req.CorrelationID,
+			Timeout:       req.Timeout,
+			Version:       req.Version,
+			TenantID:      req.TenantID,
+			Webhook:       req.Webhook,
+			DedupKey:      req.DedupKey,
+			Dependencies:  req.Dependencies,
+			ShardKey:      req.ShardKey,
+			CronExpr:      req.CronExpr,
+			RunAt:         runAtTime,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		}
-		if j.Priority == "" { j.Priority = jobs.PriorityMedium }
-		if j.Timeout == 0 { j.Timeout = 60 }
-		if j.Version == 0 { j.Version = 1 }
+		if j.Priority == "" {
+			j.Priority = jobs.PriorityMedium
+		}
+		if j.Timeout == 0 {
+			j.Timeout = 60
+		}
+		if j.Version == 0 {
+			j.Version = 1
+		}
 
 		batch = append(batch, j)
 		if len(req.Dependencies) == 0 {
@@ -254,7 +264,7 @@ func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[
 	if cronExpr != "" {
 		job.CronExpr = cronExpr
 		job.Status = jobs.StatusRecurring
-		
+
 		// Parse the cron expression to set the initial next run time (RunAt)
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 		if sched, err := parser.Parse(cronExpr); err == nil {
@@ -331,7 +341,9 @@ func (s *JobService) Ack(ctx context.Context, jobID string) error {
 func (s *JobService) Fail(ctx context.Context, jobID string, err error) error {
 	// Move to DLQ in Postgres
 	reason := ""
-	if err != nil { reason = err.Error() }
+	if err != nil {
+		reason = err.Error()
+	}
 	if moveErr := s.store.MoveToDLQ(ctx, jobID, reason); moveErr != nil {
 		s.logger.Error("failed to move job to dlq", "job_id", jobID, "error", moveErr)
 	}
@@ -343,6 +355,9 @@ func (s *JobService) GetJobStatus(ctx context.Context, jobID string) (*jobs.Job,
 	j, err := s.store.GetByID(ctx, jobID)
 	if err != nil {
 		if errors.Is(err, models.ErrJobNotFound) {
+			if dlqJob, dlqErr := s.store.GetFromDLQ(ctx, jobID); dlqErr == nil && dlqJob != nil {
+				return dlqJob, nil
+			}
 			return nil, apperr.NewNotFound("job", jobID)
 		}
 		return nil, apperr.NewInternal("database query failed", err)
@@ -380,7 +395,7 @@ func (s *JobService) CancelJob(ctx context.Context, jobID string) error {
 	_ = s.queue.Ack(ctx, jobID)
 	// Broadcast cancellation to all workers so active executions are killed
 	_ = s.queue.PublishCancellation(ctx, jobID)
-	
+
 	s.logger.Info("job cancelled", "job_id", jobID)
 	s.publishSSE(jobID, string(jobs.StatusCancelled), "", "")
 	return nil
@@ -583,7 +598,7 @@ func (s *JobService) ReconcileOrphanedJobs(ctx context.Context, workerID string)
 		s.logger.Info("reconciling orphaned job", "job_id", j.ID, "worker_id", workerID)
 		// Reset status to pending so it can be picked up again
 		_ = s.UpdateJobStatus(ctx, j.ID, jobs.StatusPending, "")
-		
+
 		// Re-enqueue the job and CLEAR the old in-flight entry in one sequence.
 		if err := s.queue.Enqueue(ctx, j); err == nil {
 			_ = s.queue.Ack(ctx, j.ID)
@@ -652,7 +667,7 @@ func (s *JobService) RecurringJobsDue(ctx context.Context) (int, error) {
 		}
 
 		// 1. Spawn a single active instance for this tick
-		instance := *t // shallow copy
+		instance := *t   // shallow copy
 		instance.ID = "" // let store/queue generate a new ID, but wait, jobs.NewJob logic does this.
 		instance.ID = jobs.NewJob(t.Type, t.Payload, t.Labels, t.Priority, t.MaxRetries, time.Time{}, t.CorrelationID, t.Timeout, t.Version, t.TenantID).ID
 		instance.Status = jobs.StatusPending
@@ -817,9 +832,6 @@ func (s *JobService) BulkPurgeDLQ(ctx context.Context, tenantID, jobType string,
 	return s.store.DeleteDLQBefore(ctx, tenantID, jobType, olderThan)
 }
 
-
-
-
 // ReconcileDeferredJobs moves deferred jobs back to the main queue if their concurrency limits allow.
 func (s *JobService) ReconcileDeferredJobs(ctx context.Context) (int, error) {
 	return s.queue.ReconcileDeferredJobs(ctx)
@@ -857,7 +869,7 @@ func (s *JobService) PromoteReadyDAGJobs(ctx context.Context) (int64, error) {
 		// We can safely Enqueue it. Redis deduplication or idempotent processing handles the rest, OR we can just let it be.
 		// Actually, Redis Queue doesn't natively deduplicate pending queue (it's a List or Zset).
 		// Wait, for delayed jobs it's ZSET (deduped). For ready jobs it's LIST (NOT deduped)!
-		// If we push it 5 times, it gets processed 5 times? No, the postgres UpdateStatus to 'processing' uses `WHERE status = 'pending'`. 
+		// If we push it 5 times, it gets processed 5 times? No, the postgres UpdateStatus to 'processing' uses `WHERE status = 'pending'`.
 		// The 2nd pop will fail to UpdateStatus and be ignored! So it's safe.
 		if err := s.queue.Enqueue(ctx, j); err == nil {
 			count++
@@ -885,7 +897,6 @@ func (s *JobService) IsJobTypePaused(ctx context.Context, jobType string) (bool,
 func (s *JobService) GetPausedJobTypes(ctx context.Context) ([]string, error) {
 	return s.queue.GetPausedJobTypes(ctx)
 }
-
 
 func (s *JobService) DeleteDLQJob(ctx context.Context, jobID, tenantID string) error {
 	job, err := s.store.GetFromDLQ(ctx, jobID)

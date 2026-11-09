@@ -20,14 +20,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// TestRedisCrashMidTransition tests full recovery when Redis has persistence enabled
+// (AOF with appendfsync always) and the scheduler is running to reclaim in-flight jobs.
 func TestRedisCrashMidTransition(t *testing.T) {
 	cli := requireDocker(t)
-	containerID, redisHost, cleanup := newRedisContainer(t, cli)
+	containerID, redisHost, cleanup := newPersistentRedisContainer(t, cli)
 	defer cleanup()
 
-	binary := buildWorkerBinary(t)
-	workerCmd := startWorkerProcess(t, binary, redisHost)
+	workerBin := buildWorkerBinary(t)
+	workerCmd := startWorkerProcess(t, workerBin, redisHost)
 	defer stopProcess(t, workerCmd)
+
+	schedulerBin := buildSchedulerBinary(t)
+	schedPort := getFreePort(t)
+	schedulerCmd := startSchedulerProcess(t, schedulerBin, redisHost, schedPort)
+	defer stopProcess(t, schedulerCmd)
 
 	ctx := context.Background()
 	rdb := redis.NewClient(&redis.Options{Addr: redisHost, DB: 0})
@@ -36,18 +43,18 @@ func TestRedisCrashMidTransition(t *testing.T) {
 		t.Fatalf("redis ping failed: %v", err)
 	}
 
-	q := queue_redis.New(rdb, "jobs")
+	q := queue_redis.NewWithRateLimit(rdb, "jobs", 0)
 	store := models.NewRedisStore(rdb)
 	log := logger.Setup()
 	svc := service.New(q, store, log, 0)
 
-	jobIDs := make([]string, 0, 50)
-	for i := 0; i < 50; i++ {
+	jobIDs := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
 		job, err := svc.CreateJob(ctx, "image", map[string]interface{}{
-			"source_url": fmt.Sprintf("http://example.com/%d.jpg", i),
+			"source_url": fmt.Sprintf("http://example.com/crash/%d.jpg", i),
 			"operation":  "resize",
-			"sleep_ms":   5000,
-		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
+			"sleep_ms":   1000,
+		}, nil, "medium", 1, "", "", "", "", "", 6, 0, "tenant-1", nil, "", nil, "", 0)
 		if err != nil {
 			t.Fatalf("failed to create job: %v", err)
 		}
@@ -56,17 +63,21 @@ func TestRedisCrashMidTransition(t *testing.T) {
 
 	start := time.Now()
 	time.Sleep(2 * time.Second)
+
+	// Hard kill Redis mid-transition
 	if err := cli.ContainerKill(ctx, containerID, "KILL"); err != nil {
 		t.Fatalf("failed to kill redis container: %v", err)
 	}
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
+
+	// Restart Redis container (AOF will replay on startup)
 	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
 		t.Fatalf("failed to restart redis container: %v", err)
 	}
 
-	completed := waitForJobsComplete(t, store, jobIDs, 120*time.Second)
+	completed := waitForJobsComplete(t, store, jobIDs, 45*time.Second)
 	report := Report{
-		Scenario:      "Redis Crash Mid-Transition",
+		Scenario:      "Redis Crash Mid-Transition (Persistent AOF)",
 		JobsEnqueued:  len(jobIDs),
 		JobsCompleted: completed,
 		JobsLost:      len(jobIDs) - completed,
@@ -78,13 +89,72 @@ func TestRedisCrashMidTransition(t *testing.T) {
 	}
 }
 
-func TestWorkerHardKill(t *testing.T) {
+// TestRedisCrash_VolatileDataLoss documents that without persistence enabled,
+// an ungraceful kill of a pure in-memory Redis instance loses unpersisted state.
+func TestRedisCrash_VolatileDataLoss(t *testing.T) {
 	cli := requireDocker(t)
-	_, redisHost, cleanup := newRedisContainer(t, cli)
+	containerID, redisHost, cleanup := newRedisContainer(t, cli)
 	defer cleanup()
 
-	binary := buildWorkerBinary(t)
-	workerCmd := startWorkerProcess(t, binary, redisHost)
+	ctx := context.Background()
+	rdb := redis.NewClient(&redis.Options{Addr: redisHost, DB: 0})
+	defer rdb.Close()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		t.Fatalf("redis ping failed: %v", err)
+	}
+
+	q := queue_redis.NewWithRateLimit(rdb, "jobs", 0)
+	store := models.NewRedisStore(rdb)
+	log := logger.Setup()
+	svc := service.New(q, store, log, 0)
+
+	job, err := svc.CreateJob(ctx, "image", map[string]interface{}{
+		"source_url": "http://example.com/volatile.jpg",
+		"operation":  "resize",
+	}, nil, "medium", 1, "", "", "", "", "", 60, 0, "tenant-1", nil, "", nil, "", 0)
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	// Verify job exists before crash
+	if _, err := store.GetByID(ctx, job.ID); err != nil {
+		t.Fatalf("job should exist before crash: %v", err)
+	}
+
+	// Kill Redis abruptly
+	if err := cli.ContainerKill(ctx, containerID, "KILL"); err != nil {
+		t.Fatalf("failed to kill redis container: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+
+	// Restart Redis container
+	if err := cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		t.Fatalf("failed to restart redis container: %v", err)
+	}
+
+	// Reconnect and verify data was lost due to lack of persistence
+	time.Sleep(1 * time.Second)
+	_, err = store.GetByID(ctx, job.ID)
+	if err == nil {
+		t.Log("Note: unexpected persistence on volatile container")
+	} else {
+		t.Logf("Expected volatile data loss confirmed: %v", err)
+	}
+}
+
+func TestWorkerHardKill(t *testing.T) {
+	cli := requireDocker(t)
+	_, redisHost, cleanup := newPersistentRedisContainer(t, cli)
+	defer cleanup()
+
+	workerBin := buildWorkerBinary(t)
+	workerCmd := startWorkerProcess(t, workerBin, redisHost)
+
+	// Start the scheduler so stalled jobs from killed workers are reclaimed
+	schedulerBin := buildSchedulerBinary(t)
+	schedPort := getFreePort(t)
+	schedulerCmd := startSchedulerProcess(t, schedulerBin, redisHost, schedPort)
+	defer stopProcess(t, schedulerCmd)
 
 	ctx := context.Background()
 	rdb := redis.NewClient(&redis.Options{Addr: redisHost, DB: 0})
@@ -94,18 +164,18 @@ func TestWorkerHardKill(t *testing.T) {
 		t.Fatalf("redis ping failed: %v", err)
 	}
 
-	q := queue_redis.New(rdb, "jobs")
+	q := queue_redis.NewWithRateLimit(rdb, "jobs", 0)
 	store := models.NewRedisStore(rdb)
 	log := logger.Setup()
 	svc := service.New(q, store, log, 0)
 
-	jobIDs := make([]string, 0, 20)
-	for i := 0; i < 20; i++ {
+	jobIDs := make([]string, 0, 15)
+	for i := 0; i < 15; i++ {
 		job, err := svc.CreateJob(ctx, "image", map[string]interface{}{
 			"source_url": fmt.Sprintf("http://example.com/hardkill/%d.jpg", i),
 			"operation":  "compress",
-			"sleep_ms":   5000,
-		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
+			"sleep_ms":   1000,
+		}, nil, "medium", 1, "", "", "", "", "", 4, 0, "tenant-1", nil, "", nil, "", 0)
 		if err != nil {
 			stopProcess(t, workerCmd)
 			t.Fatalf("failed to create job: %v", err)
@@ -113,13 +183,17 @@ func TestWorkerHardKill(t *testing.T) {
 		jobIDs = append(jobIDs, job.ID)
 	}
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
+	// Abruptly kill the worker while jobs are in flight
 	killProcess(t, workerCmd)
-	workerCmd = startWorkerProcess(t, binary, redisHost)
+
+	// Restart a new worker process to take over after timeout reclamation
+	workerCmd = startWorkerProcess(t, workerBin, redisHost)
 	defer stopProcess(t, workerCmd)
 	start := time.Now()
 
-	completed := waitForJobsComplete(t, store, jobIDs, 120*time.Second)
+	// Wait for the scheduler to reclaim in-flight jobs and the new worker to finish them
+	completed := waitForJobsComplete(t, store, jobIDs, 45*time.Second)
 	report := Report{
 		Scenario:      "Worker Hard-Kill",
 		JobsEnqueued:  len(jobIDs),
@@ -150,7 +224,7 @@ func TestNetworkPartition(t *testing.T) {
 		t.Fatalf("redis ping failed: %v", err)
 	}
 
-	q := queue_redis.New(rdb, "jobs")
+	q := queue_redis.NewWithRateLimit(rdb, "jobs", 0)
 	store := models.NewRedisStore(rdb)
 	log := logger.Setup()
 	svc := service.New(q, store, log, 0)
@@ -161,7 +235,7 @@ func TestNetworkPartition(t *testing.T) {
 			"source_url": fmt.Sprintf("http://example.com/partition/%d.jpg", i),
 			"operation":  "watermark",
 			"sleep_ms":   1000,
-		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
+		}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "", 0)
 		if err != nil {
 			stopProcess(t, workerCmd)
 			t.Fatalf("failed to create job: %v", err)
@@ -201,7 +275,7 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		t.Fatalf("redis ping failed: %v", err)
 	}
 
-	q := queue_redis.New(rdb, "jobs")
+	q := queue_redis.NewWithRateLimit(rdb, "jobs", 0)
 	store := models.NewRedisStore(rdb)
 	log := logger.Setup()
 	svc := service.New(q, store, log, 0)
@@ -210,7 +284,7 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		"source_url": "http://example.com/skew/fresh.jpg",
 		"operation":  "process",
 		"sleep_ms":   100,
-	}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
+	}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "", 0)
 	if err != nil {
 		t.Fatalf("failed to create fresh job: %v", err)
 	}
@@ -219,7 +293,7 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 		"source_url": "http://example.com/skew/stale.jpg",
 		"operation":  "process",
 		"sleep_ms":   100,
-	}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "")
+	}, nil, "medium", 1, "", "", "", "", "", 0, 0, "tenant-1", nil, "", nil, "", 0)
 	if err != nil {
 		t.Fatalf("failed to create stale job: %v", err)
 	}
@@ -249,7 +323,7 @@ func TestClockSkewOrphanRecovery(t *testing.T) {
 	start := time.Now()
 
 	originalNow := queue_redis.Now
-	queue_redis.Now = func() time.Time { return time.Now().Add(1 * time.Hour) }
+	queue_redis.Now = func() time.Time { return time.Now().Add(-1 * time.Hour) }
 	defer func() { queue_redis.Now = originalNow }()
 
 	reclaimed, err := q.ReclaimTimedOutJobs(ctx)

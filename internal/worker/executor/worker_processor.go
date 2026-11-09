@@ -30,21 +30,20 @@ const defaultSLATarget = 5 * time.Second
 // by Run, but ProcessOnce can be called directly in tests or one-shot scripts.
 type WorkerProcessor struct {
 	batchSize int
-	name    string
-	service *service.JobService
-	exec    *JobExecutor
-	limiter limiter.RateLimiter
-	logger  *slog.Logger
+	name      string
+	service   *service.JobService
+	exec      *JobExecutor
+	limiter   limiter.RateLimiter
+	logger    *slog.Logger
 
 	slaTarget time.Duration
 
-	onBusy    func()
-	onIdle    func()
+	onBusy func()
+	onIdle func()
 
 	onRegister   func(string, context.CancelFunc)
 	onUnregister func(string)
 }
-
 
 // NewWorkerProcessor creates a WorkerProcessor.
 // name is used for log attribution and job metadata. limiter can be nil if no rate limiting applies.
@@ -68,7 +67,6 @@ func (wp *WorkerProcessor) SetHooks(onBusy, onIdle func()) {
 	wp.onBusy = onBusy
 	wp.onIdle = onIdle
 }
-
 
 // Run loops continuously, processing one job per iteration.
 // It exits cleanly when ctx is cancelled (graceful shutdown).
@@ -176,12 +174,15 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 
 	// ── Metrics: Busy ────────────────────────────────────────────────────────
 	metrics.WorkerUtilization.Inc()
-	if wp.onBusy != nil { wp.onBusy() }
+	if wp.onBusy != nil {
+		wp.onBusy()
+	}
 	defer func() {
 		metrics.WorkerUtilization.Dec()
-		if wp.onIdle != nil { wp.onIdle() }
+		if wp.onIdle != nil {
+			wp.onIdle()
+		}
 	}()
-
 
 	// Detach context cancellation for the rest of the job lifecycle.
 	// This guarantees that if a SIGINT/SIGTERM arrives while a job is running,
@@ -193,7 +194,7 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 	}
 
 	// ── Rate Limit Check ──────────────────────────────────────────────────────
-	// Wait logic consumes a token globally. We use the original 'ctx' here so 
+	// Wait logic consumes a token globally. We use the original 'ctx' here so
 	// that a shutdown signal can immediately interrupt the wait.
 	if wp.limiter != nil {
 		if err := wp.limiter.Wait(ctx); err != nil {
@@ -256,7 +257,6 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 		return
 	}
 
-
 	// ── Step 3b: Failure → decide retry or permanent fail ────────────────────
 	log.Error("job execution failed",
 		"status", "error",
@@ -297,34 +297,32 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 
 // ── private helpers ───────────────────────────────────────────────────────────
 
-// retry increments the retry counter, waits for an exponential backoff delay,
-// re-enqueues the job for another attempt, and then acks the current in-flight
-// entry so the processing set stays clean.
+// retry increments the retry counter, calculates the exponential backoff delay,
+// updates the job RunAt time, saves the state, re-enqueues the job as a scheduled
+// delayed job in Redis, and acks the current in-flight record.
+// This is entirely non-blocking: the worker thread does NOT sleep and is freed immediately.
 func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs.Job, log *slog.Logger) {
 	job.Retries++
 	job.Status = jobs.StatusPending
-	job.UpdatedAt = time.Now().UTC()
+	job.ProcessedBy = ""
+	now := time.Now().UTC()
+	job.UpdatedAt = now
 
 	delay := jobs.BackoffDelay(job)
+	job.RunAt = now.Add(delay)
 
-	log.Warn("scheduling job for retry with backoff",
+	log.Warn("scheduling job for non-blocking retry with backoff",
 		"next_attempt", job.Retries+1,
 		"max_retries", job.MaxRetries,
 		"delay", delay.String(),
+		"run_at", job.RunAt.Format(time.RFC3339),
 	)
 
-	// Block the worker for the delay period to enforce backoff.
-	// We listen to shutdownCtx.Done() so graceful shutdowns aren't stalled for seconds.
-	select {
-	case <-shutdownCtx.Done():
-		log.Warn("shutdown interrupted retry delay; proactively re-enqueuing job")
-		// We use execCtx (which isn't cancelled) to ensure the Enqueue/Ack finishes.
-		if err := wp.service.Enqueue(execCtx, job); err != nil {
-			log.Error("failed to re-enqueue during shutdown", "error", err)
+	// Persist updated retry state in the store
+	if wp.service != nil && wp.service.Store() != nil {
+		if err := wp.service.Store().Save(execCtx, job); err != nil {
+			log.Error("failed to update job retry state in store", "error", err)
 		}
-		_ = wp.service.Ack(execCtx, job.ID)
-		return
-	case <-time.After(delay):
 	}
 
 	if err := wp.service.Enqueue(execCtx, job); err != nil {
@@ -332,29 +330,32 @@ func (wp *WorkerProcessor) retry(shutdownCtx, execCtx context.Context, job *jobs
 		return
 	}
 
-	// Ack removes the old in-flight record; the freshly enqueued copy takes over.
+	// Ack removes the old in-flight record; the freshly delayed copy will be promoted by scheduler.
 	if err := wp.service.Ack(execCtx, job.ID); err != nil {
 		log.Error("failed to ack original entry after re-enqueue", "error", err)
 	}
 }
 
 // deferJob re-enqueues the job without incrementing the retry counter, applying
-// a short fixed delay before re-enqueuing.
+// a short fixed delay (5s) via delayed scheduling in Redis without blocking the worker.
 func (wp *WorkerProcessor) deferJob(shutdownCtx, execCtx context.Context, job *jobs.Job, log *slog.Logger) {
 	job.Status = jobs.StatusPending
-	job.UpdatedAt = time.Now().UTC()
+	job.ProcessedBy = ""
+	now := time.Now().UTC()
+	job.UpdatedAt = now
 
 	delay := 5 * time.Second
+	job.RunAt = now.Add(delay)
 
-	select {
-	case <-shutdownCtx.Done():
-		log.Warn("shutdown interrupted defer delay; proactively re-enqueuing job")
-		if err := wp.service.Enqueue(execCtx, job); err != nil {
-			log.Error("failed to re-enqueue during shutdown", "error", err)
+	log.Warn("scheduling job for non-blocking deferral",
+		"delay", delay.String(),
+		"run_at", job.RunAt.Format(time.RFC3339),
+	)
+
+	if wp.service != nil && wp.service.Store() != nil {
+		if err := wp.service.Store().Save(execCtx, job); err != nil {
+			log.Error("failed to update deferred job state in store", "error", err)
 		}
-		_ = wp.service.Ack(execCtx, job.ID)
-		return
-	case <-time.After(delay):
 	}
 
 	if err := wp.service.Enqueue(execCtx, job); err != nil {
@@ -381,7 +382,6 @@ func (wp *WorkerProcessor) SetCancelHooks(register func(jobID string, cancel con
 	wp.onRegister = register
 	wp.onUnregister = unregister
 }
-
 
 // ProcessBatch pulls a batch of jobs and processes them grouped by type.
 func (wp *WorkerProcessor) ProcessBatch(ctx context.Context, batchSize int) error {
@@ -430,17 +430,19 @@ func (wp *WorkerProcessor) ProcessBatch(ctx context.Context, batchSize int) erro
 
 func (wp *WorkerProcessor) executeBatchPlugin(ctx context.Context, bp plugin.BatchJobPlugin, batch []*jobs.Job) {
 	// A simple wrapper to execute a batch using a BatchJobPlugin
-	if len(batch) == 0 { return }
-	
+	if len(batch) == 0 {
+		return
+	}
+
 	wp.logger.Info("executing batch", "job_type", batch[0].Type, "size", len(batch))
-	
+
 	execCtx := context.WithoutCancel(ctx)
 	timeout := 60 * time.Second
 	jobCtx, cancel := context.WithTimeout(execCtx, timeout)
 	defer cancel()
 
 	results, errorsList := bp.BatchExecute(jobCtx, batch)
-	
+
 	for i, job := range batch {
 		if i < len(errorsList) && errorsList[i] != nil {
 			// Fail
@@ -450,9 +452,11 @@ func (wp *WorkerProcessor) executeBatchPlugin(ctx context.Context, bp plugin.Bat
 			// Success
 			_ = wp.service.MarkProcessed(execCtx, job.ID)
 			_ = wp.service.UpdateJobProgress(execCtx, job.ID, 100)
-			
+
 			var res interface{}
-			if i < len(results) { res = results[i] }
+			if i < len(results) {
+				res = results[i]
+			}
 			_ = wp.service.UpdateJobResult(execCtx, job.ID, jobs.StatusCompleted, wp.name, res)
 			_ = wp.service.Ack(execCtx, job.ID)
 		}

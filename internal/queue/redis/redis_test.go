@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -10,7 +11,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/service"
+	"task-queue-system/internal/storage/models"
 )
 
 func newTestQueue(t *testing.T) (*miniredis.Miniredis, *RedisQueue, redis.UniversalClient, context.Context) {
@@ -410,9 +414,19 @@ func TestSize_WithJobs(t *testing.T) {
 	rdb.LPush(ctx, medKey, `{"id":"medium-job"}`)
 	rdb.LPush(ctx, lowKey, `{"id":"low-job"}`)
 
-	// Size uses base keys which doesn't account for partitions,
-	// so we check individual partition lengths instead.
-	for _, pair := range []struct{ key string; expected int64 }{
+	// Verify Size() accurately reports 3 pending jobs across partitions.
+	size, err := q.Size(ctx)
+	if err != nil {
+		t.Fatalf("Size failed: %v", err)
+	}
+	if size != 3 {
+		t.Fatalf("expected size 3, got %d", size)
+	}
+
+	for _, pair := range []struct {
+		key      string
+		expected int64
+	}{
 		{highKey, 1}, {medKey, 1}, {lowKey, 1},
 	} {
 		llen, err := rdb.LLen(ctx, pair.key).Result()
@@ -423,6 +437,177 @@ func TestSize_WithJobs(t *testing.T) {
 			t.Fatalf("expected len %d on %s, got %d", pair.expected, pair.key, llen)
 		}
 	}
+}
+
+func TestRedisQueue_Size(t *testing.T) {
+	t.Run("Empty queue returns 0", func(t *testing.T) {
+		mr, q, _, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		size, err := q.Size(ctx)
+		if err != nil {
+			t.Fatalf("Size failed on empty queue: %v", err)
+		}
+		if size != 0 {
+			t.Fatalf("expected size 0, got %d", size)
+		}
+	})
+
+	t.Run("Only high-priority jobs across partitions", func(t *testing.T) {
+		mr, q, rdb, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		for i := 1; i <= q.numPartitions; i++ {
+			key := fmt.Sprintf("%s:%d", q.qHigh, i)
+			rdb.LPush(ctx, key, fmt.Sprintf(`{"id":"high-%d"}`, i))
+		}
+
+		size, err := q.Size(ctx)
+		if err != nil {
+			t.Fatalf("Size failed: %v", err)
+		}
+		if size != int64(q.numPartitions) {
+			t.Fatalf("expected size %d, got %d", q.numPartitions, size)
+		}
+	})
+
+	t.Run("Only medium-priority jobs across partitions", func(t *testing.T) {
+		mr, q, rdb, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		for i := 1; i <= q.numPartitions; i++ {
+			key := fmt.Sprintf("%s:%d", q.qMedium, i)
+			rdb.LPush(ctx, key, fmt.Sprintf(`{"id":"med-%d-1"}`, i))
+			rdb.LPush(ctx, key, fmt.Sprintf(`{"id":"med-%d-2"}`, i))
+		}
+
+		size, err := q.Size(ctx)
+		if err != nil {
+			t.Fatalf("Size failed: %v", err)
+		}
+		expected := int64(q.numPartitions * 2)
+		if size != expected {
+			t.Fatalf("expected size %d, got %d", expected, size)
+		}
+	})
+
+	t.Run("Only low-priority jobs across partitions", func(t *testing.T) {
+		mr, q, rdb, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		for i := 1; i <= q.numPartitions; i++ {
+			key := fmt.Sprintf("%s:%d", q.qLow, i)
+			rdb.LPush(ctx, key, fmt.Sprintf(`{"id":"low-%d"}`, i))
+		}
+
+		size, err := q.Size(ctx)
+		if err != nil {
+			t.Fatalf("Size failed: %v", err)
+		}
+		if size != int64(q.numPartitions) {
+			t.Fatalf("expected size %d, got %d", q.numPartitions, size)
+		}
+	})
+
+	t.Run("Jobs distributed across multiple partitions and priorities", func(t *testing.T) {
+		mr, q, _, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		totalJobs := 15
+		for i := 0; i < totalJobs; i++ {
+			prio := jobs.PriorityMedium
+			if i%3 == 0 {
+				prio = jobs.PriorityHigh
+			} else if i%3 == 1 {
+				prio = jobs.PriorityLow
+			}
+			job := jobs.NewJob("email", nil, nil, prio, 3, time.Time{}, "", 60, 1, "tenant-a")
+			if err := q.Enqueue(ctx, job); err != nil {
+				t.Fatalf("Enqueue failed: %v", err)
+			}
+		}
+
+		size, err := q.Size(ctx)
+		if err != nil {
+			t.Fatalf("Size failed: %v", err)
+		}
+		if size != int64(totalJobs) {
+			t.Fatalf("expected size %d, got %d", totalJobs, size)
+		}
+	})
+
+	t.Run("In-flight jobs are not counted as pending in Size", func(t *testing.T) {
+		mr, q, rdb, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		// Add 2 pending jobs
+		rdb.LPush(ctx, fmt.Sprintf("%s:1", q.qHigh), `{"id":"high-1"}`)
+		rdb.LPush(ctx, fmt.Sprintf("%s:2", q.qLow), `{"id":"low-1"}`)
+
+		// Add 3 in-flight jobs in the processing set
+		rdb.ZAdd(ctx, processingSetKey,
+			redis.Z{Member: "inflight-1", Score: float64(time.Now().Unix() + 30)},
+			redis.Z{Member: "inflight-2", Score: float64(time.Now().Unix() + 30)},
+			redis.Z{Member: "inflight-3", Score: float64(time.Now().Unix() + 30)},
+		)
+
+		size, err := q.Size(ctx)
+		if err != nil {
+			t.Fatalf("Size failed: %v", err)
+		}
+		if size != 2 {
+			t.Fatalf("expected size 2 (excluding 3 in-flight jobs), got %d", size)
+		}
+	})
+
+	t.Run("Redis error propagation", func(t *testing.T) {
+		badClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+		badQueue := New(badClient, "err-test")
+
+		errCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+
+		size, err := badQueue.Size(errCtx)
+		if err == nil {
+			t.Fatalf("expected error from bad Redis client, got size=%d", size)
+		}
+		_ = badClient.Close()
+	})
+
+	t.Run("Backpressure integration with JobService", func(t *testing.T) {
+		mr, q, _, ctx := newTestQueue(t)
+		defer mr.Close()
+
+		store := models.NewInMemoryStore()
+		svc := service.New(q, store, slog.Default(), 2)
+
+		// 1st job
+		_, err := svc.CreateJob(ctx, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
+		if err != nil {
+			t.Fatalf("first job failed: %v", err)
+		}
+
+		// 2nd job
+		_, err = svc.CreateJob(ctx, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
+		if err != nil {
+			t.Fatalf("second job failed: %v", err)
+		}
+
+		// Verify queue size is 2
+		sz, err := q.Size(ctx)
+		if err != nil || sz != 2 {
+			t.Fatalf("expected queue size 2, got %d, err: %v", sz, err)
+		}
+
+		// 3rd job: must fail with QueueFull because maxQueueSize is 2
+		_, err = svc.CreateJob(ctx, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
+		if err == nil {
+			t.Fatal("expected QueueFull error on 3rd job, got nil")
+		}
+		if !errors.IsCode(err, errors.CodeQueueFull) {
+			t.Fatalf("expected CodeQueueFull, got %v", err)
+		}
+	})
 }
 
 func TestPromoteScheduledJobs(t *testing.T) {
@@ -473,4 +658,63 @@ func TestEnqueue_MultiplePriorities(t *testing.T) {
 		t.Fatal("expected low priority key to exist")
 	}
 	_ = mr
+}
+
+func TestDequeue_RespectsJobTimeout(t *testing.T) {
+	mr, q, rdb, ctx := newTestQueue(t)
+	defer mr.Close()
+
+	// 1. Job with custom timeout of 120 seconds
+	customJob := jobs.NewJob("custom", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 120, 1, "tenant-a")
+	if err := q.Enqueue(ctx, customJob); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	before := time.Now().Unix()
+	dequeued, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue failed: %v", err)
+	}
+	if dequeued == nil || dequeued.ID != customJob.ID {
+		t.Fatalf("expected job %s, got %v", customJob.ID, dequeued)
+	}
+
+	// Verify visibility score in in-flight ZSET is ~ before + 120
+	score, err := rdb.ZScore(ctx, "task_queue:in_flight", customJob.ID).Result()
+	if err != nil {
+		t.Fatalf("ZScore failed: %v", err)
+	}
+	expectedMin := float64(before + 118)
+	expectedMax := float64(before + 125)
+	if score < expectedMin || score > expectedMax {
+		t.Fatalf("expected in_flight score around %d + 120, got %f", before, score)
+	}
+
+	// Ack customJob to clean up
+	_ = q.Ack(ctx, customJob.ID)
+
+	// 2. Job with default timeout (Timeout == 0 -> should use 30s)
+	defaultJob := jobs.NewJob("default", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 0, 1, "tenant-a")
+	if err := q.Enqueue(ctx, defaultJob); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	beforeDefault := time.Now().Unix()
+	dequeuedDefault, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue failed: %v", err)
+	}
+	if dequeuedDefault == nil || dequeuedDefault.ID != defaultJob.ID {
+		t.Fatalf("expected job %s, got %v", defaultJob.ID, dequeuedDefault)
+	}
+
+	scoreDefault, err := rdb.ZScore(ctx, "task_queue:in_flight", defaultJob.ID).Result()
+	if err != nil {
+		t.Fatalf("ZScore failed: %v", err)
+	}
+	expectedDefaultMin := float64(beforeDefault + 28)
+	expectedDefaultMax := float64(beforeDefault + 35)
+	if scoreDefault < expectedDefaultMin || scoreDefault > expectedDefaultMax {
+		t.Fatalf("expected in_flight score around %d + 30, got %f", beforeDefault, scoreDefault)
+	}
 }

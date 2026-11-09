@@ -75,7 +75,9 @@ func (m *mockQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error
 	return true, nil
 }
 
-func (m *mockQueue) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error { return nil }
+func (m *mockQueue) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error {
+	return nil
+}
 func (m *mockQueue) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
 	if m.rateLimitStatusFunc != nil {
 		return m.rateLimitStatusFunc(ctx)
@@ -269,6 +271,38 @@ func TestCreateJob_PastSchedule(t *testing.T) {
 	}
 }
 
+func TestCreateJob_Deduplication(t *testing.T) {
+	store := models.NewInMemoryStore()
+	svc := newService(&mockQueue{}, store)
+
+	// First submission succeeds
+	job1, err := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "dedup-test-key", nil, "", 0)
+	if err != nil {
+		t.Fatalf("expected first job with dedup key to succeed, got %v", err)
+	}
+	if job1 == nil || job1.DedupKey != "dedup-test-key" {
+		t.Fatalf("expected job with dedup key, got %v", job1)
+	}
+
+	// Second submission with the same dedup key is rejected
+	_, err = svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "dedup-test-key", nil, "", 0)
+	if err == nil {
+		t.Fatal("expected duplicate submission to fail")
+	}
+	if !errors.IsCode(err, errors.CodeConflict) {
+		t.Fatalf("expected Conflict error for duplicate key, got %v", err)
+	}
+
+	// Submission with a different dedup key succeeds
+	job2, err := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "dedup-other-key", nil, "", 0)
+	if err != nil {
+		t.Fatalf("expected different dedup key to succeed, got %v", err)
+	}
+	if job2.ID == job1.ID {
+		t.Fatal("expected different job IDs")
+	}
+}
+
 func TestGetJobStatus_Found(t *testing.T) {
 	store := models.NewInMemoryStore()
 	svc := newService(&mockQueue{}, store)
@@ -401,15 +435,21 @@ func TestBulkPurgeDLQ(t *testing.T) {
 		job, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
 		job.Status = jobs.StatusFailed
 		job.CreatedAt = old
+		job.UpdatedAt = old
 		store.Save(context.Background(), job)
-	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
+		if job.Status == "failed" {
+			store.MoveToDLQ(context.Background(), job.ID, "test")
+		}
 	}
 	for i := 0; i < 2; i++ {
 		job, _ := svc.CreateJob(context.Background(), "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
 		job.Status = jobs.StatusFailed
 		job.CreatedAt = recent
+		job.UpdatedAt = recent
 		store.Save(context.Background(), job)
-	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
+		if job.Status == "failed" {
+			store.MoveToDLQ(context.Background(), job.ID, "test")
+		}
 	}
 
 	cutoff := time.Now().Add(-24 * time.Hour)
@@ -425,16 +465,23 @@ func TestBulkPurgeDLQ(t *testing.T) {
 func (m *mockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }
 
 func (m *mockQueue) PublishCancellation(ctx context.Context, jobID string) error { return nil }
-func (m *mockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }
+func (m *mockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
+	ch := make(chan string)
+	return ch, nil
+}
 
 // Panic Button mocks
-func (m *mockQueue) PauseJobType(ctx context.Context, jobType string) error { return nil }
+func (m *mockQueue) PauseJobType(ctx context.Context, jobType string) error  { return nil }
 func (m *mockQueue) ResumeJobType(ctx context.Context, jobType string) error { return nil }
-func (m *mockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
+func (m *mockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) {
+	return false, nil
+}
 func (m *mockQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
 
 func (m *mockQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
-	if max <= 0 { max = 1 }
+	if max <= 0 {
+		max = 1
+	}
 	job, err := m.Dequeue(ctx)
 	if err != nil || job == nil {
 		return nil, err
