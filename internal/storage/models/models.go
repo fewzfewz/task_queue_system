@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -527,6 +529,7 @@ func (s *InMemoryStore) RevokeClient(_ context.Context, tenantID string) error {
 
 const jobStoreKey = "task_queue:store:jobs"
 const dlqStoreKey = "task_queue:store:dlq"
+const queueLengthsKey = "task_queue:stats:queue_lengths"
 
 // RedisStore persists job records as JSON in a Redis Hash.
 // This allows multiple distributed instances to share a consistent view of job states.
@@ -539,6 +542,26 @@ func NewRedisStore(client redis.UniversalClient) *RedisStore {
 	return &RedisStore{client: client}
 }
 
+func (s *RedisStore) incrementQueueLength(ctx context.Context, jobType, tenantID string, delta int64) error {
+	if jobType == "" && tenantID == "" {
+		return nil
+	}
+	field := jobType + "\x00" + tenantID
+	return s.client.HIncrBy(ctx, queueLengthsKey, field, delta).Err()
+}
+
+func (s *RedisStore) decrementQueueLength(ctx context.Context, jobType, tenantID string, delta int64) error {
+	if jobType == "" && tenantID == "" {
+		return nil
+	}
+	field := jobType + "\x00" + tenantID
+	newVal, err := s.client.HIncrBy(ctx, queueLengthsKey, field, -delta).Result()
+	if err == nil && newVal <= 0 {
+		_ = s.client.HDel(ctx, queueLengthsKey, field).Err()
+	}
+	return err
+}
+
 func (s *RedisStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
 	if len(batch) == 0 {
 		return nil
@@ -549,7 +572,11 @@ func (s *RedisStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
 		if err != nil {
 			return err
 		}
-		pipe.Set(ctx, "job:"+job.ID, string(data), 0)
+		pipe.HSet(ctx, jobStoreKey, job.ID, string(data))
+		if job.Status == jobs.StatusPending {
+			field := job.Type + "\x00" + job.TenantID
+			pipe.HIncrBy(ctx, queueLengthsKey, field, 1)
+		}
 	}
 	_, err := pipe.Exec(ctx)
 	return err
@@ -561,7 +588,29 @@ func (s *RedisStore) Save(ctx context.Context, job *jobs.Job) error {
 		return fmt.Errorf("redis_store: failed to marshal job: %w", err)
 	}
 
-	return s.client.HSet(ctx, jobStoreKey, job.ID, payload).Err()
+	var oldStatus jobs.JobStatus
+	var oldType, oldTenant string
+	if oldVal, err := s.client.HGet(ctx, jobStoreKey, job.ID).Result(); err == nil {
+		var oldJob jobs.Job
+		if err := json.Unmarshal([]byte(oldVal), &oldJob); err == nil {
+			oldStatus = oldJob.Status
+			oldType = oldJob.Type
+			oldTenant = oldJob.TenantID
+		}
+	}
+
+	if err := s.client.HSet(ctx, jobStoreKey, job.ID, payload).Err(); err != nil {
+		return fmt.Errorf("redis_store: failed to save job %s: %w", job.ID, err)
+	}
+
+	if oldStatus == jobs.StatusPending && (job.Status != jobs.StatusPending || job.Type != oldType || job.TenantID != oldTenant) {
+		_ = s.decrementQueueLength(ctx, oldType, oldTenant, 1)
+	}
+	if job.Status == jobs.StatusPending && (oldStatus != jobs.StatusPending || job.Type != oldType || job.TenantID != oldTenant) {
+		_ = s.incrementQueueLength(ctx, job.Type, job.TenantID, 1)
+	}
+
+	return nil
 }
 
 func (s *RedisStore) GetByID(ctx context.Context, id string) (*jobs.Job, error) {
@@ -597,6 +646,7 @@ func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.Jo
 		return fmt.Errorf("redis_store: failed to unmarshal job: %w", err)
 	}
 
+	oldStatus := job.Status
 	job.Status = status
 	job.ProcessedBy = workerID
 	job.UpdatedAt = time.Now().UTC()
@@ -606,7 +656,17 @@ func (s *RedisStore) UpdateStatus(ctx context.Context, id string, status jobs.Jo
 		return fmt.Errorf("redis_store: failed to marshal updated job: %w", err)
 	}
 
-	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
+	if err := s.client.HSet(ctx, jobStoreKey, id, updated).Err(); err != nil {
+		return fmt.Errorf("redis_store: failed to update job status: %w", err)
+	}
+
+	if oldStatus == jobs.StatusPending && status != jobs.StatusPending {
+		_ = s.decrementQueueLength(ctx, job.Type, job.TenantID, 1)
+	} else if oldStatus != jobs.StatusPending && status == jobs.StatusPending {
+		_ = s.incrementQueueLength(ctx, job.Type, job.TenantID, 1)
+	}
+
+	return nil
 }
 
 func (s *RedisStore) UpdateProgress(ctx context.Context, id string, progress float64) error {
@@ -648,6 +708,7 @@ func (s *RedisStore) UpdateResult(ctx context.Context, id string, status jobs.Jo
 		return fmt.Errorf("redis_store: failed to unmarshal job: %w", err)
 	}
 
+	oldStatus := job.Status
 	job.Status = status
 	job.ProcessedBy = workerID
 	job.Result = result
@@ -658,7 +719,17 @@ func (s *RedisStore) UpdateResult(ctx context.Context, id string, status jobs.Jo
 		return fmt.Errorf("redis_store: failed to marshal updated job: %w", err)
 	}
 
-	return s.client.HSet(ctx, jobStoreKey, id, updated).Err()
+	if err := s.client.HSet(ctx, jobStoreKey, id, updated).Err(); err != nil {
+		return fmt.Errorf("redis_store: failed to update job result: %w", err)
+	}
+
+	if oldStatus == jobs.StatusPending && status != jobs.StatusPending {
+		_ = s.decrementQueueLength(ctx, job.Type, job.TenantID, 1)
+	} else if oldStatus != jobs.StatusPending && status == jobs.StatusPending {
+		_ = s.incrementQueueLength(ctx, job.Type, job.TenantID, 1)
+	}
+
+	return nil
 }
 
 func (s *RedisStore) GetByWorkerAndStatus(ctx context.Context, workerID string, status jobs.JobStatus) ([]*jobs.Job, error) {
@@ -815,6 +886,12 @@ func (s *RedisStore) RecoverOrphans(ctx context.Context, timeout time.Duration) 
 }
 
 func (s *RedisStore) DeleteJob(ctx context.Context, jobID string) error {
+	if val, err := s.client.HGet(ctx, jobStoreKey, jobID).Result(); err == nil {
+		var j jobs.Job
+		if err := json.Unmarshal([]byte(val), &j); err == nil && j.Status == jobs.StatusPending {
+			_ = s.decrementQueueLength(ctx, j.Type, j.TenantID, 1)
+		}
+	}
 	return s.client.HDel(ctx, jobStoreKey, jobID).Err()
 }
 
@@ -839,6 +916,9 @@ func (s *RedisStore) DeleteJobsBefore(ctx context.Context, tenantID, status, job
 				(status == "" || string(j.Status) == status) &&
 				(jobType == "" || j.Type == jobType) &&
 				j.CreatedAt.Before(before) {
+				if j.Status == jobs.StatusPending {
+					_ = s.decrementQueueLength(ctx, j.Type, j.TenantID, 1)
+				}
 				s.client.HDel(ctx, jobStoreKey, id)
 				count++
 			}
@@ -899,24 +979,26 @@ func (s *RedisStore) GetDependentJobs(ctx context.Context, parentID string) ([]*
 }
 
 func (s *RedisStore) GetQueueLengths(ctx context.Context) (map[string]map[string]int64, error) {
-	vals, err := s.client.HVals(ctx, jobStoreKey).Result()
+	counts, err := s.client.HGetAll(ctx, queueLengthsKey).Result()
 	if err != nil {
-		return nil, fmt.Errorf("redis_store: HVALS failed: %w", err)
+		return nil, fmt.Errorf("redis_store: HGETALL failed: %w", err)
 	}
 
 	results := make(map[string]map[string]int64)
-	for _, v := range vals {
-		var j jobs.Job
-		if err := json.Unmarshal([]byte(v), &j); err != nil {
+	for field, valStr := range counts {
+		parts := strings.SplitN(field, "\x00", 2)
+		if len(parts) != 2 {
 			continue
 		}
-		if j.Status != jobs.StatusPending {
+		count, err := strconv.ParseInt(valStr, 10, 64)
+		if err != nil || count <= 0 {
 			continue
 		}
-		if results[j.Type] == nil {
-			results[j.Type] = make(map[string]int64)
+		jobType, tenantID := parts[0], parts[1]
+		if results[jobType] == nil {
+			results[jobType] = make(map[string]int64)
 		}
-		results[j.Type][j.TenantID]++
+		results[jobType][tenantID] = count
 	}
 
 	return results, nil
@@ -1088,6 +1170,7 @@ func (s *RedisStore) MoveToDLQ(ctx context.Context, jobID string, reason string)
 		return fmt.Errorf("redis_store: failed to unmarshal job %s: %w", jobID, err)
 	}
 
+	oldStatus := job.Status
 	job.Status = jobs.StatusFailed
 	job.UpdatedAt = time.Now().UTC()
 	if reason != "" {
@@ -1112,6 +1195,9 @@ func (s *RedisStore) MoveToDLQ(ctx context.Context, jobID string, reason string)
 	pipe.HSet(ctx, dlqStoreKey, jobID, data)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("redis_store: MoveToDLQ pipeline failed for job %s: %w", jobID, err)
+	}
+	if oldStatus == jobs.StatusPending {
+		_ = s.decrementQueueLength(ctx, job.Type, job.TenantID, 1)
 	}
 	return nil
 }

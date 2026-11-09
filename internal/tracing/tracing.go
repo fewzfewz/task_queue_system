@@ -26,27 +26,64 @@ const serviceName = "task-queue"
 
 var tp *sdktrace.TracerProvider
 
-func Start(ctx context.Context) (context.Context, string) {
-	if existing, ok := FromContext(ctx); ok && existing != "" {
-		return ctx, existing
+// SetTracerProvider explicitly sets the global sdktrace.TracerProvider.
+func SetTracerProvider(provider *sdktrace.TracerProvider) {
+	tp = provider
+	if provider != nil {
+		otel.SetTracerProvider(provider)
 	}
-	traceID := newID()
-	ctx = context.WithValue(ctx, traceIDKey, traceID)
+}
 
+func Start(ctx context.Context, name ...string) (context.Context, trace.Span) {
+	opName := "operation"
+	if len(name) > 0 && name[0] != "" {
+		opName = name[0]
+	}
+
+	traceID, hasTraceID := FromContext(ctx)
+	if !hasTraceID || traceID == "" {
+		traceID = newID()
+		ctx = context.WithValue(ctx, traceIDKey, traceID)
+	}
+
+	if !trace.SpanFromContext(ctx).SpanContext().IsValid() {
+		if tid, err := trace.TraceIDFromHex(traceID); err == nil {
+			sc := trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID:    tid,
+				TraceFlags: trace.FlagsSampled,
+				Remote:     true,
+			})
+			ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+		}
+	}
+
+	var tracer trace.Tracer
 	if tp != nil {
-		tracer := tp.Tracer(serviceName)
-		var span trace.Span
-		ctx, span = tracer.Start(ctx, "operation")
-		span.SetAttributes(attribute.String("trace.id", traceID))
-		span.End()
+		tracer = tp.Tracer(serviceName)
+	} else {
+		tracer = otel.Tracer(serviceName)
 	}
 
-	return ctx, traceID
+	var span trace.Span
+	ctx, span = tracer.Start(ctx, opName)
+
+	if sc := span.SpanContext(); sc.IsValid() {
+		traceID = sc.TraceID().String()
+		ctx = context.WithValue(ctx, traceIDKey, traceID)
+	}
+	span.SetAttributes(attribute.String("trace.id", traceID))
+
+	return ctx, span
 }
 
 func FromContext(ctx context.Context) (string, bool) {
-	v, ok := ctx.Value(traceIDKey).(string)
-	return v, ok && v != ""
+	if v, ok := ctx.Value(traceIDKey).(string); ok && v != "" {
+		return v, true
+	}
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		return span.SpanContext().TraceID().String(), true
+	}
+	return "", false
 }
 
 func Inject(ctx context.Context) string {
@@ -58,7 +95,16 @@ func WithTraceID(ctx context.Context, traceID string) context.Context {
 	if traceID == "" {
 		return ctx
 	}
-	return context.WithValue(ctx, traceIDKey, traceID)
+	ctx = context.WithValue(ctx, traceIDKey, traceID)
+	if tid, err := trace.TraceIDFromHex(traceID); err == nil {
+		sc := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID:    tid,
+			TraceFlags: trace.FlagsSampled,
+			Remote:     true,
+		})
+		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+	}
+	return ctx
 }
 
 type ShutdownFunc func(context.Context) error

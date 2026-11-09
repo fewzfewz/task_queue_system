@@ -1,12 +1,14 @@
 package executor
 
 import (
-	"fmt"
-
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/metrics"
@@ -224,6 +226,17 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 		}
 	}()
 
+	ctx, span := tracing.Start(ctx, "job.execute")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("job.id", job.ID),
+		attribute.String("job.type", job.Type),
+		attribute.String("job.tenant_id", job.TenantID),
+		attribute.String("job.correlation_id", job.CorrelationID),
+		attribute.String("job.priority", string(job.Priority)),
+		attribute.String("worker.name", wp.name),
+	)
+
 	start := time.Now()
 	progressCtx := plugin.WithProgressCallback(jobCtx, func(pct float64) {
 		_ = wp.service.UpdateJobProgress(execCtx, job.ID, pct)
@@ -232,6 +245,7 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 	elapsed := time.Since(start)
 
 	if execErr == nil {
+		span.SetStatus(codes.Ok, "completed")
 		// ── Handle Success ────────────────────────────────────────────────────────
 		log.Info("job succeeded", "status", jobs.StatusCompleted, "execution_time_ms", time.Since(start).Milliseconds())
 
@@ -258,6 +272,8 @@ func (wp *WorkerProcessor) executeSingle(ctx context.Context, p plugin.JobPlugin
 	}
 
 	// ── Step 3b: Failure → decide retry or permanent fail ────────────────────
+	span.RecordError(execErr)
+	span.SetStatus(codes.Error, execErr.Error())
 	log.Error("job execution failed",
 		"status", "error",
 		"error", execErr,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -506,4 +507,157 @@ func TestRedisStore_DLQ(t *testing.T) {
 		}
 		_ = badClient.Close()
 	})
+}
+
+func TestRedisStore_GetQueueLengths_Transitions(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("skipping Redis-backed store test: local TCP listeners are not permitted in this environment")
+	}
+	_ = ln.Close()
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	store := NewRedisStore(rdb)
+	ctx := context.Background()
+
+	// Initial check: empty queue lengths
+	lengths, err := store.GetQueueLengths(ctx)
+	if err != nil {
+		t.Fatalf("initial GetQueueLengths failed: %v", err)
+	}
+	if len(lengths) != 0 {
+		t.Fatalf("expected empty lengths, got %v", lengths)
+	}
+
+	// 1. Create two pending jobs for tenant-a (type: email), one for tenant-b (type: image)
+	j1 := &jobs.Job{ID: "j-1", Type: "email", TenantID: "tenant-a", Status: jobs.StatusPending}
+	j2 := &jobs.Job{ID: "j-2", Type: "email", TenantID: "tenant-a", Status: jobs.StatusPending}
+	j3 := &jobs.Job{ID: "j-3", Type: "image", TenantID: "tenant-b", Status: jobs.StatusPending}
+	for _, j := range []*jobs.Job{j1, j2, j3} {
+		if err := store.Save(ctx, j); err != nil {
+			t.Fatalf("failed to save job %s: %v", j.ID, err)
+		}
+	}
+
+	lengths, err = store.GetQueueLengths(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueLengths failed: %v", err)
+	}
+	if lengths["email"]["tenant-a"] != 2 {
+		t.Fatalf("expected 2 pending email jobs for tenant-a, got %d", lengths["email"]["tenant-a"])
+	}
+	if lengths["image"]["tenant-b"] != 1 {
+		t.Fatalf("expected 1 pending image job for tenant-b, got %d", lengths["image"]["tenant-b"])
+	}
+
+	// 2. Transition j1 from Pending to Processing via UpdateStatus
+	if err := store.UpdateStatus(ctx, "j-1", jobs.StatusProcessing, "w-1"); err != nil {
+		t.Fatalf("UpdateStatus failed: %v", err)
+	}
+	lengths, err = store.GetQueueLengths(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueLengths failed: %v", err)
+	}
+	if lengths["email"]["tenant-a"] != 1 {
+		t.Fatalf("expected 1 pending email job for tenant-a after j1 started processing, got %d", lengths["email"]["tenant-a"])
+	}
+
+	// 3. Complete j2 via UpdateResult
+	if err := store.UpdateResult(ctx, "j-2", jobs.StatusCompleted, "w-1", "ok"); err != nil {
+		t.Fatalf("UpdateResult failed: %v", err)
+	}
+	lengths, err = store.GetQueueLengths(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueLengths failed: %v", err)
+	}
+	if _, ok := lengths["email"]["tenant-a"]; ok {
+		t.Fatalf("expected 0 pending email jobs for tenant-a, got %d", lengths["email"]["tenant-a"])
+	}
+	if lengths["image"]["tenant-b"] != 1 {
+		t.Fatalf("expected 1 pending image job for tenant-b, got %d", lengths["image"]["tenant-b"])
+	}
+
+	// 4. Retry j1: transition from Processing back to Pending via Save
+	j1.Status = jobs.StatusPending
+	if err := store.Save(ctx, j1); err != nil {
+		t.Fatalf("Save (retry) failed: %v", err)
+	}
+	lengths, err = store.GetQueueLengths(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueLengths failed: %v", err)
+	}
+	if lengths["email"]["tenant-a"] != 1 {
+		t.Fatalf("expected 1 pending email job for tenant-a after retry, got %d", lengths["email"]["tenant-a"])
+	}
+
+	// 5. Delete j3 via DeleteJob
+	if err := store.DeleteJob(ctx, "j-3"); err != nil {
+		t.Fatalf("DeleteJob failed: %v", err)
+	}
+	lengths, err = store.GetQueueLengths(ctx)
+	if err != nil {
+		t.Fatalf("GetQueueLengths failed: %v", err)
+	}
+	if _, ok := lengths["image"]["tenant-b"]; ok {
+		t.Fatalf("expected image/tenant-b to be removed after deletion")
+	}
+}
+
+func BenchmarkRedisStore_GetQueueLengths(b *testing.B) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		b.Skip("skipping Redis benchmark: local TCP listeners are not permitted in this environment")
+	}
+	_ = ln.Close()
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		b.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	store := NewRedisStore(rdb)
+	ctx := context.Background()
+
+	// Seed 50,000 completed/processed jobs in jobStoreKey
+	pipe := rdb.Pipeline()
+	dummyPayload := []byte(`{"id":"dummy","status":"completed","type":"email","tenant_id":"tenant-a"}`)
+	for i := 0; i < 50000; i++ {
+		pipe.HSet(ctx, jobStoreKey, fmt.Sprintf("job-%d", i), dummyPayload)
+		if i%5000 == 0 {
+			_, _ = pipe.Exec(ctx)
+			pipe = rdb.Pipeline()
+		}
+	}
+	_, _ = pipe.Exec(ctx)
+
+	// Seed 10 pending jobs via Save (which updates queueLengthsKey)
+	for i := 0; i < 10; i++ {
+		_ = store.Save(ctx, &jobs.Job{
+			ID:       fmt.Sprintf("pending-%d", i),
+			Type:     "email",
+			TenantID: "tenant-a",
+			Status:   jobs.StatusPending,
+		})
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		lengths, err := store.GetQueueLengths(ctx)
+		if err != nil {
+			b.Fatalf("GetQueueLengths failed: %v", err)
+		}
+		if lengths["email"]["tenant-a"] != 10 {
+			b.Fatalf("unexpected count: %v", lengths)
+		}
+	}
 }
