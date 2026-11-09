@@ -35,6 +35,19 @@ func NewJobExecutor(logger *slog.Logger, jobTypeStore ...*jobtypes.Store) *JobEx
 	return je
 }
 
+// NewJobExecutorWithRegistry creates a JobExecutor using a custom plugin registry and circuit breaker.
+func NewJobExecutorWithRegistry(reg *plugin.Registry, cb *plugin.CircuitBreaker, logger *slog.Logger) *JobExecutor {
+	if cb == nil {
+		cb = plugin.NewCircuitBreaker(5, 30*time.Second)
+	}
+	return &JobExecutor{
+		registry:       reg,
+		circuitBreaker: cb,
+		logger:         logger,
+		middlewares:    []plugin.Middleware{},
+	}
+}
+
 // Use appends a new middleware to the execution pipeline.
 func (je *JobExecutor) Use(m plugin.Middleware) {
 	je.middlewares = append(je.middlewares, m)

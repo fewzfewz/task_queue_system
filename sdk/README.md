@@ -1,44 +1,56 @@
-# Task Queue SDKs (Polyglot Workers)
+# Task Queue Polyglot SDKs
 
-While the core Task Queue worker engine is written in Go for maximum performance, you can write actual worker logic in **any language** using our HTTP Push SDKs.
+The Task Queue System provides native client and worker SDKs in **Go**, **Python**, and **TypeScript**.
 
-This allows you to easily execute tasks in environments better suited for them, such as running Machine Learning models in Python, or rendering React PDFs in Node.js.
+---
 
-## How it works
+## 1. Client SDKs (Submitting & Managing Jobs)
 
-Instead of external workers repeatedly polling the queue, our Go worker engine acts as a high-performance orchestrator. It pulls jobs from the Redis queues and **HTTP Pushes** the payload to your external worker. 
+Submit and track jobs with just 3 lines of code in your preferred language.
 
-The Go engine handles all the complexity:
-- Exponential Backoff
-- Circuit Breaking (if your Python server goes down)
-- Tenant Rate Limiting (QoS)
-- Dead Letter Queue routing
+### Python Client
 
-Your external worker just receives a POST request, does the work, and returns a JSON response.
+```python
+import taskqueue
 
-## Available SDKs
-
-- [Python Worker SDK](./python/taskqueue.py) - See `example_worker.py`
-- [TypeScript Worker SDK](./typescript/TaskQueueWorker.ts) - See `example.ts`
-- [Go Client SDK](../pkg/tq/README.md) (For submitting jobs)
-
-## Registering Remote Jobs
-
-To send a job to a Python worker listening on port `5050` for the `ml_inference` route, you submit a job of type `http`:
-
-```json
-POST /api/v1/jobs
-{
-  "type": "http",
-  "payload": {
-    "url": "http://python-worker:5050/ml_inference",
-    "method": "POST",
-    "body": {
-      "text": "I love this queue!"
-    }
-  },
-  "max_retries": 3
-}
+client = taskqueue.Client(base_url="http://localhost:8080", api_key="your-api-key")
+job = client.submit("email", payload={"to": "user@example.com"}, priority="high")
+print(f"Submitted job: {job['id']}, Status: {job['status']}")
 ```
 
-The Go engine will robustly deliver this payload to your Python worker and capture the result!
+Methods available on `taskqueue.Client`:
+- `submit(job_type, payload, priority, max_retries, timeout_seconds, correlation_id, dedup_key, run_at, labels)`
+- `submit_batch(jobs)`
+- `get_status(job_id)`
+- `list_jobs(status, job_type, limit, page, label_key, label_value)`
+- `pause(job_id)` / `resume(job_id)` / `cancel(job_id)`
+
+### TypeScript Client
+
+```typescript
+import { TaskQueueClient } from './TaskQueueClient';
+
+const client = new TaskQueueClient({ baseURL: 'http://localhost:8080', apiKey: 'your-api-key' });
+const job = await client.submit({ type: 'email', payload: { to: 'user@example.com' }, priority: 'high' });
+console.log(`Submitted job: ${job.id}, Status: ${job.status}`);
+```
+
+Methods available on `TaskQueueClient`:
+- `submit(options)`
+- `submitBatch(jobs)`
+- `getStatus(jobId)`
+- `listJobs(filter)`
+- `pause(jobId)` / `resume(jobId)` / `cancel(jobId)`
+
+### Go Client
+
+See the [Go Client SDK Documentation](../pkg/tq/README.md).
+
+---
+
+## 2. Worker SDKs (Polyglot External Workers)
+
+Execute heavy compute tasks in environments suited for them (such as running PyTorch models in Python or generating React PDFs in Node.js). The Go engine orchestrates queue pulling, retries, rate limits, and pushes payloads via HTTP.
+
+- [Python Worker SDK](./python/taskqueue.py) (`TaskQueueWorker`) - See `example_worker.py`
+- [TypeScript Worker SDK](./typescript/TaskQueueWorker.ts) (`TaskQueueWorker`) - See `example.ts`

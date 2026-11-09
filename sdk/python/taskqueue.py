@@ -1,11 +1,156 @@
 import json
 import logging
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, List, Optional
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.request
+import urllib.parse
 import urllib.error
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+class TaskQueueError(Exception):
+    """Raised when the Task Queue API returns an error response."""
+    def __init__(self, status_code: int, message: str):
+        super().__init__(f"Task Queue API error ({status_code}): {message}")
+        self.status_code = status_code
+        self.message = message
+
+
+class TaskQueueClient:
+    """
+    Python client for interacting with the Go Task Queue engine.
+    Allows submitting, inspecting, querying, and managing asynchronous tasks.
+    """
+    def __init__(self, base_url: str = "http://localhost:8080", api_key: str = "", timeout: float = 15.0):
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def _request(self, method: str, path: str, data: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        if params:
+            filtered_params = {k: v for k, v in params.items() if v is not None and v != ""}
+            if filtered_params:
+                url += "?" + urllib.parse.urlencode(filtered_params)
+
+        body_bytes = None
+        headers = {}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+
+        if data is not None:
+            body_bytes = json.dumps(data).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(url, data=body_bytes, headers=headers, method=method)
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                resp_body = resp.read().decode("utf-8")
+                if resp_body:
+                    try:
+                        return json.loads(resp_body)
+                    except json.JSONDecodeError:
+                        return {"raw": resp_body}
+                return {"status": "ok"}
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8")
+            raise TaskQueueError(e.code, error_body)
+        except urllib.error.URLError as e:
+            raise TaskQueueError(0, f"Network error: {str(e.reason)}")
+
+    def submit(
+        self,
+        job_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+        priority: str = "medium",
+        max_retries: int = 3,
+        timeout_seconds: int = 60,
+        correlation_id: str = "",
+        dedup_key: str = "",
+        run_at: Optional[str] = None,
+        labels: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Submit a single job to the queue.
+        Example:
+            client.submit("email", {"to": "alice@example.com"}, priority="high")
+        """
+        body: Dict[str, Any] = {
+            "type": job_type,
+            "payload": payload or {},
+            "priority": priority,
+            "max_retries": max_retries,
+            "timeout": timeout_seconds,
+        }
+        if correlation_id:
+            body["correlation_id"] = correlation_id
+        if dedup_key:
+            body["dedup_key"] = dedup_key
+        if run_at:
+            body["run_at"] = run_at
+        if labels:
+            body["labels"] = labels
+
+        return self._request("POST", "/jobs", data=body)
+
+    def submit_batch(self, jobs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Submit a batch of jobs in a single HTTP request.
+        """
+        return self._request("POST", "/jobs/batch", data={"jobs": jobs})
+
+    def get_status(self, job_id: str) -> Dict[str, Any]:
+        """
+        Retrieve current status, progress, and result of a job by ID.
+        """
+        return self._request("GET", f"/jobs/{urllib.parse.quote(job_id)}")
+
+    def list_jobs(
+        self,
+        status: str = "",
+        job_type: str = "",
+        limit: int = 20,
+        page: int = 1,
+        label_key: str = "",
+        label_value: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Search and filter jobs with pagination.
+        """
+        params = {
+            "status": status,
+            "type": job_type,
+            "limit": limit if limit > 0 else None,
+            "page": page if page > 0 else None,
+            "label_key": label_key,
+            "label_value": label_value,
+        }
+        return self._request("GET", "/jobs", params=params)
+
+    def cancel(self, job_id: str) -> Dict[str, Any]:
+        """
+        Cancel a pending or active job.
+        """
+        return self._request("POST", f"/jobs/{urllib.parse.quote(job_id)}/cancel")
+
+    def pause(self, job_id: str) -> Dict[str, Any]:
+        """
+        Pause execution of a queued job.
+        """
+        return self._request("POST", f"/jobs/{urllib.parse.quote(job_id)}/pause")
+
+    def resume(self, job_id: str) -> Dict[str, Any]:
+        """
+        Resume execution of a paused job.
+        """
+        return self._request("POST", f"/jobs/{urllib.parse.quote(job_id)}/resume")
+
+
+# Convenient alias for 3-line import usage
+Client = TaskQueueClient
+
 
 class TaskQueueWorker:
     """
@@ -78,4 +223,3 @@ class TaskQueueWorker:
         except KeyboardInterrupt:
             logging.info("Shutting down worker...")
             server.server_close()
-

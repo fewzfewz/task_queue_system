@@ -1,6 +1,6 @@
 APP_NAME=task-queue-system
 
-.PHONY: help deps test test-postgres test-postgres-up test-postgres-down test-webhooks test-vault build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
+.PHONY: help deps test bench test-postgres test-postgres-up test-postgres-down test-webhooks test-vault build build-api build-worker build-scheduler build-cli run-api run-worker run-scheduler dev dev-stop swagger docker-build docker-up docker-down migrate migrate-schema migrate-down migrate-down-schema chaos load-test benchmark
 
 help:
 	@echo "Targets:"
@@ -34,6 +34,9 @@ deps:
 
 test:
 	go test ./...
+
+bench:
+	go test -bench=. -benchmem -run=^$$ ./internal/...
 
 POSTGRES_TEST_CONN_STR := postgres://tq:tq@localhost:5433/tq?sslmode=disable
 

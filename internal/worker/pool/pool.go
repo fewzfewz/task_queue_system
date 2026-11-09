@@ -23,7 +23,7 @@ type Config struct {
 	// JobsPerSecond limits the global processing rate across all workers.
 	// A value of 0 means no limit.
 	// BatchSize limits the maximum number of jobs to pull at once. Default 1.
-	BatchSize int
+	BatchSize     int
 	JobsPerSecond float64
 	// SLATarget is the duration within which a job is considered SLA-compliant.
 	// Default 5s.
@@ -34,20 +34,19 @@ type Config struct {
 type Pool struct {
 	activeJobs   map[string]context.CancelFunc
 	activeJobsMu sync.Mutex
-	cfg        Config
-	instanceID string
-	service    *service.JobService
-	executor   *executor.JobExecutor
-	limiter    limiter.RateLimiter
-	logger     *slog.Logger
+	cfg          Config
+	instanceID   string
+	service      *service.JobService
+	executor     *executor.JobExecutor
+	limiter      limiter.RateLimiter
+	logger       *slog.Logger
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	busyCount atomic.Int32
+	busyCount    atomic.Int32
 	shuttingDown int32
 }
-
 
 // New creates a new Pool. Call Start to begin processing.
 func New(cfg Config, instanceID string, svc *service.JobService, je *executor.JobExecutor, logger *slog.Logger) (*Pool, error) {
@@ -61,7 +60,7 @@ func New(cfg Config, instanceID string, svc *service.JobService, je *executor.Jo
 	}
 
 	return &Pool{
-		activeJobs:   make(map[string]context.CancelFunc),
+		activeJobs: make(map[string]context.CancelFunc),
 		cfg:        cfg,
 		instanceID: instanceID,
 		service:    svc,
@@ -97,7 +96,7 @@ func (p *Pool) Start(ctx context.Context) {
 	for i := 0; i < p.cfg.NumWorkers; i++ {
 		name := fmt.Sprintf("%s:worker-%d", p.instanceID, i+1)
 		w := executor.NewWorkerProcessor(name, p.service, p.executor, p.limiter, p.logger, p.cfg.SLATarget, p.cfg.BatchSize)
-		
+
 		w.SetCancelHooks(p.RegisterActiveJob, p.UnregisterActiveJob)
 		w.SetHooks(
 
@@ -141,7 +140,7 @@ func (p *Pool) metricsLoop(ctx context.Context) {
 			busy := float64(p.busyCount.Load())
 			ratio := busy / float64(p.cfg.NumWorkers)
 			metrics.WorkerBusyRatio.Set(ratio)
-			
+
 			// 2. Queue Lengths (Segmented)
 
 			lengths, err := p.service.ListQueueLengths(ctx)

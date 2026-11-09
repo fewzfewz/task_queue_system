@@ -1,5 +1,7 @@
 import * as http from 'http';
 
+export * from './TaskQueueClient';
+
 type JobHandler = (payload: any) => Promise<any>;
 
 export class TaskQueueWorker {
