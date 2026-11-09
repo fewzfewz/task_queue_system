@@ -3,43 +3,62 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // Session is a server-side operator session. The browser only ever holds the
 // opaque session ID in an httpOnly cookie; the CSRF token is returned to the
 // page so it can be echoed back on state-changing requests.
 type Session struct {
-	ID        string
-	Username  string
-	Role      string
-	CSRF      string
-	ExpiresAt time.Time
+	ID        string    `json:"id"`
+	Username  string    `json:"username"`
+	Role      string    `json:"role"`
+	CSRF      string    `json:"csrf"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// Store is an in-memory session store with fixed TTL expiry.
-type Store struct {
+// Store is the session storage interface implemented by MemoryStore and RedisStore.
+type Store interface {
+	TTL() time.Duration
+	Create(username, role string) (*Session, error)
+	Get(id string) (*Session, bool)
+	Touch(id string) bool
+	Delete(id string)
+	Cleanup() int
+}
+
+// MemoryStore is an in-memory session store with fixed TTL expiry.
+type MemoryStore struct {
 	mu    sync.Mutex
 	ttl   time.Duration
 	items map[string]*Session
 }
 
-// NewStore creates a session store whose sessions expire after ttl.
-func NewStore(ttl time.Duration) *Store {
-	return &Store{
+// NewStore creates an in-memory session store whose sessions expire after ttl.
+func NewStore(ttl time.Duration) *MemoryStore {
+	return NewMemoryStore(ttl)
+}
+
+// NewMemoryStore creates a MemoryStore with fixed TTL expiry.
+func NewMemoryStore(ttl time.Duration) *MemoryStore {
+	return &MemoryStore{
 		ttl:   ttl,
 		items: make(map[string]*Session),
 	}
 }
 
 // TTL returns the configured session lifetime.
-func (s *Store) TTL() time.Duration { return s.ttl }
+func (s *MemoryStore) TTL() time.Duration { return s.ttl }
 
 // Create issues a new session for the given username and role.
-func (s *Store) Create(username, role string) (*Session, error) {
+func (s *MemoryStore) Create(username, role string) (*Session, error) {
 	id, err := newToken(32)
 	if err != nil {
 		return nil, err
@@ -64,7 +83,7 @@ func (s *Store) Create(username, role string) (*Session, error) {
 }
 
 // Get returns the session if it exists and has not expired.
-func (s *Store) Get(id string) (*Session, bool) {
+func (s *MemoryStore) Get(id string) (*Session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -81,7 +100,7 @@ func (s *Store) Get(id string) (*Session, bool) {
 
 // Touch extends the session lifetime by the configured TTL. Returns false if
 // the session does not exist or has already expired.
-func (s *Store) Touch(id string) bool {
+func (s *MemoryStore) Touch(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -98,14 +117,14 @@ func (s *Store) Touch(id string) bool {
 }
 
 // Delete removes a session, invalidating it immediately.
-func (s *Store) Delete(id string) {
+func (s *MemoryStore) Delete(id string) {
 	s.mu.Lock()
 	delete(s.items, id)
 	s.mu.Unlock()
 }
 
 // Cleanup removes all expired sessions. Call periodically.
-func (s *Store) Cleanup() int {
+func (s *MemoryStore) Cleanup() int {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,6 +137,111 @@ func (s *Store) Cleanup() int {
 		}
 	}
 	return n
+}
+
+// RedisStore is a distributed Redis-backed session store for multi-pod deployments.
+type RedisStore struct {
+	client redis.UniversalClient
+	ttl    time.Duration
+	prefix string
+}
+
+// NewRedisStore creates a distributed session store backed by Redis.
+func NewRedisStore(client redis.UniversalClient, ttl time.Duration) *RedisStore {
+	return &RedisStore{
+		client: client,
+		ttl:    ttl,
+		prefix: "task_queue:session:",
+	}
+}
+
+// TTL returns the configured session lifetime.
+func (s *RedisStore) TTL() time.Duration { return s.ttl }
+
+// Create issues a new session and saves it in Redis with the configured TTL.
+func (s *RedisStore) Create(username, role string) (*Session, error) {
+	id, err := newToken(32)
+	if err != nil {
+		return nil, err
+	}
+	csrf, err := newToken(32)
+	if err != nil {
+		return nil, err
+	}
+
+	sess := &Session{
+		ID:        id,
+		Username:  username,
+		Role:      role,
+		CSRF:      csrf,
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+	}
+
+	data, err := json.Marshal(sess)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if err := s.client.Set(ctx, s.prefix+id, data, s.ttl).Err(); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
+// Get fetches the session from Redis. Returns false if missing or expired.
+func (s *RedisStore) Get(id string) (*Session, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	data, err := s.client.Get(ctx, s.prefix+id).Bytes()
+	if err != nil {
+		return nil, false
+	}
+
+	var sess Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return nil, false
+	}
+
+	if time.Now().UTC().After(sess.ExpiresAt) {
+		_ = s.client.Del(ctx, s.prefix+id).Err()
+		return nil, false
+	}
+	return &sess, true
+}
+
+// Touch extends the session TTL in Redis.
+func (s *RedisStore) Touch(id string) bool {
+	sess, ok := s.Get(id)
+	if !ok {
+		return false
+	}
+	sess.ExpiresAt = time.Now().UTC().Add(s.ttl)
+	data, err := json.Marshal(sess)
+	if err != nil {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	return s.client.Set(ctx, s.prefix+id, data, s.ttl).Err() == nil
+}
+
+// Delete removes the session from Redis immediately.
+func (s *RedisStore) Delete(id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_ = s.client.Del(ctx, s.prefix+id).Err()
+}
+
+// Cleanup is a no-op for RedisStore because Redis automatically evicts expired keys via TTL.
+func (s *RedisStore) Cleanup() int {
+	return 0
 }
 
 func newToken(bytes int) (string, error) {

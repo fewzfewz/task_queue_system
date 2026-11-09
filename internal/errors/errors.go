@@ -21,14 +21,15 @@ func (e *AppError) Error() string {
 
 // Common error codes
 const (
-	CodeNotFound       = "NOT_FOUND"
-	CodeInvalidArgument = "INVALID_ARGUMENT"
-	CodeInternal       = "INTERNAL_ERROR"
+	CodeNotFound         = "NOT_FOUND"
+	CodeInvalidArgument  = "INVALID_ARGUMENT"
+	CodeInternal         = "INTERNAL_ERROR"
 	CodeUnauthorized     = "UNAUTHORIZED"
 	CodePermissionDenied = "PERMISSION_DENIED"
 	CodeQueueFull        = "QUEUE_FULL"
 	CodeTooManyRequests  = "TOO_MANY_REQUESTS"
 	CodeConflict         = "CONFLICT"
+	CodePayloadTooLarge  = "PAYLOAD_TOO_LARGE"
 )
 
 // NewNotFound returns a 404-style error.
@@ -88,8 +89,13 @@ func NewForbidden(msg string) *AppError {
 	}
 }
 
-
-
+// NewPayloadTooLarge returns a 413-style error.
+func NewPayloadTooLarge(msg string) *AppError {
+	return &AppError{
+		Code:    CodePayloadTooLarge,
+		Message: msg,
+	}
+}
 
 // IsCode checks if an error (or any error in its chain) is an AppError with the given code.
 func IsCode(err error, code string) bool {

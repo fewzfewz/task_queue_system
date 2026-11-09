@@ -24,8 +24,10 @@ const (
 
 // Roles assigned to authenticated principals.
 const (
-	RoleAdmin  = "admin"
-	RoleViewer = "viewer"
+	RoleAdmin        = "admin"
+	RoleOperator     = "admin"         // Alias for operator
+	RoleTenantClient = "tenant_client" // Authenticated machine tenant API key
+	RoleViewer       = "viewer"        // Read-only session
 )
 
 // SessionFromContext returns the authenticated session, if any.

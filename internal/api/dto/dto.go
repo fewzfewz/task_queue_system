@@ -19,7 +19,6 @@ type WebhookRequest struct {
 	Events []string `json:"events"`
 }
 
-
 // CreateJobRequest is the JSON body expected on POST /jobs.
 type CreateJobRequest struct {
 	// Type must match one of the registered handler types (e.g. "email", "image").
@@ -59,7 +58,6 @@ type CreateJobRequest struct {
 	// TTLSeconds is optional. If the job hasn't successfully completed within this many seconds, it permanently fails.
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
-
 
 // Validate performs strict input validation on the request.
 func (r *CreateJobRequest) Validate() error {
@@ -132,36 +130,34 @@ func (r *CreateJobRequest) Validate() error {
 	return nil
 }
 
-
 // JobResponse is the JSON body returned for both POST /jobs and GET /jobs/{id}.
 type JobResponse struct {
-	ID         string                 `json:"id"`
-	Type       string                 `json:"type"`
-	Payload    map[string]interface{} `json:"payload"`
-	Labels     map[string]string      `json:"labels,omitempty"`
-	Priority   string                 `json:"priority"`
-	Status     string                 `json:"status"`
-	Retries    int                    `json:"retries"`
-	MaxRetries int                    `json:"max_retries"`
-	BackoffAlgorithm string           `json:"backoff_algorithm,omitempty"`
-	BackoffJitter    string           `json:"backoff_jitter,omitempty"`
-	CronExpr         string           `json:"cron_expr,omitempty"`
-	CreatedAt  string                 `json:"created_at"`
-	UpdatedAt  string                 `json:"updated_at"`
-	RunAt      string                 `json:"run_at"`
-	ExpiresAt  string                 `json:"expires_at,omitempty"`
-	CorrelationID string              `json:"correlation_id,omitempty"`
-	Timeout       int                 `json:"timeout,omitempty"`
-	Version       int                 `json:"version"`
-	TenantID      string              `json:"tenant_id,omitempty"`
-	Paused        bool                 `json:"paused"`
-	Progress      float64              `json:"progress"`
-	DedupKey      string               `json:"dedup_key,omitempty"`
-	Dependencies  []string             `json:"dependencies,omitempty"`
-	ShardKey      string               `json:"shard_key,omitempty"`
-	ErrorHistory  []jobs.AttemptError `json:"error_history,omitempty"`
+	ID               string                 `json:"id"`
+	Type             string                 `json:"type"`
+	Payload          map[string]interface{} `json:"payload"`
+	Labels           map[string]string      `json:"labels,omitempty"`
+	Priority         string                 `json:"priority"`
+	Status           string                 `json:"status"`
+	Retries          int                    `json:"retries"`
+	MaxRetries       int                    `json:"max_retries"`
+	BackoffAlgorithm string                 `json:"backoff_algorithm,omitempty"`
+	BackoffJitter    string                 `json:"backoff_jitter,omitempty"`
+	CronExpr         string                 `json:"cron_expr,omitempty"`
+	CreatedAt        string                 `json:"created_at"`
+	UpdatedAt        string                 `json:"updated_at"`
+	RunAt            string                 `json:"run_at"`
+	ExpiresAt        string                 `json:"expires_at,omitempty"`
+	CorrelationID    string                 `json:"correlation_id,omitempty"`
+	Timeout          int                    `json:"timeout,omitempty"`
+	Version          int                    `json:"version"`
+	TenantID         string                 `json:"tenant_id,omitempty"`
+	Paused           bool                   `json:"paused"`
+	Progress         float64                `json:"progress"`
+	DedupKey         string                 `json:"dedup_key,omitempty"`
+	Dependencies     []string               `json:"dependencies,omitempty"`
+	ShardKey         string                 `json:"shard_key,omitempty"`
+	ErrorHistory     []jobs.AttemptError    `json:"error_history,omitempty"`
 }
-
 
 // BatchJobRequest is the JSON body expected on POST /jobs/batch.
 type BatchJobRequest struct {
@@ -200,31 +196,31 @@ func FromJob(j *jobs.Job) JobResponse {
 	}
 
 	return JobResponse{
-		ID:         j.ID,
-		Type:       j.Type,
-		Payload:    j.Payload,
-		Labels:     j.Labels,
-		Priority:   string(j.Priority),
-		Status:     string(j.Status),
-		Retries:    j.Retries,
-		MaxRetries: j.MaxRetries,
+		ID:               j.ID,
+		Type:             j.Type,
+		Payload:          j.Payload,
+		Labels:           j.Labels,
+		Priority:         string(j.Priority),
+		Status:           string(j.Status),
+		Retries:          j.Retries,
+		MaxRetries:       j.MaxRetries,
 		BackoffAlgorithm: string(j.BackoffAlgorithm),
 		BackoffJitter:    string(j.BackoffJitter),
 		CronExpr:         j.CronExpr,
-		CreatedAt:     j.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:     j.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		RunAt:         j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
-		ExpiresAt:     expiresAt,
-		Paused:        j.Paused,
-		Progress:      j.Progress,
-		DedupKey:      j.DedupKey,
-		Dependencies:  j.Dependencies,
-		ShardKey:      j.ShardKey,
-		CorrelationID: j.CorrelationID,
-		Timeout:       j.Timeout,
-		Version:       j.Version,
-		TenantID:      j.TenantID,
-		ErrorHistory:  j.ErrorHistory,
+		CreatedAt:        j.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:        j.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		RunAt:            j.RunAt.Format("2006-01-02T15:04:05Z07:00"),
+		ExpiresAt:        expiresAt,
+		Paused:           j.Paused,
+		Progress:         j.Progress,
+		DedupKey:         j.DedupKey,
+		Dependencies:     j.Dependencies,
+		ShardKey:         j.ShardKey,
+		CorrelationID:    j.CorrelationID,
+		Timeout:          j.Timeout,
+		Version:          j.Version,
+		TenantID:         j.TenantID,
+		ErrorHistory:     j.ErrorHistory,
 	}
 }
 

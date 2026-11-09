@@ -1,6 +1,9 @@
 package routes
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -190,5 +193,74 @@ func TestNewRouter_SwaggerUI(t *testing.T) {
 
 	if rec.Code != 200 && rec.Code != 301 {
 		t.Errorf("expected 200 or 301, got %d", rec.Code)
+	}
+}
+
+func TestNewRouter_TenantBlockedFromOperatorEndpoints(t *testing.T) {
+	store := models.NewInMemoryStore()
+	mq := queue.NewMockQueue()
+	cfg := config.Load()
+	handler := NewRouter(mq, store, slog.Default(), cfg, nil, nil)
+
+	// Register a machine tenant client
+	rawKey := "tq_live_tenant_key_999"
+	sum := sha256.Sum256([]byte(rawKey))
+	hashHex := hex.EncodeToString(sum[:])
+	if err := store.RegisterClient(context.Background(), "tenant-a", hashHex); err != nil {
+		t.Fatalf("failed to register client: %v", err)
+	}
+
+	// List of operator endpoints that tenant client keys must NEVER be allowed to call
+	operatorEndpoints := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{"POST", "/api/v1/operator/queue/email/pause", ""},
+		{"POST", "/api/v1/operator/queue/email/resume", ""},
+		{"GET", "/api/v1/operator/paused-queues", ""},
+		{"POST", "/api/v1/job-types", `{"name":"custom","description":"test"}`},
+		{"DELETE", "/api/v1/job-types/custom", ""},
+		{"GET", "/api/v1/clients", ""},
+		{"DELETE", "/api/v1/clients/tenant-b", ""},
+		{"POST", "/api/v1/clients/tenant-b/rotate", ""},
+		{"PUT", "/api/v1/clients/tenant-b/config", `{"concurrency_limit":10}`},
+		{"POST", "/api/v1/circuit-breakers/reset/email", ""},
+		{"DELETE", "/api/v1/dlq", ""},
+		{"GET", "/api/v1/audit-logs", ""},
+	}
+
+	for _, ep := range operatorEndpoints {
+		t.Run(ep.method+" "+ep.path+"_ForbiddenForTenant", func(t *testing.T) {
+			var bodyReader *strings.Reader
+			if ep.body != "" {
+				bodyReader = strings.NewReader(ep.body)
+			} else {
+				bodyReader = strings.NewReader("")
+			}
+			req := httptest.NewRequest(ep.method, ep.path, bodyReader)
+			req.Header.Set("X-API-Key", rawKey)
+			if ep.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("expected 403 Forbidden for tenant on %s %s, got %d (body: %s)", ep.method, ep.path, rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	// Verify tenant client CAN submit jobs
+	jobBody := `{"type":"email","payload":{"to":"user@example.com"},"priority":"medium"}`
+	jobReq := httptest.NewRequest("POST", "/jobs", strings.NewReader(jobBody))
+	jobReq.Header.Set("X-API-Key", rawKey)
+	jobReq.Header.Set("Content-Type", "application/json")
+	jobRec := httptest.NewRecorder()
+	handler.ServeHTTP(jobRec, jobReq)
+
+	if jobRec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for tenant client submitting job, got %d (body: %s)", jobRec.Code, jobRec.Body.String())
 	}
 }

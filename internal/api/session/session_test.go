@@ -3,6 +3,9 @@ package session
 import (
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestStore_CreateGet(t *testing.T) {
@@ -98,5 +101,79 @@ func TestLoginLimiter_WindowReset(t *testing.T) {
 	time.Sleep(15 * time.Millisecond)
 	if !l.Allow("10.0.0.1") {
 		t.Fatal("attempt after window should be allowed")
+	}
+}
+
+func TestRedisStore_MultiInstance(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Skip("skipping: miniredis could not start")
+	}
+	defer mr.Close()
+
+	rdbPodA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdbPodA.Close()
+	storePodA := NewRedisStore(rdbPodA, time.Hour)
+
+	rdbPodB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdbPodB.Close()
+	storePodB := NewRedisStore(rdbPodB, time.Hour)
+
+	// Pod A creates a session for user alice
+	sess, err := storePodA.Create("alice", "admin")
+	if err != nil {
+		t.Fatalf("failed to create session on Pod A: %v", err)
+	}
+
+	// Pod B retrieves the session created by Pod A
+	retrieved, ok := storePodB.Get(sess.ID)
+	if !ok {
+		t.Fatal("expected Pod B to retrieve session created on Pod A")
+	}
+	if retrieved.Username != "alice" || retrieved.Role != "admin" {
+		t.Fatalf("expected alice/admin on Pod B, got %s/%s", retrieved.Username, retrieved.Role)
+	}
+	if retrieved.CSRF != sess.CSRF {
+		t.Fatalf("expected matching CSRF token across pods")
+	}
+
+	// Pod B touches the session
+	if !storePodB.Touch(sess.ID) {
+		t.Fatal("expected Pod B to successfully touch session")
+	}
+
+	// Pod B deletes the session
+	storePodB.Delete(sess.ID)
+
+	// Pod A verifies the session is immediately gone
+	if _, ok := storePodA.Get(sess.ID); ok {
+		t.Fatal("expected session deleted by Pod B to be gone on Pod A")
+	}
+}
+
+func TestRedisStore_Expiry(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Skip("skipping: miniredis could not start")
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	s := NewRedisStore(rdb, 50*time.Millisecond)
+
+	sess, err := s.Create("bob", "viewer")
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	if _, ok := s.Get(sess.ID); !ok {
+		t.Fatal("expected session to exist immediately")
+	}
+
+	mr.FastForward(100 * time.Millisecond)
+
+	if _, ok := s.Get(sess.ID); ok {
+		t.Fatal("expected session to expire after TTL")
 	}
 }

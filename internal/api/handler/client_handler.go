@@ -128,7 +128,7 @@ func (h *JobHandler) UpdateClientConfig(w http.ResponseWriter, r *http.Request) 
 		middleware.SendJSONError(w, http.StatusBadRequest, "BAD_REQUEST", "tenant_id is required")
 		return
 	}
-	
+
 	var req struct {
 		ConcurrencyLimit int `json:"concurrency_limit"`
 	}

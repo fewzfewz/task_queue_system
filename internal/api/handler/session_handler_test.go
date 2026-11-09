@@ -17,7 +17,7 @@ import (
 	"task-queue-system/internal/storage/models"
 )
 
-func newSessionHandler(rateLimit int) (*JobHandler, *session.Store) {
+func newSessionHandler(rateLimit int) (*JobHandler, session.Store) {
 	store := models.NewInMemoryStore()
 	q := &mockQueue{}
 	svc := service.New(q, store, slog.Default(), 0)

@@ -18,9 +18,9 @@ import (
 // mockStore is a minimal Store that only implements RegisterClient / VerifyClient.
 type mockStore struct {
 	LogAuditActionFunc func(ctx context.Context, log *models.AuditLog) error
-	ListAuditLogsFunc func(ctx context.Context, limit, offset int) ([]*models.AuditLog, error)
-	models.Store // embed to satisfy the interface for unused methods
-	clients      map[string]string
+	ListAuditLogsFunc  func(ctx context.Context, limit, offset int) ([]*models.AuditLog, error)
+	models.Store       // embed to satisfy the interface for unused methods
+	clients            map[string]string
 }
 
 func newMockStore(clients map[string]string) *mockStore {
@@ -57,8 +57,8 @@ func TestRequireAuth_APIKey(t *testing.T) {
 	sessions := session.NewStore(time.Hour)
 
 	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := RoleFromContext(r.Context()); got != RoleAdmin {
-			t.Errorf("expected role admin, got %q", got)
+		if got := RoleFromContext(r.Context()); got != RoleTenantClient {
+			t.Errorf("expected role tenant_client, got %q", got)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -143,8 +143,8 @@ func TestRequireAuth_APIKeyQueryParam_SSE(t *testing.T) {
 		if tenantID != "tenant-a" {
 			t.Errorf("expected tenant tenant-a, got %q", tenantID)
 		}
-		if got := RoleFromContext(r.Context()); got != RoleAdmin {
-			t.Errorf("expected role admin, got %q", got)
+		if got := RoleFromContext(r.Context()); got != RoleTenantClient {
+			t.Errorf("expected role tenant_client, got %q", got)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -196,6 +196,30 @@ func TestRequireAuth_RejectsExpiredSession(t *testing.T) {
 	}
 }
 
+func TestRequireAuth_MasterAPIKey(t *testing.T) {
+	store := newMockStore(map[string]string{})
+	cfg := &config.Config{ApiKey: "master-super-secret-key"}
+	sessions := session.NewStore(time.Hour)
+
+	h := RequireAuth(cfg, sessions, store)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := RoleFromContext(r.Context()); got != RoleAdmin {
+			t.Errorf("expected role admin for master key, got %q", got)
+		}
+		if got := TenantIDFromContext(r.Context()); got != "operator" {
+			t.Errorf("expected tenant operator for master key, got %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/jobs", nil)
+	req.Header.Set("X-API-Key", "master-super-secret-key")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200 for master API key, got %d", rec.Code)
+	}
+}
+
 func TestRequireRole(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -203,12 +227,68 @@ func TestRequireRole(t *testing.T) {
 	})
 	h := RequireRole(RoleAdmin)(inner)
 
-	ctx := context.WithValue(context.Background(), ContextKeyRole, RoleViewer)
-	req := httptest.NewRequest("POST", "/jobs", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("viewer on admin route: expected 403, got %d", rec.Code)
+	// Viewer is rejected on admin route
+	ctxViewer := context.WithValue(context.Background(), ContextKeyRole, RoleViewer)
+	reqViewer := httptest.NewRequest("POST", "/api/v1/operator/queue/email/pause", nil).WithContext(ctxViewer)
+	recViewer := httptest.NewRecorder()
+	h.ServeHTTP(recViewer, reqViewer)
+	if recViewer.Code != http.StatusForbidden {
+		t.Errorf("viewer on admin route: expected 403, got %d", recViewer.Code)
+	}
+
+	// Tenant client is rejected on admin route (privilege escalation prevention)
+	ctxTenant := context.WithValue(context.Background(), ContextKeyRole, RoleTenantClient)
+	reqTenant := httptest.NewRequest("POST", "/api/v1/operator/queue/email/pause", nil).WithContext(ctxTenant)
+	recTenant := httptest.NewRecorder()
+	h.ServeHTTP(recTenant, reqTenant)
+	if recTenant.Code != http.StatusForbidden {
+		t.Errorf("tenant client on admin route: expected 403, got %d", recTenant.Code)
+	}
+
+	// Admin is allowed on admin route
+	ctxAdmin := context.WithValue(context.Background(), ContextKeyRole, RoleAdmin)
+	reqAdmin := httptest.NewRequest("POST", "/api/v1/operator/queue/email/pause", nil).WithContext(ctxAdmin)
+	recAdmin := httptest.NewRecorder()
+	h.ServeHTTP(recAdmin, reqAdmin)
+	if recAdmin.Code != http.StatusOK {
+		t.Errorf("admin on admin route: expected 200, got %d", recAdmin.Code)
+	}
+}
+
+func TestRequireAnyRole(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := RequireAnyRole(RoleAdmin, RoleTenantClient)(inner)
+
+	// Admin allowed
+	reqAdmin := httptest.NewRequest("POST", "/jobs", nil).WithContext(
+		context.WithValue(context.Background(), ContextKeyRole, RoleAdmin),
+	)
+	recAdmin := httptest.NewRecorder()
+	h.ServeHTTP(recAdmin, reqAdmin)
+	if recAdmin.Code != http.StatusOK {
+		t.Errorf("expected 200 for admin, got %d", recAdmin.Code)
+	}
+
+	// TenantClient allowed
+	reqTenant := httptest.NewRequest("POST", "/jobs", nil).WithContext(
+		context.WithValue(context.Background(), ContextKeyRole, RoleTenantClient),
+	)
+	recTenant := httptest.NewRecorder()
+	h.ServeHTTP(recTenant, reqTenant)
+	if recTenant.Code != http.StatusOK {
+		t.Errorf("expected 200 for tenant client, got %d", recTenant.Code)
+	}
+
+	// Viewer forbidden
+	reqViewer := httptest.NewRequest("POST", "/jobs", nil).WithContext(
+		context.WithValue(context.Background(), ContextKeyRole, RoleViewer),
+	)
+	recViewer := httptest.NewRecorder()
+	h.ServeHTTP(recViewer, reqViewer)
+	if recViewer.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for viewer, got %d", recViewer.Code)
 	}
 }
 
@@ -261,5 +341,15 @@ func TestCSRFProtect_SkipsAPIKey(t *testing.T) {
 	}
 }
 
-func (m *mockStore) LogAuditAction(ctx context.Context, log *models.AuditLog) error { if m.LogAuditActionFunc != nil { return m.LogAuditActionFunc(ctx, log) }; return nil }
-func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*models.AuditLog, error) { if m.ListAuditLogsFunc != nil { return m.ListAuditLogsFunc(ctx, limit, offset) }; return nil, nil }
+func (m *mockStore) LogAuditAction(ctx context.Context, log *models.AuditLog) error {
+	if m.LogAuditActionFunc != nil {
+		return m.LogAuditActionFunc(ctx, log)
+	}
+	return nil
+}
+func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*models.AuditLog, error) {
+	if m.ListAuditLogsFunc != nil {
+		return m.ListAuditLogsFunc(ctx, limit, offset)
+	}
+	return nil, nil
+}

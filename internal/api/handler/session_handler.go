@@ -71,10 +71,10 @@ func (h *JobHandler) Login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, sessionCookie(sess.ID, sess.ExpiresAt))
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"username":    sess.Username,
-		"role":        sess.Role,
-		"csrf_token":  sess.CSRF,
-		"expires_at":  sess.ExpiresAt.UTC().Format(time.RFC3339),
+		"username":   sess.Username,
+		"role":       sess.Role,
+		"csrf_token": sess.CSRF,
+		"expires_at": sess.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -201,4 +201,3 @@ func sessionCookie(id string, expires time.Time) *http.Cookie {
 	}
 	return c
 }
-

@@ -76,7 +76,9 @@ func (m *mockQueue) IsAllowed(ctx context.Context, tenantID string) (bool, error
 	}
 	return true, nil
 }
-func (m *mockQueue) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error { return nil }
+func (m *mockQueue) UpdateTenantConfig(ctx context.Context, tenantID string, concurrencyLimit int) error {
+	return nil
+}
 func (m *mockQueue) RateLimitStatus(ctx context.Context) ([]queue.TenantRateStatus, error) {
 	if m.rateLimitStatusFunc != nil {
 		return m.rateLimitStatusFunc(ctx)
@@ -195,6 +197,67 @@ func TestCreateJob_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestCreateJob_PayloadTooLarge(t *testing.T) {
+	h, _ := newTestHandler()
+
+	// Create an oversized payload of 1.5MB (> 1MB limit)
+	largeString := string(bytes.Repeat([]byte("A"), 1500000))
+	body := map[string]interface{}{
+		"type":    "email",
+		"payload": map[string]interface{}{"data": largeString},
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("failed to marshal large body: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/jobs", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.CreateJob(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 Request Entity Too Large, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var errResp dto.ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Code != "PAYLOAD_TOO_LARGE" {
+		t.Fatalf("expected error code PAYLOAD_TOO_LARGE, got %s", errResp.Code)
+	}
+}
+
+func TestCreateJobBatch_PayloadTooLarge(t *testing.T) {
+	h, _ := newTestHandler()
+
+	largeString := string(bytes.Repeat([]byte("B"), 1500000))
+	body := map[string]interface{}{
+		"jobs": []map[string]interface{}{
+			{
+				"type":    "email",
+				"payload": map[string]interface{}{"data": largeString},
+			},
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("failed to marshal large body: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/jobs/batch", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.CreateJobBatch(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 Request Entity Too Large, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateJob_MissingType(t *testing.T) {
 	h, _ := newTestHandler()
 
@@ -296,7 +359,9 @@ func TestGetJobStatus_TenantFilter(t *testing.T) {
 
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	store.Save(context.Background(), job)
-	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
+	if job.Status == "failed" {
+		store.MoveToDLQ(context.Background(), job.ID, "test")
+	}
 
 	req := httptest.NewRequest("GET", "/jobs/"+job.ID, nil)
 	req.SetPathValue("id", job.ID)
@@ -317,7 +382,9 @@ func TestListFailedJobs(t *testing.T) {
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusFailed
 	store.Save(context.Background(), job)
-	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
+	if job.Status == "failed" {
+		store.MoveToDLQ(context.Background(), job.ID, "test")
+	}
 
 	req := httptest.NewRequest("GET", "/api/v1/dlq?tenant_id=tenant-a", nil)
 	w := httptest.NewRecorder()
@@ -344,7 +411,9 @@ func TestBulkPurgeDLQ_Success(t *testing.T) {
 	job := jobs.NewJob("email", nil, nil, jobs.PriorityMedium, 3, zeroTime, "", 60, 1, "tenant-a")
 	job.Status = jobs.StatusFailed
 	store.Save(context.Background(), job)
-	if job.Status == "failed" { store.MoveToDLQ(context.Background(), job.ID, "test") }
+	if job.Status == "failed" {
+		store.MoveToDLQ(context.Background(), job.ID, "test")
+	}
 
 	req := httptest.NewRequest("DELETE", "/api/v1/dlq?older_than=2026-12-31T23:59:59Z", nil)
 	w := httptest.NewRecorder()
@@ -375,40 +444,40 @@ func TestBulkPurgeDLQ_MissingTimestamp(t *testing.T) {
 
 func TestSSEEventMatchesTenant(t *testing.T) {
 	tests := []struct {
-		name       string
-		msg        string
-		tenantID   string
-		wantMatch  bool
+		name      string
+		msg       string
+		tenantID  string
+		wantMatch bool
 	}{
 		{
-			name:       "matching tenant",
-			msg:        "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"tenant-a\"}\n\n",
-			tenantID:   "tenant-a",
-			wantMatch:  true,
+			name:      "matching tenant",
+			msg:       "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"tenant-a\"}\n\n",
+			tenantID:  "tenant-a",
+			wantMatch: true,
 		},
 		{
-			name:       "non-matching tenant",
-			msg:        "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"tenant-b\"}\n\n",
-			tenantID:   "tenant-a",
-			wantMatch:  false,
+			name:      "non-matching tenant",
+			msg:       "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"tenant-b\"}\n\n",
+			tenantID:  "tenant-a",
+			wantMatch: false,
 		},
 		{
-			name:       "empty tenant in event matches nothing",
-			msg:        "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"\"}\n\n",
-			tenantID:   "tenant-a",
-			wantMatch:  false,
+			name:      "empty tenant in event matches nothing",
+			msg:       "data: {\"kind\":\"job\",\"job_id\":\"123\",\"status\":\"completed\",\"type\":\"email\",\"tenant_id\":\"\"}\n\n",
+			tenantID:  "tenant-a",
+			wantMatch: false,
 		},
 		{
-			name:       "malformed message is delivered (lenient)",
-			msg:        `not valid json`,
-			tenantID:   "tenant-a",
-			wantMatch:  true,
+			name:      "malformed message is delivered (lenient)",
+			msg:       `not valid json`,
+			tenantID:  "tenant-a",
+			wantMatch: true,
 		},
 		{
-			name:       "rate_limit event with matching tenant",
-			msg:        "data: {\"kind\":\"rate_limit\",\"type\":\"rate_limit\",\"status\":\"rejected\",\"tenant_id\":\"tenant-a\"}\n\n",
-			tenantID:   "tenant-a",
-			wantMatch:  true,
+			name:      "rate_limit event with matching tenant",
+			msg:       "data: {\"kind\":\"rate_limit\",\"type\":\"rate_limit\",\"status\":\"rejected\",\"tenant_id\":\"tenant-a\"}\n\n",
+			tenantID:  "tenant-a",
+			wantMatch: true,
 		},
 	}
 
@@ -422,21 +491,26 @@ func TestSSEEventMatchesTenant(t *testing.T) {
 	}
 }
 
-
-
 func (m *mockQueue) ReconcileDeferredJobs(ctx context.Context) (int, error) { return 0, nil }
 
 func (m *mockQueue) PublishCancellation(ctx context.Context, jobID string) error { return nil }
-func (m *mockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) { ch := make(chan string); return ch, nil }
+func (m *mockQueue) SubscribeCancellations(ctx context.Context) (<-chan string, error) {
+	ch := make(chan string)
+	return ch, nil
+}
 
 // Panic Button mocks
-func (m *mockQueue) PauseJobType(ctx context.Context, jobType string) error { return nil }
+func (m *mockQueue) PauseJobType(ctx context.Context, jobType string) error  { return nil }
 func (m *mockQueue) ResumeJobType(ctx context.Context, jobType string) error { return nil }
-func (m *mockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) { return false, nil }
+func (m *mockQueue) IsJobTypePaused(ctx context.Context, jobType string) (bool, error) {
+	return false, nil
+}
 func (m *mockQueue) GetPausedJobTypes(ctx context.Context) ([]string, error) { return nil, nil }
 
 func (m *mockQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, error) {
-	if max <= 0 { max = 1 }
+	if max <= 0 {
+		max = 1
+	}
 	job, err := m.Dequeue(ctx)
 	if err != nil || job == nil {
 		return nil, err

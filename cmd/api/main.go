@@ -17,16 +17,16 @@ import (
 
 	_ "task-queue-system/docs"
 
-
 	"task-queue-system/internal/api/routes"
+	"task-queue-system/internal/api/session"
 	"task-queue-system/internal/config"
-	"task-queue-system/internal/redisutil"
 	"task-queue-system/internal/health"
+	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/logger"
 	redisqueue "task-queue-system/internal/queue/redis"
+	"task-queue-system/internal/redisutil"
 	"task-queue-system/internal/storage"
 	"task-queue-system/internal/tracing"
-	"task-queue-system/internal/jobtypes"
 	"task-queue-system/internal/webhooks"
 )
 
@@ -81,7 +81,8 @@ func run() error {
 	}
 
 	// ── 5. Setup HTTP Server & Routes ─────────────────────────────────────────
-	router := routes.NewRouter(q, store, log, cfg, webhooks.NewWebhookStore(redisClient), jobtypes.NewStore(redisClient))
+	sessionStore := session.NewRedisStore(redisClient, time.Duration(cfg.SessionTTLSeconds)*time.Second)
+	router := routes.NewRouter(q, store, log, cfg, webhooks.NewWebhookStore(redisClient), jobtypes.NewStore(redisClient), sessionStore)
 	checker := health.NewChecker("api", health.AdaptRedis(redisClient))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", checker.Live)

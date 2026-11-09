@@ -37,11 +37,11 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			metrics.APIRequestTotal.Inc()
 
 			rw := &responseWriter{w, http.StatusOK}
-			
+
 			next.ServeHTTP(rw, r)
-			
+
 			duration := time.Since(start)
-			
+
 			logger.Info("http request",
 				"method", r.Method,
 				"path", r.URL.Path,

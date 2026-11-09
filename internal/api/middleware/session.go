@@ -51,7 +51,7 @@ func (c *apiKeyCache) set(hash, tenantID string) {
 // RequireAuth authenticates a request either with a dynamic per-tenant X-API-Key header
 // (machine clients, verified against the DB) or a valid session cookie (the operator UI).
 // It injects the auth type, role, and tenant_id into the request context.
-func RequireAuth(cfg *config.Config, sessions *session.Store, store models.Store) func(http.Handler) http.Handler {
+func RequireAuth(cfg *config.Config, sessions session.Store, store models.Store) func(http.Handler) http.Handler {
 	cache := newAPIKeyCache()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,8 +93,9 @@ func RequireAuth(cfg *config.Config, sessions *session.Store, store models.Store
 					cache.set(hashHex, tenantID)
 				}
 
+				// Verified tenant machine clients receive RoleTenantClient (NOT RoleAdmin)
 				ctx = context.WithValue(ctx, ContextKeyAuthType, AuthTypeAPIKey)
-				ctx = context.WithValue(ctx, ContextKeyRole, RoleAdmin)
+				ctx = context.WithValue(ctx, ContextKeyRole, RoleTenantClient)
 				ctx = context.WithValue(ctx, ContextKeyTenantID, tenantID)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -115,18 +116,27 @@ func RequireAuth(cfg *config.Config, sessions *session.Store, store models.Store
 	}
 }
 
+// RequireAnyRole rejects requests whose authenticated role does not match any of the allowed roles.
+// It must run behind RequireAuth.
+func RequireAnyRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			currentRole := RoleFromContext(r.Context())
+			for _, allowed := range roles {
+				if currentRole == allowed {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			sendJSONError(w, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
+		})
+	}
+}
+
 // RequireRole rejects requests whose authenticated role does not match the
 // required role. It must run behind RequireAuth.
 func RequireRole(role string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if RoleFromContext(r.Context()) != role {
-				sendJSONError(w, http.StatusForbidden, "FORBIDDEN", "insufficient permissions")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
+	return RequireAnyRole(role)
 }
 
 // CSRFProtect requires a valid X-CSRF-Token header on state-changing requests

@@ -31,26 +31,46 @@ import (
 
 // JobHandler holds the dependencies for the job-related HTTP handlers.
 type JobHandler struct {
-	service            *service.JobService
-	webhookStore       *webhooks.WebhookStore
-	jobTypeStore       *jobtypes.Store
-	sseBroker          *sse.Broker
-	logger             *slog.Logger
-	apiKey             string
-	adminUsername      string
-	adminPassword      string
-	readonlyUsername   string
-	readonlyPassword   string
-	sessions           *session.Store
-	loginLimiter       *session.LoginLimiter
-	registerLimiter    *session.LoginLimiter
-	workerAddr         string
-	sseCheckInterval   time.Duration
+	service          *service.JobService
+	webhookStore     *webhooks.WebhookStore
+	jobTypeStore     *jobtypes.Store
+	sseBroker        *sse.Broker
+	logger           *slog.Logger
+	apiKey           string
+	adminUsername    string
+	adminPassword    string
+	readonlyUsername string
+	readonlyPassword string
+	sessions         session.Store
+	loginLimiter     *session.LoginLimiter
+	registerLimiter  *session.LoginLimiter
+	workerAddr       string
+	sseCheckInterval time.Duration
+}
+
+// maxRequestBodyBytes defines the default 1MB payload ingestion limit to prevent DoS.
+const maxRequestBodyBytes = 1 << 20 // 1 MB (1048576 bytes)
+
+func (h *JobHandler) readJSON(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	defer r.Body.Close()
+
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(dst); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, apperr.CodePayloadTooLarge, "request body exceeds 1MB limit")
+			return err
+		}
+		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body: "+err.Error())
+		return err
+	}
+	return nil
 }
 
 // New creates a JobHandler. The session store backs the operator UI login; the
 // worker address is used to proxy circuit-breaker access through the API.
-func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string, sessions *session.Store, workerAddr string, loginRateLimit, registerRateLimit int) *JobHandler {
+func New(svc *service.JobService, logger *slog.Logger, apiKey, adminUsername, adminPassword string, sessions session.Store, workerAddr string, loginRateLimit, registerRateLimit int) *JobHandler {
 	return &JobHandler{
 		service:          svc,
 		sseBroker:        sse.NewBroker(logger.With("component", "sse")),
@@ -103,11 +123,9 @@ func (h *JobHandler) SetJobTypeStore(jts *jobtypes.Store) {
 func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	// ── Parse ─────────────────────────────────────────────────────────────────
 	var req dto.CreateJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body: "+err.Error())
+	if err := h.readJSON(w, r, &req); err != nil {
 		return
 	}
-	defer r.Body.Close()
 
 	// ── Validate ──────────────────────────────────────────────────────────────
 	if err := req.Validate(); err != nil {
@@ -139,9 +157,9 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("job created", 
-		"job_id", job.ID, 
-		"job_type", job.Type, 
+	h.logger.Info("job created",
+		"job_id", job.ID,
+		"job_type", job.Type,
 		"correlation_id", job.CorrelationID,
 	)
 	h.writeJSON(w, http.StatusCreated, dto.FromJob(job))
@@ -161,11 +179,9 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 // @Router       /jobs/batch [post]
 func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 	var req dto.BatchJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON body: "+err.Error())
+	if err := h.readJSON(w, r, &req); err != nil {
 		return
 	}
-	defer r.Body.Close()
 
 	if err := req.Validate(); err != nil {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, err.Error())
@@ -179,7 +195,7 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 		Processed: len(req.Jobs),
 	}
 
-	var batchReqs []struct{
+	var batchReqs []struct {
 		Type             string
 		Payload          map[string]interface{}
 		Labels           map[string]string
@@ -216,7 +232,7 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		batchReqs = append(batchReqs, struct{
+		batchReqs = append(batchReqs, struct {
 			Type             string
 			Payload          map[string]interface{}
 			Labels           map[string]string
@@ -259,7 +275,9 @@ func ptr[T any](v T) *T { return &v }
 //
 // @Summary      List/search jobs
 // @Description  Returns a paginated, filtered list of jobs. Supports filtering by status, type,
-//               tenant, label key/value, and creation time range.
+//
+//	tenant, label key/value, and creation time range.
+//
 // @Tags         jobs
 // @Produce      json
 // @Param        status        query  string  false  "Filter by status (pending, processing, completed, failed)"
@@ -275,10 +293,10 @@ func ptr[T any](v T) *T { return &v }
 // @Router       /jobs [get]
 func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	filter := models.JobFilter{
-		TenantID: r.URL.Query().Get("tenant_id"),
-		Status:   r.URL.Query().Get("status"),
-		Type:     r.URL.Query().Get("type"),
-		LabelKey: r.URL.Query().Get("label_key"),
+		TenantID:   r.URL.Query().Get("tenant_id"),
+		Status:     r.URL.Query().Get("status"),
+		Type:       r.URL.Query().Get("type"),
+		LabelKey:   r.URL.Query().Get("label_key"),
 		LabelValue: r.URL.Query().Get("label_value"),
 	}
 
@@ -307,7 +325,9 @@ func (h *JobHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page <= 0 { page = 1 }
+	if page <= 0 {
+		page = 1
+	}
 
 	filter.Limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	if filter.Limit <= 0 {
@@ -540,9 +560,9 @@ func (h *JobHandler) GetJobDeps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"job":         dto.FromJob(job),
-		"depends_on":  deps,
-		"dependents":  dependents,
+		"job":        dto.FromJob(job),
+		"depends_on": deps,
+		"dependents": dependents,
 	})
 }
 
@@ -559,8 +579,6 @@ func (h *JobHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
 	// Standard Prometheus metrics format.
 	promhttp.Handler().ServeHTTP(w, r)
 }
-
-
 
 // GetWorkers handles GET /workers.
 //
@@ -991,6 +1009,8 @@ func (h *JobHandler) writeAppError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case apperr.CodeConflict:
 		status = http.StatusConflict
+	case apperr.CodePayloadTooLarge:
+		status = http.StatusRequestEntityTooLarge
 	case apperr.CodeInternal:
 		status = http.StatusInternalServerError
 	}
@@ -1017,9 +1037,13 @@ func (h *JobHandler) ListFailedJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	jobType := r.URL.Query().Get("queue")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 { limit = 20 }
+	if limit <= 0 {
+		limit = 20
+	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-	if page <= 0 { page = 1 }
+	if page <= 0 {
+		page = 1
+	}
 	offset := (page - 1) * limit
 
 	jobs, err := h.service.ListFailedJobs(r.Context(), tenantID, jobType, limit, offset)
@@ -1186,11 +1210,11 @@ func (h *JobHandler) CreateJobType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Handler     string `json:"handler"`
-		PayloadHint string `json:"payload_hint"`
-		ConcurrencyLimit int `json:"concurrency_limit"`
+		Name             string `json:"name"`
+		Description      string `json:"description"`
+		Handler          string `json:"handler"`
+		PayloadHint      string `json:"payload_hint"`
+		ConcurrencyLimit int    `json:"concurrency_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, apperr.CodeInvalidArgument, "invalid JSON: "+err.Error())
@@ -1228,7 +1252,7 @@ func (h *JobHandler) UpdateJobType(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	var req struct {
-		ConcurrencyLimit int `json:"concurrency_limit"`
+		ConcurrencyLimit int  `json:"concurrency_limit"`
 		Paused           bool `json:"paused"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1253,7 +1277,7 @@ func (h *JobHandler) auditLog(ctx context.Context, action, targetType, targetID,
 	} else if tid := middleware.TenantIDFromContext(ctx); tid != "" {
 		actor = "tenant:" + tid
 	}
-	
+
 	log := &models.AuditLog{
 		ID:         uuid.New().String(),
 		Timestamp:  time.Now().UTC(),
