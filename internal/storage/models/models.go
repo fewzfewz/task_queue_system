@@ -3,6 +3,7 @@
 package models
 
 import (
+	"container/heap"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1202,38 +1203,117 @@ func (s *RedisStore) MoveToDLQ(ctx context.Context, jobID string, reason string)
 	return nil
 }
 
+type dlqJobHeap []*jobs.Job
+
+func (h dlqJobHeap) Len() int { return len(h) }
+func (h dlqJobHeap) Less(i, j int) bool {
+	if h[i].CreatedAt.Equal(h[j].CreatedAt) {
+		return h[i].ID < h[j].ID
+	}
+	return h[i].CreatedAt.Before(h[j].CreatedAt) // oldest at root
+}
+func (h dlqJobHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *dlqJobHeap) Push(x interface{}) {
+	*h = append(*h, x.(*jobs.Job))
+}
+
+func (h *dlqJobHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+type dlqFilterFields struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	TenantID  string    `json:"tenant_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func (s *RedisStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
-	vals, err := s.client.HVals(ctx, dlqStoreKey).Result()
-	if err != nil {
-		return nil, fmt.Errorf("redis_store: ListDLQ failed: %w", err)
+	targetCount := limit + offset
+	h := &dlqJobHeap{}
+	heap.Init(h)
+
+	var filteredUnlimited []*jobs.Job
+	var cursor uint64
+
+	for {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		items, nextCursor, err := s.client.HScan(ctx, dlqStoreKey, cursor, "", 250).Result()
+		if err != nil {
+			return nil, fmt.Errorf("redis_store: ListDLQ failed: %w", err)
+		}
+
+		for i := 0; i < len(items); i += 2 {
+			val := items[i+1]
+			var ff dlqFilterFields
+			if err := json.Unmarshal([]byte(val), &ff); err != nil {
+				continue
+			}
+
+			if (tenantID == "" || ff.TenantID == tenantID) && (jobType == "" || ff.Type == jobType) {
+				if limit <= 0 {
+					var j jobs.Job
+					if err := json.Unmarshal([]byte(val), &j); err == nil {
+						filteredUnlimited = append(filteredUnlimited, &j)
+					}
+					continue
+				}
+
+				if h.Len() < targetCount {
+					var j jobs.Job
+					if err := json.Unmarshal([]byte(val), &j); err == nil {
+						heap.Push(h, &j)
+					}
+				} else if ff.CreatedAt.After((*h)[0].CreatedAt) ||
+					(ff.CreatedAt.Equal((*h)[0].CreatedAt) && ff.ID > (*h)[0].ID) {
+					var j jobs.Job
+					if err := json.Unmarshal([]byte(val), &j); err == nil {
+						(*h)[0] = &j
+						heap.Fix(h, 0)
+					}
+				}
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
 	}
 
-	var filtered []*jobs.Job
-	for _, val := range vals {
-		var j jobs.Job
-		if err := json.Unmarshal([]byte(val), &j); err != nil {
-			continue
-		}
-		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) {
-			copy := j
-			filtered = append(filtered, &copy)
-		}
+	var candidates []*jobs.Job
+	if limit <= 0 {
+		candidates = filteredUnlimited
+	} else {
+		candidates = *h
 	}
 
 	// Sort newest-first by CreatedAt to match PostgreSQL: ORDER BY created_at DESC
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].CreatedAt.Equal(candidates[j].CreatedAt) {
+			return candidates[i].ID > candidates[j].ID
+		}
+		return candidates[i].CreatedAt.After(candidates[j].CreatedAt)
 	})
 
-	if offset >= len(filtered) {
+	if offset >= len(candidates) {
 		return []*jobs.Job{}, nil
 	}
-	filtered = filtered[offset:]
-	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[:limit]
+	candidates = candidates[offset:]
+	if limit > 0 && len(candidates) > limit {
+		candidates = candidates[:limit]
 	}
 
-	return filtered, nil
+	return candidates, nil
 }
 
 func (s *RedisStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
@@ -1241,50 +1321,99 @@ func (s *RedisStore) CountDLQ(ctx context.Context, tenantID, jobType string) (in
 		return s.client.HLen(ctx, dlqStoreKey).Result()
 	}
 
-	vals, err := s.client.HVals(ctx, dlqStoreKey).Result()
-	if err != nil {
-		return 0, fmt.Errorf("redis_store: CountDLQ failed: %w", err)
+	var count int64
+	var cursor uint64
+
+	for {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+
+		items, nextCursor, err := s.client.HScan(ctx, dlqStoreKey, cursor, "", 250).Result()
+		if err != nil {
+			return 0, fmt.Errorf("redis_store: CountDLQ failed: %w", err)
+		}
+
+		for i := 0; i < len(items); i += 2 {
+			val := items[i+1]
+			var ff dlqFilterFields
+			if err := json.Unmarshal([]byte(val), &ff); err != nil {
+				continue
+			}
+			if (tenantID == "" || ff.TenantID == tenantID) && (jobType == "" || ff.Type == jobType) {
+				count++
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
 	}
 
-	var count int64
-	for _, val := range vals {
-		var j jobs.Job
-		if err := json.Unmarshal([]byte(val), &j); err != nil {
-			continue
-		}
-		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) {
-			count++
-		}
-	}
 	return count, nil
 }
 
 func (s *RedisStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
-	vals, err := s.client.HVals(ctx, dlqStoreKey).Result()
-	if err != nil {
-		return 0, fmt.Errorf("redis_store: DeleteDLQBefore failed: %w", err)
-	}
+	var totalDeleted int64
+	var cursor uint64
+	var batch []string
 
-	var toDelete []string
-	for _, val := range vals {
-		var j jobs.Job
-		if err := json.Unmarshal([]byte(val), &j); err != nil {
-			continue
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
 		}
-		if (tenantID == "" || j.TenantID == tenantID) && (jobType == "" || j.Type == jobType) && j.UpdatedAt.Before(before) {
-			toDelete = append(toDelete, j.ID)
+		n, err := s.client.HDel(ctx, dlqStoreKey, batch...).Result()
+		if err != nil {
+			return fmt.Errorf("redis_store: HDel in DeleteDLQBefore failed: %w", err)
+		}
+		totalDeleted += n
+		batch = batch[:0]
+		return nil
+	}
+
+	for {
+		if ctx.Err() != nil {
+			return totalDeleted, ctx.Err()
+		}
+
+		items, nextCursor, err := s.client.HScan(ctx, dlqStoreKey, cursor, "", 250).Result()
+		if err != nil {
+			return 0, fmt.Errorf("redis_store: DeleteDLQBefore failed: %w", err)
+		}
+
+		for i := 0; i < len(items); i += 2 {
+			id := items[i]
+			val := items[i+1]
+
+			var ff dlqFilterFields
+			if err := json.Unmarshal([]byte(val), &ff); err != nil {
+				continue
+			}
+
+			if (tenantID == "" || ff.TenantID == tenantID) &&
+				(jobType == "" || ff.Type == jobType) &&
+				ff.UpdatedAt.Before(before) {
+				batch = append(batch, id)
+				if len(batch) >= 250 {
+					if err := flush(); err != nil {
+						return totalDeleted, err
+					}
+				}
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
 		}
 	}
 
-	if len(toDelete) == 0 {
-		return 0, nil
+	if err := flush(); err != nil {
+		return totalDeleted, err
 	}
 
-	deleted, err := s.client.HDel(ctx, dlqStoreKey, toDelete...).Result()
-	if err != nil {
-		return 0, fmt.Errorf("redis_store: HDel in DeleteDLQBefore failed: %w", err)
-	}
-	return deleted, nil
+	return totalDeleted, nil
 }
 
 func (s *RedisStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {

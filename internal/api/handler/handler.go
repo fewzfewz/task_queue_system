@@ -134,7 +134,11 @@ func (h *JobHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctxTenant := middleware.TenantIDFromContext(r.Context())
-	if req.TenantID == "" && middleware.IsClientTenant(ctxTenant) {
+	if middleware.IsClientTenant(ctxTenant) {
+		if req.TenantID != "" && req.TenantID != ctxTenant {
+			h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access denied for tenant")
+			return
+		}
 		req.TenantID = ctxTenant
 	}
 
@@ -189,6 +193,14 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctxTenant := middleware.TenantIDFromContext(r.Context())
+	if middleware.IsClientTenant(ctxTenant) {
+		for _, jr := range req.Jobs {
+			if jr.TenantID != "" && jr.TenantID != ctxTenant {
+				h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access denied for tenant")
+				return
+			}
+		}
+	}
 
 	res := dto.BatchJobResponse{
 		Total:     len(req.Jobs),
@@ -217,7 +229,7 @@ func (h *JobHandler) CreateJobBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, jr := range req.Jobs {
-		if jr.TenantID == "" && middleware.IsClientTenant(ctxTenant) {
+		if middleware.IsClientTenant(ctxTenant) {
 			jr.TenantID = ctxTenant
 		}
 		var webhookConfig *jobs.WebhookConfig
@@ -630,6 +642,10 @@ func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID := middleware.TenantIDFromContext(r.Context())
 	if middleware.IsClientTenant(tenantID) {
+		if req.TenantID != "" && req.TenantID != tenantID {
+			h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access denied for tenant")
+			return
+		}
 		// Client API keys always register webhooks for their own tenant.
 	} else if req.TenantID != "" {
 		tenantID = req.TenantID
@@ -652,8 +668,12 @@ func (h *JobHandler) RegisterWebhook(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {array}   object
 // @Router       /api/v1/webhooks [get]
 func (h *JobHandler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
-	tenantID, _ := r.Context().Value(middleware.ContextKeyTenantID).(string)
-	list, err := h.webhookStore.List(r.Context(), tenantID)
+	ctxTenant := middleware.TenantIDFromContext(r.Context())
+	filterTenant := ctxTenant
+	if !middleware.IsClientTenant(ctxTenant) {
+		filterTenant = r.URL.Query().Get("tenant_id")
+	}
+	list, err := h.webhookStore.List(r.Context(), filterTenant)
 	if err != nil {
 		h.writeAppError(w, err)
 		return
@@ -673,9 +693,8 @@ func (h *JobHandler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 // @Router       /api/v1/webhooks/{id} [get]
 func (h *JobHandler) GetWebhook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	wh, err := h.webhookStore.GetByID(r.Context(), id)
-	if err != nil {
-		h.writeError(w, http.StatusNotFound, apperr.CodeNotFound, "webhook not found")
+	wh, ok := h.loadWebhookForTenant(w, r, id)
+	if !ok {
 		return
 	}
 	h.writeJSON(w, http.StatusOK, wh)
@@ -694,9 +713,8 @@ func (h *JobHandler) GetWebhook(w http.ResponseWriter, r *http.Request) {
 // @Router       /api/v1/webhooks/{id}/deliveries [get]
 func (h *JobHandler) GetWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	wh, err := h.webhookStore.GetByID(r.Context(), id)
-	if err != nil {
-		h.writeError(w, http.StatusNotFound, apperr.CodeNotFound, "webhook not found")
+	wh, ok := h.loadWebhookForTenant(w, r, id)
+	if !ok {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -728,6 +746,9 @@ func (h *JobHandler) GetWebhookDeliveries(w http.ResponseWriter, r *http.Request
 // @Router       /api/v1/webhooks/{id} [put]
 func (h *JobHandler) UpdateWebhook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := h.loadWebhookForTenant(w, r, id); !ok {
+		return
+	}
 	var req struct {
 		URL    string   `json:"url"`
 		Secret string   `json:"secret"`
@@ -757,6 +778,9 @@ func (h *JobHandler) UpdateWebhook(w http.ResponseWriter, r *http.Request) {
 // @Router       /api/v1/webhooks/{id} [delete]
 func (h *JobHandler) DeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := h.loadWebhookForTenant(w, r, id); !ok {
+		return
+	}
 	if err := h.webhookStore.Delete(r.Context(), id); err != nil {
 		h.writeAppError(w, err)
 		return

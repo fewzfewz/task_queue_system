@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"task-queue-system/internal/api/middleware"
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/jobtypes"
@@ -110,11 +111,25 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct {
 	if len(requests) == 0 {
 		return nil, nil
 	}
+	ctxTenant := middleware.TenantIDFromContext(ctx)
+	if middleware.IsClientTenant(ctxTenant) {
+		for _, req := range requests {
+			if req.TenantID != "" && req.TenantID != ctxTenant {
+				return nil, apperr.NewForbidden("access denied for tenant")
+			}
+		}
+	}
+
 	var batch []*jobs.Job
 	now := time.Now().UTC()
 	var toEnqueue []*jobs.Job
 
 	for _, req := range requests {
+		jobTenant := req.TenantID
+		if middleware.IsClientTenant(ctxTenant) {
+			jobTenant = ctxTenant
+		}
+
 		maxR := req.MaxRetries
 		if maxR == 0 {
 			maxR = 3
@@ -137,7 +152,7 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct {
 			CorrelationID: req.CorrelationID,
 			Timeout:       req.Timeout,
 			Version:       req.Version,
-			TenantID:      req.TenantID,
+			TenantID:      jobTenant,
 			Webhook:       req.Webhook,
 			DedupKey:      req.DedupKey,
 			Dependencies:  req.Dependencies,
@@ -181,6 +196,14 @@ func (s *JobService) CreateJobBatch(ctx context.Context, requests []struct {
 }
 
 func (s *JobService) CreateJob(ctx context.Context, jobType string, payload map[string]interface{}, labels map[string]string, priority string, maxRetries int, backoffAlgorithm, backoffJitter, cronExpr string, runAtStr string, correlationID string, timeout int, version int, tenantID string, webhook *jobs.WebhookConfig, dedupKey string, dependencies []string, shardKey string, ttlSeconds int) (*jobs.Job, error) {
+	ctxTenant := middleware.TenantIDFromContext(ctx)
+	if middleware.IsClientTenant(ctxTenant) {
+		if tenantID != "" && tenantID != ctxTenant {
+			return nil, apperr.NewForbidden("access denied for tenant")
+		}
+		tenantID = ctxTenant
+	}
+
 	if !s.isJobTypeAllowed(ctx, jobType) {
 		return nil, apperr.NewInvalidArgument(fmt.Sprintf("unsupported job type %q", jobType))
 	}

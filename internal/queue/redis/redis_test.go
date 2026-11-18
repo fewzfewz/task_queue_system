@@ -718,3 +718,296 @@ func TestDequeue_RespectsJobTimeout(t *testing.T) {
 		t.Fatalf("expected in_flight score around %d + 30, got %f", beforeDefault, scoreDefault)
 	}
 }
+
+func TestDequeue_AtomicCrashDurability(t *testing.T) {
+	mr, q, rdb, ctx := newTestQueue(t)
+	defer mr.Close()
+
+	job := jobs.NewJob("crash-test", map[string]interface{}{"data": "important"}, nil, jobs.PriorityHigh, 3, time.Time{}, "", 10, 1, "tenant-a")
+	if err := q.Enqueue(ctx, job); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	// Dequeue the job
+	dequeued, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue failed: %v", err)
+	}
+	if dequeued.ID != job.ID {
+		t.Fatalf("expected job %s, got %s", job.ID, dequeued.ID)
+	}
+
+	// Verify the job is immediately and atomically recorded in in_flight and payloads
+	payload, err := rdb.HGet(ctx, "task_queue:payloads", job.ID).Result()
+	if err != nil {
+		t.Fatalf("expected job payload in task_queue:payloads: %v", err)
+	}
+	if payload == "" {
+		t.Fatal("expected non-empty payload in task_queue:payloads")
+	}
+
+	score, err := rdb.ZScore(ctx, "task_queue:in_flight", job.ID).Result()
+	if err != nil {
+		t.Fatalf("expected job in task_queue:in_flight: %v", err)
+	}
+	if score <= 0 {
+		t.Fatalf("expected positive visibility score, got %f", score)
+	}
+
+	// Simulate worker crash: worker terminates without calling Ack or Fail
+	// Advance time past the visibility timeout (10 seconds)
+	savedNow := Now
+	defer func() { Now = savedNow }()
+	reclaimTime := time.Now().Add(15 * time.Second)
+	Now = func() time.Time { return reclaimTime }
+
+	reclaimed, err := q.ReclaimTimedOutJobs(ctx)
+	if err != nil {
+		t.Fatalf("ReclaimTimedOutJobs failed: %v", err)
+	}
+	if reclaimed != 1 {
+		t.Fatalf("expected 1 reclaimed job, got %d", reclaimed)
+	}
+
+	// Another worker dequeues the reclaimed job
+	secondDequeued, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("second Dequeue failed: %v", err)
+	}
+	if secondDequeued.ID != job.ID {
+		t.Fatalf("expected reclaimed job %s, got %s", job.ID, secondDequeued.ID)
+	}
+
+	// Clean up with Ack
+	if err := q.Ack(ctx, secondDequeued.ID); err != nil {
+		t.Fatalf("Ack failed: %v", err)
+	}
+}
+
+func TestDequeue_WorkerHardKillReclamation(t *testing.T) {
+	mr, q, _, ctx := newTestQueue(t)
+	defer mr.Close()
+
+	const jobCount = 5
+	originalIDs := make(map[string]bool)
+	for i := 0; i < jobCount; i++ {
+		job := jobs.NewJob("hardkill-type", map[string]interface{}{"index": i}, nil, jobs.PriorityMedium, 3, time.Time{}, "", 5, 1, "tenant-b")
+		originalIDs[job.ID] = true
+		if err := q.Enqueue(ctx, job); err != nil {
+			t.Fatalf("Enqueue #%d failed: %v", i, err)
+		}
+	}
+
+	// Workers dequeue all 5 jobs
+	for i := 0; i < jobCount; i++ {
+		j, err := q.Dequeue(ctx)
+		if err != nil {
+			t.Fatalf("Dequeue #%d failed: %v", i, err)
+		}
+		if !originalIDs[j.ID] {
+			t.Fatalf("unexpected job dequeued: %s", j.ID)
+		}
+	}
+
+	// All workers crash! Queue is currently empty.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	_, err := q.Dequeue(timeoutCtx)
+	if err == nil {
+		t.Fatal("expected timeout error when queue is empty")
+	}
+
+	// Advance time past 5s visibility timeout
+	savedNow := Now
+	defer func() { Now = savedNow }()
+	Now = func() time.Time { return time.Now().Add(10 * time.Second) }
+
+	reclaimed, err := q.ReclaimTimedOutJobs(ctx)
+	if err != nil {
+		t.Fatalf("ReclaimTimedOutJobs failed: %v", err)
+	}
+	if reclaimed != jobCount {
+		t.Fatalf("expected %d reclaimed jobs, got %d", jobCount, reclaimed)
+	}
+
+	// Surviving workers dequeue all 5 jobs and Ack them with 0 jobs lost
+	reclaimedIDs := make(map[string]bool)
+	for i := 0; i < jobCount; i++ {
+		j, err := q.Dequeue(ctx)
+		if err != nil {
+			t.Fatalf("second Dequeue #%d failed: %v", i, err)
+		}
+		reclaimedIDs[j.ID] = true
+		if err := q.Ack(ctx, j.ID); err != nil {
+			t.Fatalf("Ack failed for %s: %v", j.ID, err)
+		}
+	}
+
+	if len(reclaimedIDs) != jobCount {
+		t.Fatalf("expected %d unique jobs processed, got %d", jobCount, len(reclaimedIDs))
+	}
+}
+
+func TestDequeue_PausedJobTypeDeferred(t *testing.T) {
+	mr, q, rdb, ctx := newTestQueue(t)
+	defer mr.Close()
+
+	// Register job type as paused
+	if err := rdb.HSet(ctx, "task_queue:job_types:registered", "video-encode", `{"concurrency_limit": 0, "paused": true}`).Err(); err != nil {
+		t.Fatalf("HSet failed: %v", err)
+	}
+
+	job := jobs.NewJob("video-encode", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 30, 1, "tenant-c")
+	if err := q.Enqueue(ctx, job); err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	// Attempting dequeue should defer the job and timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer cancel()
+	_, err := q.Dequeue(timeoutCtx)
+	if err == nil {
+		t.Fatal("expected Dequeue to timeout for paused job type")
+	}
+
+	// Verify job was atomically moved to the deferred queue
+	defCount, err := rdb.LLen(ctx, "task_queue:deferred:video-encode").Result()
+	if err != nil {
+		t.Fatalf("LLen failed: %v", err)
+	}
+	if defCount != 1 {
+		t.Fatalf("expected 1 deferred job, got %d", defCount)
+	}
+
+	// Resume job type
+	if err := rdb.HSet(ctx, "task_queue:job_types:registered", "video-encode", `{"concurrency_limit": 0, "paused": false}`).Err(); err != nil {
+		t.Fatalf("HSet resume failed: %v", err)
+	}
+
+	// Reconcile deferred jobs back to active queues
+	moved, err := q.ReconcileDeferredJobs(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileDeferredJobs failed: %v", err)
+	}
+	if moved != 1 {
+		t.Fatalf("expected 1 job moved back, got %d", moved)
+	}
+
+	// Now dequeue succeeds
+	dequeued, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue failed after resume: %v", err)
+	}
+	if dequeued.ID != job.ID {
+		t.Fatalf("expected job %s, got %s", job.ID, dequeued.ID)
+	}
+	_ = q.Ack(ctx, dequeued.ID)
+}
+
+func TestDequeue_TenantConcurrencyLimitDeferred(t *testing.T) {
+	mr, q, rdb, ctx := newTestQueue(t)
+	defer mr.Close()
+
+	tenant := "tenant-limited"
+	if err := q.UpdateTenantConfig(ctx, tenant, 1); err != nil {
+		t.Fatalf("UpdateTenantConfig failed: %v", err)
+	}
+
+	job1 := jobs.NewJob("task", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 30, 1, tenant)
+	job2 := jobs.NewJob("task", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 30, 1, tenant)
+
+	if err := q.Enqueue(ctx, job1); err != nil {
+		t.Fatalf("Enqueue job1 failed: %v", err)
+	}
+	if err := q.Enqueue(ctx, job2); err != nil {
+		t.Fatalf("Enqueue job2 failed: %v", err)
+	}
+
+	// Dequeue first job -> succeeds, consuming the concurrency slot (1 of 1 active)
+	d1, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue first job failed: %v", err)
+	}
+	if d1.ID != job1.ID && d1.ID != job2.ID {
+		t.Fatalf("expected job1 or job2, got %s", d1.ID)
+	}
+
+	// Second job exceeds tenant concurrency limit -> must be deferred
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer cancel()
+	_, err = q.Dequeue(timeoutCtx)
+	if err == nil {
+		t.Fatal("expected Dequeue to timeout for second job exceeding tenant limit")
+	}
+
+	defCount, err := rdb.LLen(ctx, "task_queue:deferred_tenant:"+tenant).Result()
+	if err != nil {
+		t.Fatalf("LLen failed: %v", err)
+	}
+	if defCount != 1 {
+		t.Fatalf("expected 1 deferred job for tenant, got %d", defCount)
+	}
+
+	// Complete first job
+	if err := q.Ack(ctx, d1.ID); err != nil {
+		t.Fatalf("Ack failed: %v", err)
+	}
+
+	// Reconcile deferred tenant jobs
+	moved, err := q.ReconcileDeferredJobs(ctx)
+	if err != nil {
+		t.Fatalf("ReconcileDeferredJobs failed: %v", err)
+	}
+	if moved != 1 {
+		t.Fatalf("expected 1 job moved back, got %d", moved)
+	}
+
+	// Second job is now dequeued successfully
+	d2, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue second job failed after reconcile: %v", err)
+	}
+	expectedSecondID := job2.ID
+	if d1.ID == job2.ID {
+		expectedSecondID = job1.ID
+	}
+	if d2.ID != expectedSecondID {
+		t.Fatalf("expected remaining job %s, got %s", expectedSecondID, d2.ID)
+	}
+	_ = q.Ack(ctx, d2.ID)
+}
+
+func TestDequeue_CorruptedPayloadRoutedToDLQ(t *testing.T) {
+	mr, q, rdb, ctx := newTestQueue(t)
+	defer mr.Close()
+
+	// Push malformed JSON directly into a partition list
+	corrupted := "{not valid json;;;"
+	if err := rdb.LPush(ctx, "task_queue:test:high:1", corrupted).Err(); err != nil {
+		t.Fatalf("LPush failed: %v", err)
+	}
+
+	// Push a valid job right after
+	validJob := jobs.NewJob("valid-task", nil, nil, jobs.PriorityHigh, 3, time.Time{}, "", 30, 1, "tenant-d")
+	if err := q.Enqueue(ctx, validJob); err != nil {
+		t.Fatalf("Enqueue validJob failed: %v", err)
+	}
+
+	// Dequeue should route corrupted payload to DLQ and return the valid job
+	d, err := q.Dequeue(ctx)
+	if err != nil {
+		t.Fatalf("Dequeue failed: %v", err)
+	}
+	if d.ID != validJob.ID {
+		t.Fatalf("expected validJob %s, got %s", validJob.ID, d.ID)
+	}
+
+	// Verify corrupted payload was captured in DLQ
+	dlqLen, err := rdb.LLen(ctx, "task_queue:test:dead_letter").Result()
+	if err != nil {
+		t.Fatalf("LLen dlq failed: %v", err)
+	}
+	if dlqLen != 1 {
+		t.Fatalf("expected 1 item in DLQ, got %d", dlqLen)
+	}
+}

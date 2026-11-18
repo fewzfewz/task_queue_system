@@ -32,3 +32,4 @@ CREATE INDEX IF NOT EXISTS idx_jobs_tenant_status ON jobs(tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_jobs_type_status_scheduled ON jobs(type, status, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_correlation_id ON jobs(correlation_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_worker_status ON jobs(processed_by, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_pending_metrics ON jobs(type, tenant_id) WHERE status = 'pending';

@@ -507,6 +507,88 @@ func TestRedisStore_DLQ(t *testing.T) {
 		}
 		_ = badClient.Close()
 	})
+
+	t.Run("Scalable DLQ pagination and batch deletion under volume", func(t *testing.T) {
+		now := time.Now().UTC()
+		const scaleTotal = 600
+
+		// Seed 600 jobs across tenants and types with distinct timestamps
+		for i := 0; i < scaleTotal; i++ {
+			tID := "tenant-alpha"
+			if i%2 == 1 {
+				tID = "tenant-beta"
+			}
+			jType := "email"
+			if i%3 == 0 {
+				jType = "webhook"
+			}
+			created := now.Add(time.Duration(-scaleTotal+i) * time.Second)
+			j := &jobs.Job{
+				ID:        fmt.Sprintf("scale-dlq-%04d", i),
+				Type:      jType,
+				TenantID:  tID,
+				Status:    jobs.StatusFailed,
+				CreatedAt: created,
+				UpdatedAt: created,
+			}
+			b, _ := json.Marshal(j)
+			_ = rdb.HSet(ctx, dlqStoreKey, j.ID, string(b))
+		}
+
+		// CountDLQ for tenant-alpha (i % 2 == 0: 300 jobs)
+		alphaCount, err := store.CountDLQ(ctx, "tenant-alpha", "")
+		if err != nil {
+			t.Fatalf("CountDLQ failed: %v", err)
+		}
+		if alphaCount != 300 {
+			t.Fatalf("expected 300 jobs for tenant-alpha, got %d", alphaCount)
+		}
+
+		// ListDLQ first page (limit 5, offset 0) for tenant-alpha
+		page1, err := store.ListDLQ(ctx, "tenant-alpha", "", 5, 0)
+		if err != nil {
+			t.Fatalf("ListDLQ page1 failed: %v", err)
+		}
+		if len(page1) != 5 {
+			t.Fatalf("expected 5 jobs on page1, got %d", len(page1))
+		}
+		// Newest should be scale-dlq-0598
+		if page1[0].ID != "scale-dlq-0598" {
+			t.Fatalf("expected newest job to be scale-dlq-0598, got %s", page1[0].ID)
+		}
+
+		// ListDLQ second page (limit 5, offset 5)
+		page2, err := store.ListDLQ(ctx, "tenant-alpha", "", 5, 5)
+		if err != nil {
+			t.Fatalf("ListDLQ page2 failed: %v", err)
+		}
+		if len(page2) != 5 {
+			t.Fatalf("expected 5 jobs on page2, got %d", len(page2))
+		}
+		// 5th previous even index: 598 - 10 = 588
+		if page2[0].ID != "scale-dlq-0588" {
+			t.Fatalf("expected page2[0] to be scale-dlq-0588, got %s", page2[0].ID)
+		}
+
+		// Delete before cutoff for tenant-alpha (older than 300 seconds ago: first 150 even jobs)
+		cutoff := now.Add(-300 * time.Second)
+		deleted, err := store.DeleteDLQBefore(ctx, "tenant-alpha", "", cutoff)
+		if err != nil {
+			t.Fatalf("DeleteDLQBefore failed: %v", err)
+		}
+		if deleted != 150 {
+			t.Fatalf("expected 150 jobs deleted for tenant-alpha before cutoff, got %d", deleted)
+		}
+
+		// Remaining tenant-alpha jobs should be 150
+		remAlpha, err := store.CountDLQ(ctx, "tenant-alpha", "")
+		if err != nil {
+			t.Fatalf("CountDLQ post-delete failed: %v", err)
+		}
+		if remAlpha != 150 {
+			t.Fatalf("expected 150 remaining tenant-alpha jobs, got %d", remAlpha)
+		}
+	})
 }
 
 func TestRedisStore_GetQueueLengths_Transitions(t *testing.T) {

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 
 	"log/slog"
 
+	"task-queue-system/internal/api/middleware"
 	"task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
 	"task-queue-system/internal/queue"
@@ -487,4 +489,124 @@ func (m *mockQueue) DequeueBatch(ctx context.Context, max int) ([]*jobs.Job, err
 		return nil, err
 	}
 	return []*jobs.Job{job}, nil
+}
+
+func TestJobService_CreateJob_TenantIsolation(t *testing.T) {
+	store := models.NewInMemoryStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	q := &mockQueue{}
+	svc := New(q, store, logger, 1000)
+
+	// Case 1: Tenant A context, empty tenantID parameter -> assigned tenant-a
+	ctxA := context.WithValue(context.Background(), middleware.ContextKeyTenantID, "tenant-a")
+	job1, err := svc.CreateJob(ctxA, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "", nil, "", nil, "", 0)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if job1.TenantID != "tenant-a" {
+		t.Fatalf("expected tenant-a, got %q", job1.TenantID)
+	}
+
+	// Case 2: Tenant A context, matching tenant-a parameter -> accepted
+	job2, err := svc.CreateJob(ctxA, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-a", nil, "", nil, "", 0)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	if job2.TenantID != "tenant-a" {
+		t.Fatalf("expected tenant-a, got %q", job2.TenantID)
+	}
+
+	// Case 3: Tenant A context, spoofing tenant-b -> rejected with permission denied
+	_, err = svc.CreateJob(ctxA, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-b", nil, "", nil, "", 0)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.IsCode(err, errors.CodePermissionDenied) {
+		t.Fatalf("expected CodePermissionDenied, got %v", err)
+	}
+
+	// Case 4: Operator context, submits for tenant-b -> accepted
+	ctxOp := context.WithValue(context.Background(), middleware.ContextKeyTenantID, "operator")
+	jobOp, err := svc.CreateJob(ctxOp, "email", nil, nil, "medium", 3, "", "", "", "", "", 60, 1, "tenant-b", nil, "", nil, "", 0)
+	if err != nil {
+		t.Fatalf("expected success for operator, got %v", err)
+	}
+	if jobOp.TenantID != "tenant-b" {
+		t.Fatalf("expected tenant-b, got %q", jobOp.TenantID)
+	}
+}
+
+func TestJobService_CreateJobBatch_TenantIsolation(t *testing.T) {
+	store := models.NewInMemoryStore()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	q := &mockQueue{}
+	svc := New(q, store, logger, 1000)
+
+	ctxA := context.WithValue(context.Background(), middleware.ContextKeyTenantID, "tenant-a")
+
+	// Case 1: Tenant A context, empty tenantID in batch -> all assigned tenant-a
+	batchReqs := []struct {
+		Type             string
+		Payload          map[string]interface{}
+		Labels           map[string]string
+		Priority         string
+		MaxRetries       int
+		BackoffAlgorithm string
+		BackoffJitter    string
+		CronExpr         string
+		RunAt            string
+		CorrelationID    string
+		Timeout          int
+		Version          int
+		TenantID         string
+		Webhook          *jobs.WebhookConfig
+		DedupKey         string
+		Dependencies     []string
+		ShardKey         string
+		TTLSeconds       int
+	}{
+		{Type: "email", Priority: "medium", TenantID: ""},
+		{Type: "email", Priority: "medium", TenantID: "tenant-a"},
+	}
+	jobsOut, err := svc.CreateJobBatch(ctxA, batchReqs)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+	for i, j := range jobsOut {
+		if j.TenantID != "tenant-a" {
+			t.Fatalf("batch job %d expected tenant-a, got %q", i, j.TenantID)
+		}
+	}
+
+	// Case 2: Tenant A context, one job has tenant-b -> rejected
+	batchReqsSpoof := []struct {
+		Type             string
+		Payload          map[string]interface{}
+		Labels           map[string]string
+		Priority         string
+		MaxRetries       int
+		BackoffAlgorithm string
+		BackoffJitter    string
+		CronExpr         string
+		RunAt            string
+		CorrelationID    string
+		Timeout          int
+		Version          int
+		TenantID         string
+		Webhook          *jobs.WebhookConfig
+		DedupKey         string
+		Dependencies     []string
+		ShardKey         string
+		TTLSeconds       int
+	}{
+		{Type: "email", Priority: "medium", TenantID: "tenant-a"},
+		{Type: "email", Priority: "medium", TenantID: "tenant-b"},
+	}
+	_, err = svc.CreateJobBatch(ctxA, batchReqsSpoof)
+	if err == nil {
+		t.Fatal("expected error for spoofed batch member, got nil")
+	}
+	if !errors.IsCode(err, errors.CodePermissionDenied) {
+		t.Fatalf("expected CodePermissionDenied, got %v", err)
+	}
 }

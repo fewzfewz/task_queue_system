@@ -99,6 +99,11 @@ func NewWithRetry(ctx context.Context, connStr string, maxRetries int) (*Postgre
 			continue
 		}
 
+		ensureIdxQuery := `CREATE INDEX IF NOT EXISTS idx_jobs_pending_metrics ON jobs(type, tenant_id) WHERE status = 'pending';`
+		if _, err := pool.Exec(ctx, ensureIdxQuery); err != nil {
+			slog.Default().Warn("postgres: failed to ensure idx_jobs_pending_metrics index", "error", err)
+		}
+
 		return &PostgresStore{pool: pool}, nil
 	}
 

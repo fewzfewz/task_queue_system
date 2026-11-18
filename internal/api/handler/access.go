@@ -6,6 +6,7 @@ import (
 	"task-queue-system/internal/api/middleware"
 	apperr "task-queue-system/internal/errors"
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/webhooks"
 )
 
 // checkJobTenantAccess returns false (and writes a 403) when a client API key
@@ -31,4 +32,29 @@ func (h *JobHandler) loadJobForTenant(w http.ResponseWriter, r *http.Request, jo
 		return nil, false
 	}
 	return job, true
+}
+
+// checkWebhookTenantAccess returns false (and writes a 403) when a client API key
+// tries to access a webhook belonging to another tenant. Operator sessions and the
+// static operator API key are unrestricted.
+func (h *JobHandler) checkWebhookTenantAccess(w http.ResponseWriter, r *http.Request, wh *webhooks.RegisteredWebhook) bool {
+	ctxTenant := middleware.TenantIDFromContext(r.Context())
+	if middleware.IsClientTenant(ctxTenant) && wh.TenantID != ctxTenant {
+		h.writeError(w, http.StatusForbidden, apperr.CodePermissionDenied, "access to webhook denied for tenant")
+		return false
+	}
+	return true
+}
+
+// loadWebhookForTenant fetches a webhook and enforces client tenant isolation.
+func (h *JobHandler) loadWebhookForTenant(w http.ResponseWriter, r *http.Request, id string) (*webhooks.RegisteredWebhook, bool) {
+	wh, err := h.webhookStore.GetByID(r.Context(), id)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, apperr.CodeNotFound, "webhook not found")
+		return nil, false
+	}
+	if !h.checkWebhookTenantAccess(w, r, wh) {
+		return nil, false
+	}
+	return wh, true
 }

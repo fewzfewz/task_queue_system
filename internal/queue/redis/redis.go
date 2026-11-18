@@ -123,6 +123,137 @@ var reclaimTimedOutJobsScript = redis.NewScript(`
 	return count
 `)
 
+// dequeueScript atomically pops a job from the candidate partition queues,
+// checks concurrency and pause constraints, and transitions the job to in-flight
+// tracking in Redis, completely eliminating the crash gap between pop and track.
+var dequeueScript = redis.NewScript(`
+	local now = tonumber(ARGV[1])
+	local nowRFC3339 = ARGV[2]
+	local defaultVTimeout = tonumber(ARGV[3])
+	local inFlightKey = ARGV[4]
+	local payloadsKey = ARGV[5]
+	local jobTypesKey = ARGV[6]
+	local tenantsKey = ARGV[7]
+	local pausedKey = ARGV[8]
+	local dlqKey = ARGV[9]
+
+	for _, qKey in ipairs(KEYS) do
+		while true do
+			local raw = redis.call('RPOP', qKey)
+			if not raw then
+				break
+			end
+
+			local ok, job = pcall(cjson.decode, raw)
+			if not ok or type(job) ~= 'table' then
+				-- Corrupted payload, route to dead-letter queue
+				redis.call('LPUSH', dlqKey, raw)
+			else
+				local jobType = job.type or ""
+				local tenantId = job.tenant_id or ""
+				local jobId = job.id
+
+				-- Check paused
+				local paused = false
+				if jobType ~= "" and redis.call('SISMEMBER', pausedKey, jobType) == 1 then
+					paused = true
+				end
+
+				local typeLimit = 0
+				if jobType ~= "" then
+					local typeData = redis.call('HGET', jobTypesKey, jobType)
+					if typeData then
+						local ok2, typeConf = pcall(cjson.decode, typeData)
+						if ok2 and type(typeConf) == 'table' then
+							if typeConf.paused then
+								paused = true
+							end
+							if typeConf.concurrency_limit then
+								typeLimit = tonumber(typeConf.concurrency_limit) or 0
+							end
+						end
+					end
+				end
+
+				if paused then
+					local deferredKey = "task_queue:deferred:" .. jobType
+					redis.call('LPUSH', deferredKey, raw)
+				else
+					-- Check tenant concurrency limit
+					local tenantDeferred = false
+					if tenantId ~= "" then
+						local tenantData = redis.call('HGET', tenantsKey, tenantId)
+						if tenantData then
+							local ok3, tenantConf = pcall(cjson.decode, tenantData)
+							if ok3 and type(tenantConf) == 'table' then
+								local tenantLimit = tonumber(tenantConf.concurrency_limit) or 0
+								if tenantLimit > 0 then
+									local activeTenantKey = "task_queue:active_tenant:" .. tenantId
+									redis.call('ZREMRANGEBYSCORE', activeTenantKey, "-inf", tostring(now))
+									local tenantActive = redis.call('ZCARD', activeTenantKey)
+									if tenantActive >= tenantLimit then
+										local deferredTenantKey = "task_queue:deferred_tenant:" .. tenantId
+										redis.call('LPUSH', deferredTenantKey, raw)
+										tenantDeferred = true
+									end
+								end
+							end
+						end
+					end
+
+					if not tenantDeferred then
+						-- Check job type concurrency limit
+						local typeDeferred = false
+						local activeTypeKey = "task_queue:active_type:" .. jobType
+						if typeLimit > 0 then
+							redis.call('ZREMRANGEBYSCORE', activeTypeKey, "-inf", tostring(now))
+							local typeActive = redis.call('ZCARD', activeTypeKey)
+							if typeActive >= typeLimit then
+								local deferredKey = "task_queue:deferred:" .. jobType
+								redis.call('LPUSH', deferredKey, raw)
+								typeDeferred = true
+							end
+						end
+
+						if not typeDeferred then
+							-- Transition the job to processing state
+							job.status = "processing"
+							job.updated_at = nowRFC3339
+
+							local vTimeout = defaultVTimeout
+							if job.timeout and tonumber(job.timeout) > 0 then
+								vTimeout = tonumber(job.timeout)
+							end
+							local timeoutAt = now + vTimeout
+							local expireTTL = vTimeout + 3600
+
+							local updatedRaw = cjson.encode(job)
+
+							redis.call('HSET', payloadsKey, jobId, updatedRaw)
+							redis.call('ZADD', inFlightKey, timeoutAt, jobId)
+
+							if jobType ~= "" then
+								redis.call('ZADD', activeTypeKey, timeoutAt, jobId)
+								redis.call('SET', "task_queue:job_active_key:" .. jobId, activeTypeKey, 'EX', expireTTL)
+							end
+
+							if tenantId ~= "" then
+								local activeTenantKey = "task_queue:active_tenant:" .. tenantId
+								redis.call('ZADD', activeTenantKey, timeoutAt, jobId)
+								redis.call('SET', "task_queue:job_active_tenant_key:" .. jobId, activeTenantKey, 'EX', expireTTL)
+							end
+
+							return updatedRaw
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return nil
+`)
+
 // RedisQueue is a Redis-backed implementation of the queue.Queue interface.
 // It uses a Redis list for the pending queue and a Redis hash to track
 // jobs that are currently being processed, enabling safe Ack and Fail semantics.
@@ -280,133 +411,105 @@ func (q *RedisQueue) Size(ctx context.Context) (int64, error) {
 }
 
 // Dequeue blocks until a job becomes available or the context is cancelled.
-// It pops from the right (BRPOP), checking queues in priority order.
+// It atomically pops a job from the candidate partition queues and transitions
+// it to in-flight tracking in Redis, eliminating the crash gap between pop and track.
 func (q *RedisQueue) Dequeue(ctx context.Context) (*jobs.Job, error) {
 	// Use the context deadline if set, otherwise fall back to dequeueTimeout.
 	timeout := dequeueTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		timeout = time.Until(deadline)
+		if timeout <= 0 {
+			return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
+		}
 	}
 
-	keys := q.getFairPartitionKeys()
+	deadline := time.Now().Add(timeout)
+	pollInterval := 5 * time.Millisecond
+	maxPollInterval := 50 * time.Millisecond
 
 	for {
-		result, err := q.client.BRPop(ctx, timeout, keys...).Result()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		keys := q.getFairPartitionKeys()
+		job, err := q.atomicDequeue(ctx, keys)
 		if err != nil {
-			if err == redis.Nil {
-				return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
-			}
-			return nil, fmt.Errorf("queue: BRPOP failed: %w", err)
+			return nil, err
+		}
+		if job != nil {
+			return job, nil
 		}
 
-		if len(result) < 2 {
-			return nil, fmt.Errorf("queue: unexpected BRPOP result length %d", len(result))
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("queue: dequeue timed out, no jobs available")
 		}
 
-		var job jobs.Job
-		if err := json.Unmarshal([]byte(result[1]), &job); err != nil {
-			return nil, fmt.Errorf("queue: failed to deserialise job payload: %w", err)
+		sleepDuration := pollInterval
+		if sleepDuration > remaining {
+			sleepDuration = remaining
 		}
 
-		// Check Concurrency Limit and Paused State
-		limit, paused, err := q.getJobTypeState(ctx, job.Type)
-		if err != nil {
-			return nil, fmt.Errorf("queue: failed to get state for job type %s: %w", job.Type, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(sleepDuration):
 		}
 
-		activeKey := "task_queue:active_type:" + job.Type
-
-		if paused {
-			// Overridden by pause: Push to deferred queue and continue loop
-			deferredKey := "task_queue:deferred:" + job.Type
-			if err := q.client.LPush(ctx, deferredKey, result[1]).Err(); err != nil {
-				return nil, fmt.Errorf("queue: failed to defer job %s: %w", job.ID, err)
-			}
-			continue
-		}
-
-		// Check Tenant Limits
-		tenantLimit := q.getTenantLimit(ctx, job.TenantID)
-		activeTenantKey := "task_queue:active_tenant:" + job.TenantID
-
-		if tenantLimit > 0 {
-			now := time.Now().Unix()
-			q.client.ZRemRangeByScore(ctx, activeTenantKey, "-inf", fmt.Sprintf("%d", now))
-			activeCount, err := q.client.ZCard(ctx, activeTenantKey).Result()
-			if err != nil {
-				return nil, fmt.Errorf("queue: failed to check active count for tenant %s: %w", job.TenantID, err)
-			}
-
-			if int(activeCount) >= tenantLimit {
-				deferredKey := "task_queue:deferred_tenant:" + job.TenantID
-				if err := q.client.LPush(ctx, deferredKey, result[1]).Err(); err != nil {
-					return nil, fmt.Errorf("queue: failed to defer job for tenant %s: %w", job.TenantID, err)
-				}
-				continue
+		if pollInterval < maxPollInterval {
+			pollInterval *= 2
+			if pollInterval > maxPollInterval {
+				pollInterval = maxPollInterval
 			}
 		}
-
-		if limit > 0 {
-			// Clear expired active tracking (visibility timeout)
-			now := time.Now().Unix()
-			q.client.ZRemRangeByScore(ctx, activeKey, "-inf", fmt.Sprintf("%d", now))
-
-			activeCount, err := q.client.ZCard(ctx, activeKey).Result()
-			if err != nil {
-				return nil, fmt.Errorf("queue: failed to check active count for %s: %w", job.Type, err)
-			}
-
-			if int(activeCount) >= limit {
-				// Over limit: Push to deferred queue and continue loop
-				deferredKey := "task_queue:deferred:" + job.Type
-				if err := q.client.LPush(ctx, deferredKey, result[1]).Err(); err != nil {
-					return nil, fmt.Errorf("queue: failed to defer job %s: %w", job.ID, err)
-				}
-				continue
-			}
-		}
-
-		// Transition the job to processing state.
-		job.Status = jobs.StatusProcessing
-		job.UpdatedAt = time.Now().UTC()
-
-		updated, err := json.Marshal(&job)
-		if err != nil {
-			return nil, fmt.Errorf("queue: failed to serialise processing job %s: %w", job.ID, err)
-		}
-
-		vTimeout := visibilityTimeout
-		if job.Timeout > 0 {
-			vTimeout = time.Duration(job.Timeout) * time.Second
-		}
-		timeoutAt := time.Now().Add(vTimeout).Unix()
-
-		pipe := q.client.TxPipeline()
-		pipe.HSet(ctx, "task_queue:payloads", job.ID, updated)
-		pipe.ZAdd(ctx, processingSetKey, redis.Z{
-			Score:  float64(timeoutAt),
-			Member: job.ID,
-		})
-
-		// Track active concurrency
-		pipe.ZAdd(ctx, activeKey, redis.Z{
-			Score:  float64(timeoutAt),
-			Member: job.ID,
-		})
-		pipe.Set(ctx, "task_queue:job_active_key:"+job.ID, activeKey, vTimeout+time.Hour)
-
-		pipe.ZAdd(ctx, activeTenantKey, redis.Z{
-			Score:  float64(timeoutAt),
-			Member: job.ID,
-		})
-		pipe.Set(ctx, "task_queue:job_active_tenant_key:"+job.ID, activeTenantKey, vTimeout+time.Hour)
-
-		if _, err := pipe.Exec(ctx); err != nil {
-			return nil, fmt.Errorf("queue: Dequeue tracking failed: %w", err)
-		}
-
-		return &job, nil
 	}
+}
+
+// atomicDequeue runs the atomic Lua script that pops a candidate job and records
+// it in Redis in-flight tracking within a single Redis atomic transaction.
+func (q *RedisQueue) atomicDequeue(ctx context.Context, keys []string) (*jobs.Job, error) {
+	now := Now()
+	nowUnix := now.Unix()
+	nowRFC3339 := now.UTC().Format(time.RFC3339)
+
+	defaultVTimeout := int64(visibilityTimeout.Seconds())
+	if defaultVTimeout <= 0 {
+		defaultVTimeout = 30
+	}
+
+	raw, err := dequeueScript.Run(ctx, q.client, keys,
+		nowUnix,
+		nowRFC3339,
+		defaultVTimeout,
+		processingSetKey,
+		"task_queue:payloads",
+		"task_queue:job_types:registered",
+		"task_queue:tenants:registered",
+		"task_queue:paused:jobtype",
+		q.dlqKey,
+	).Text()
+
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("queue: atomic dequeue script failed: %w", err)
+	}
+
+	if raw == "" {
+		return nil, nil
+	}
+
+	var job jobs.Job
+	if err := json.Unmarshal([]byte(raw), &job); err != nil {
+		return nil, fmt.Errorf("queue: failed to deserialise job payload: %w", err)
+	}
+
+	return &job, nil
 }
 
 // getJobTypeState fetches the concurrency limit and paused state for a job type.
