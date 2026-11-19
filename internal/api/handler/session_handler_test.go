@@ -206,6 +206,42 @@ func TestJobEventsSSE_ClosesOnSessionExpiry(t *testing.T) {
 	}
 }
 
+func TestJobEventsSSE_KeepalivePeriodic(t *testing.T) {
+	h, _ := newSessionHandler(5)
+	h.sseCheckInterval = 30 * time.Millisecond
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), middleware.ContextKeyAuthType, middleware.AuthTypeAPIKey)
+		ctx = context.WithValue(ctx, middleware.ContextKeyTenantID, "tenant-test")
+		h.JobEventsSSE(w, r.WithContext(ctx))
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer resp.Body.Close()
+
+	buf := make([]byte, 1024)
+	n, err := resp.Body.Read(buf)
+	if err != nil {
+		t.Fatalf("read initial keepalive: %v", err)
+	}
+	if !strings.Contains(string(buf[:n]), ": keepalive") {
+		t.Fatalf("expected initial keepalive, got %q", string(buf[:n]))
+	}
+
+	// Read periodic keepalive sent by ticker
+	n2, err := resp.Body.Read(buf)
+	if err != nil {
+		t.Fatalf("read periodic keepalive: %v", err)
+	}
+	if !strings.Contains(string(buf[:n2]), ": keepalive") {
+		t.Fatalf("expected periodic keepalive, got %q", string(buf[:n2]))
+	}
+}
+
 func TestCircuitBreakerProxy_ForwardsKey(t *testing.T) {
 	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-API-Key") != "test-api-key" {

@@ -30,6 +30,10 @@ func (rw *responseWriter) Flush() {
 	}
 }
 
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 // RequestLogger returns a middleware that logs every incoming HTTP request.
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

@@ -92,10 +92,10 @@ func run() error {
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%s", cfg.ServerPort),
 		Handler: mux,
-		// Sane timeouts for a production server
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		// Sane timeouts for a production server with streaming/SSE endpoints.
+		// A blanket WriteTimeout would prematurely abort long-lived SSE connections.
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// ── 6. Start Server with Graceful Shutdown ────────────────────────────────

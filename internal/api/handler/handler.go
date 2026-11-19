@@ -855,6 +855,9 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -881,23 +884,27 @@ func (h *JobHandler) JobEventsSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var tickerC <-chan time.Time
-	if authType == middleware.AuthTypeSession && sess != nil {
-		ticker := time.NewTicker(h.sseCheckInterval)
-		defer ticker.Stop()
-		tickerC = ticker.C
+	checkInterval := h.sseCheckInterval
+	if checkInterval <= 0 {
+		checkInterval = 15 * time.Second
 	}
+	keepaliveTicker := time.NewTicker(checkInterval)
+	defer keepaliveTicker.Stop()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-tickerC:
-			if _, ok := h.sessions.Get(sess.ID); !ok {
-				fmt.Fprintf(w, "event: session_expired\n\ndata: {\"error\":\"session expired\"}\n\n")
-				flusher.Flush()
-				return
+		case <-keepaliveTicker.C:
+			if authType == middleware.AuthTypeSession && sess != nil && h.sessions != nil {
+				if _, ok := h.sessions.Get(sess.ID); !ok {
+					fmt.Fprintf(w, "event: session_expired\n\ndata: {\"error\":\"session expired\"}\n\n")
+					flusher.Flush()
+					return
+				}
 			}
+			fmt.Fprintf(w, ": keepalive\n\n")
+			flusher.Flush()
 		case msg, ok := <-ch:
 			if !ok {
 				return
