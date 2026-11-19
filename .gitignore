@@ -26,3 +26,7 @@ Thumbs.db
 
 # Vendor
 /vendor/
+
+# Python cache
+__pycache__/
+*.pyc
