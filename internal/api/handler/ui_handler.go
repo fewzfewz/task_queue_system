@@ -1804,8 +1804,11 @@ const loginPageHTML = `<!DOCTYPE html>
     <p>Sign in to manage jobs, workers, and monitor the system</p>
     <input id="login-user" type="text" placeholder="Username" autocomplete="username" autofocus />
     <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" />
-    <button id="login-btn" onclick="login()">Sign In</button>
+    <button id="login-btn">Sign In</button>
     <div id="login-error" class="error">Invalid credentials</div>
+    <div style="margin-top:18px;text-align:center;font-size:13px;color:var(--muted)">
+      Client tenant? <a href="/client/login" style="color:var(--accent);text-decoration:none;font-weight:600">Sign in with API Key &rarr;</a>
+    </div>
   </div>
   <script>
     window.addEventListener("DOMContentLoaded", async function() {
@@ -1813,7 +1816,9 @@ const loginPageHTML = `<!DOCTYPE html>
         const res = await fetch("/api/v1/session");
         if (res.ok) {
           const data = await res.json();
-          window.location.href = (data && data.role === "viewer") ? "/" : "/ui";
+          if (data && data.authenticated) {
+            window.location.href = (data.role === "viewer") ? "/" : "/ui";
+          }
         }
       }catch(e){}
     });

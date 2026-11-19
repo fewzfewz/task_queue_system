@@ -327,6 +327,7 @@ const landingHTML = `<!DOCTYPE html>
     <a href="/features">Features</a>
     <a href="/docs">Docs</a>
     <a href="/docs/sdk">Dev SDK</a>
+    <a href="/ui">Operator UI</a>
     <a href="/client/login">Sign In</a>
     <a href="#register" class="nav-cta">Get Started</a>
   </div>
@@ -417,8 +418,30 @@ const landingHTML = `<!DOCTYPE html>
         <input id="reg-service" type="text" placeholder="Service Name (optional)" autocomplete="off">
       </div>
       <button class="btn-register" id="reg-btn" onclick="doRegister()">
-        <span id="reg-label">Create Account & Get API Key</span>
+        <span id="reg-label"><i class="fas fa-rocket"></i> Create Account & Get API Key</span>
       </button>
+      <div style="margin-top:14px;text-align:center;font-size:13px;color:var(--muted)">
+        Already have a key? <a href="/client/login" style="color:var(--accent2);font-weight:600;text-decoration:none">Sign in</a>
+      </div>
+    </div>
+
+    <!-- Key Reveal Box (shown after successful registration) -->
+    <div class="register-card key-reveal" id="key-reveal" style="display:none">
+      <div class="kr-icon"><i class="fas fa-circle-check" style="color:var(--good)"></i></div>
+      <h4>Your Account Is Ready!</h4>
+      <p>Here is your API key for tenant <strong id="reveal-tenant" style="color:var(--text)"></strong>.</p>
+      <div class="key-box">
+        <code id="key-display"></code>
+        <button onclick="copyKey()"><i class="fas fa-copy"></i> Copy</button>
+      </div>
+      <div class="key-warning">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span>Save this key securely. It cannot be displayed again after you leave this page.</span>
+      </div>
+      <div class="key-actions">
+        <a href="/client/dashboard" class="ka-dash"><i class="fas fa-gauge"></i> Go to Dashboard</a>
+        <a href="/docs" class="ka-docs"><i class="fas fa-book"></i> Read Docs</a>
+      </div>
     </div>
   </section>
 </div>
@@ -461,27 +484,32 @@ const landingHTML = `<!DOCTYPE html>
         const msg = data.error || data.message || ('Registration failed (HTTP ' + res.status + ')');
         showAlert(alert, 'error', msg);
         btn.disabled = false;
-        label.innerHTML = '<i class="fas fa-rocket"></i> &nbsp;Create Account & Get API Key';
+        label.innerHTML = '<i class="fas fa-rocket"></i> Create Account & Get API Key';
         return;
       }
 
       // Success
       generatedKey = data.api_key || '';
-      document.getElementById('key-display').textContent = generatedKey;
+      const keyDisp = document.getElementById('key-display');
+      if (keyDisp) keyDisp.textContent = generatedKey;
+      const revTenant = document.getElementById('reveal-tenant');
+      if (revTenant) revTenant.textContent = data.tenant_id || tenant;
+
       // Store key so dashboard auto-logs in
       if (generatedKey) {
         localStorage.setItem('tq_api_key', generatedKey);
         if (data.tenant_id) localStorage.setItem('tq_tenant_id', data.tenant_id);
       }
 
-      document.getElementById('register-form-wrap').style.display = 'none';
+      const formWrap = document.getElementById('register-form-wrap');
+      if (formWrap) formWrap.style.display = 'none';
       const reveal = document.getElementById('key-reveal');
-      reveal.style.display = 'block';
+      if (reveal) reveal.style.display = 'block';
 
     } catch(e) {
       showAlert(alert, 'error', 'Network error — check your connection and try again.');
       btn.disabled = false;
-      label.innerHTML = '<i class="fas fa-rocket"></i> &nbsp;Create Account & Get API Key';
+      label.innerHTML = '<i class="fas fa-rocket"></i> Create Account & Get API Key';
     }
   }
 
@@ -895,6 +923,7 @@ const clientLoginHTML = `<!DOCTYPE html>
 
   <div class="divider"></div>
   <div class="link-row">No key yet? <a href="/client/register">Register your service</a></div>
+  <div class="link-row" style="margin-top:10px"><span style="color:var(--muted2);font-size:12px">Need Operator access? <a href="/login" style="color:var(--muted);text-decoration:underline">Operator Sign In &rarr;</a></span></div>
 </div>
 
 <script>
@@ -903,9 +932,15 @@ const clientLoginHTML = `<!DOCTYPE html>
     if (key) {
       try {
         const res = await fetch("/api/v1/client/me", { headers: {"X-API-Key": key} });
-        if (res.ok) { window.location.href = "/client/dashboard"; }
-        else { localStorage.removeItem("tq_api_key"); }
-      } catch(e) {}
+        if (res.ok) { 
+          window.location.href = "/client/dashboard"; 
+        } else { 
+          localStorage.removeItem("tq_api_key");
+          localStorage.removeItem("tq_tenant_id");
+        }
+      } catch(e) {
+        // Network error; don't redirect in a loop
+      }
     }
   });
 
@@ -948,10 +983,6 @@ const clientLoginHTML = `<!DOCTYPE html>
     el.innerHTML = '<i class="fas fa-circle-exclamation"></i> ' + msg;
     el.classList.remove('hidden');
   }
-
-  // Auto-redirect if key already stored
-  const stored = localStorage.getItem('tq_api_key');
-  if (stored) window.location.href = '/client/dashboard';
 
   document.getElementById('api-key').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
 </script>

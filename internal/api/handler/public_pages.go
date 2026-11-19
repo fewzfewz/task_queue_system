@@ -105,6 +105,7 @@ const sharedHeader = `<!DOCTYPE html>
     <a href="/features">Features</a>
     <a href="/docs">Docs</a>
     <a href="/docs/sdk">Dev SDK</a>
+    <a href="/ui">Operator UI</a>
     <a href="/client/login">Sign In</a>
     <a href="/#register" class="nav-cta">Get Started</a>
   </div>
