@@ -63,3 +63,46 @@ func TestSetupReturnsLogger(t *testing.T) {
 		t.Fatal("expected non-nil logger")
 	}
 }
+
+func TestMaskSensitiveAttributes(t *testing.T) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	logger := Setup()
+	logger.Info("user action",
+		"username", "alice",
+		"api_key", "secret-key-123",
+		"password", "p@ssword",
+		"token", "jwt-token-abc",
+		"authorization", "Bearer xyz",
+		"secret", "super-secret",
+	)
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	r.Close()
+
+	line := strings.TrimSpace(buf.String())
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		t.Fatalf("expected valid JSON: %v", err)
+	}
+
+	if payload["username"] != "alice" {
+		t.Fatalf("expected username='alice', got %v", payload["username"])
+	}
+
+	sensitiveFields := []string{"api_key", "password", "token", "authorization", "secret"}
+	for _, field := range sensitiveFields {
+		if payload[field] != "[REDACTED]" {
+			t.Fatalf("expected %s to be [REDACTED], got %v", field, payload[field])
+		}
+	}
+}
