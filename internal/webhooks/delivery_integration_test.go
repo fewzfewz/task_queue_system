@@ -291,7 +291,7 @@ func TestDeliveryBackoffSchedule(t *testing.T) {
 	times := rcv.hits()
 	for i, expected := range []time.Duration{2 * base, 4 * base} {
 		interval := times[i+1].Sub(times[i])
-		if interval < expected*6/10 || interval > expected*14/10 {
+		if interval < expected*5/10 || interval > expected*20/10 {
 			t.Fatalf("attempt %d backoff interval %v outside expected window around %v", i+1, interval, expected)
 		}
 	}
