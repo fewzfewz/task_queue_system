@@ -73,6 +73,12 @@ var (
 		Name: "task_queue_api_request_total",
 		Help: "Total number of API requests received.",
 	})
+
+	// DualStoreSyncErrorsTotal tracks the number of secondary store write/sync failures in DualStore.
+	DualStoreSyncErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_queue_dual_store_sync_errors_total",
+		Help: "Total number of secondary store write/sync failures in DualStore.",
+	}, []string{"operation"})
 )
 
 

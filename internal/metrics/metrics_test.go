@@ -21,6 +21,7 @@ func TestMetricsAreRegistered(t *testing.T) {
 		"task_queue_webhook_delivery_total",
 		"task_queue_webhook_delivery_failures_total",
 		"task_queue_api_request_total",
+		"task_queue_dual_store_sync_errors_total",
 	}
 
 	// Gather from the default registry to verify
@@ -63,6 +64,7 @@ func TestMetricsCanBeIncremented(t *testing.T) {
 	WorkerUtilization.Set(3)
 	APIRequestTotal.Inc()
 	CircuitBreakerOpen.WithLabelValues("email").Set(1)
+	DualStoreSyncErrorsTotal.WithLabelValues("Save").Inc()
 }
 
 func TestMetricsLabelCombinations(t *testing.T) {

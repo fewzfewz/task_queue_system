@@ -1,11 +1,17 @@
 package models
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"task-queue-system/internal/jobs"
+	"task-queue-system/internal/metrics"
 )
 
 // mockStore implements a minimal in-memory Store for testing DualStore delegation.
@@ -157,6 +163,41 @@ func (m *mockStore) VerifyClient(ctx context.Context, apiKeyHash string) (string
 }
 func (m *mockStore) ListClients(ctx context.Context) ([]*ClientRecord, error) { return nil, nil }
 func (m *mockStore) RevokeClient(ctx context.Context, tenantID string) error  { return nil }
+
+func (m *mockStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
+	m.saveCalled += len(batch)
+	for _, j := range batch {
+		m.jobs[j.ID] = j
+	}
+	return nil
+}
+func (m *mockStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
+	return 0, nil
+}
+func (m *mockStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
+	return nil
+}
+func (m *mockStore) ListDLQ(ctx context.Context, tenantID, jobType string, limit, offset int) ([]*jobs.Job, error) {
+	return nil, nil
+}
+func (m *mockStore) CountDLQ(ctx context.Context, tenantID, jobType string) (int64, error) {
+	return 0, nil
+}
+func (m *mockStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	return 0, nil
+}
+func (m *mockStore) GetFromDLQ(ctx context.Context, jobID string) (*jobs.Job, error) {
+	return nil, ErrJobNotFound
+}
+func (m *mockStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	return nil
+}
+func (m *mockStore) GetReadyDAGJobs(ctx context.Context, limit int) ([]*jobs.Job, error) {
+	return nil, nil
+}
+func (m *mockStore) GetDependentJobs(ctx context.Context, parentID string) ([]*jobs.Job, error) {
+	return nil, nil
+}
 
 func TestDualStoreSave(t *testing.T) {
 	primary := newMockStore()
@@ -327,3 +368,272 @@ func (m *mockStore) ListAuditLogs(ctx context.Context, limit, offset int) ([]*Au
 	}
 	return nil, nil
 }
+
+// failingSecondaryStore is a Store mock that fails all mutation operations.
+type failingSecondaryStore struct {
+	mockStore
+	failErr error
+}
+
+func newFailingSecondaryStore(err error) *failingSecondaryStore {
+	return &failingSecondaryStore{
+		mockStore: *newMockStore(),
+		failErr:   err,
+	}
+}
+
+func (f *failingSecondaryStore) Save(ctx context.Context, job *jobs.Job) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) SaveBatch(ctx context.Context, batch []*jobs.Job) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) UpdateStatus(ctx context.Context, id string, status jobs.JobStatus, workerID string) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) UpdateProgress(ctx context.Context, id string, progress float64) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) UpdateResult(ctx context.Context, id string, status jobs.JobStatus, workerID string, result interface{}) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) Enqueue(ctx context.Context, job *jobs.Job) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) Heartbeat(ctx context.Context, jobID string) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) Complete(ctx context.Context, jobID string, result interface{}) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) Fail(ctx context.Context, jobID string, err error, requeue bool) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) DeleteJob(ctx context.Context, jobID string) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) DeleteJobsBefore(ctx context.Context, tenantID, status, jobType string, before time.Time) (int64, error) {
+	return 0, f.failErr
+}
+func (f *failingSecondaryStore) RegisterClient(ctx context.Context, tenantID, apiKeyHash string) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) RevokeClient(ctx context.Context, tenantID string) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) ArchiveOldJobs(ctx context.Context, cutoff time.Time) (int64, error) {
+	return 0, f.failErr
+}
+func (f *failingSecondaryStore) MoveToDLQ(ctx context.Context, jobID string, reason string) error {
+	return f.failErr
+}
+func (f *failingSecondaryStore) DeleteDLQBefore(ctx context.Context, tenantID, jobType string, before time.Time) (int64, error) {
+	return 0, f.failErr
+}
+func (f *failingSecondaryStore) DeleteFromDLQ(ctx context.Context, jobID string) error {
+	return f.failErr
+}
+
+func TestDualStoreSecondaryFailureMetricsAndLogging(t *testing.T) {
+	ctx := context.Background()
+	injectedErr := errors.New("simulated redis failure")
+
+	ops := []struct {
+		name string
+		call func(d *DualStore) error
+	}{
+		{
+			name: "Save",
+			call: func(d *DualStore) error {
+				return d.Save(ctx, &jobs.Job{ID: "j-save", TenantID: "t-1"})
+			},
+		},
+		{
+			name: "SaveBatch",
+			call: func(d *DualStore) error {
+				return d.SaveBatch(ctx, []*jobs.Job{{ID: "j-batch", TenantID: "t-1"}})
+			},
+		},
+		{
+			name: "UpdateStatus",
+			call: func(d *DualStore) error {
+				return d.UpdateStatus(ctx, "j-status", jobs.StatusProcessing, "w-1")
+			},
+		},
+		{
+			name: "UpdateProgress",
+			call: func(d *DualStore) error {
+				return d.UpdateProgress(ctx, "j-prog", 45.0)
+			},
+		},
+		{
+			name: "UpdateResult",
+			call: func(d *DualStore) error {
+				return d.UpdateResult(ctx, "j-res", jobs.StatusCompleted, "w-1", "ok")
+			},
+		},
+		{
+			name: "Enqueue",
+			call: func(d *DualStore) error {
+				return d.Enqueue(ctx, &jobs.Job{ID: "j-enq", TenantID: "t-1"})
+			},
+		},
+		{
+			name: "Dequeue",
+			call: func(d *DualStore) error {
+				// Dequeue triggers secondary UpdateStatus on non-nil job
+				_, err := d.Dequeue(ctx, "t-1", "")
+				return err
+			},
+		},
+		{
+			name: "Heartbeat",
+			call: func(d *DualStore) error {
+				return d.Heartbeat(ctx, "j-hb")
+			},
+		},
+		{
+			name: "Complete",
+			call: func(d *DualStore) error {
+				return d.Complete(ctx, "j-comp", "result")
+			},
+		},
+		{
+			name: "Fail",
+			call: func(d *DualStore) error {
+				return d.Fail(ctx, "j-fail", errors.New("job err"), false)
+			},
+		},
+		{
+			name: "DeleteJob",
+			call: func(d *DualStore) error {
+				return d.DeleteJob(ctx, "j-del")
+			},
+		},
+		{
+			name: "DeleteJobsBefore",
+			call: func(d *DualStore) error {
+				_, err := d.DeleteJobsBefore(ctx, "t-1", "completed", "email", time.Now())
+				return err
+			},
+		},
+		{
+			name: "RegisterClient",
+			call: func(d *DualStore) error {
+				return d.RegisterClient(ctx, "t-1", "hash")
+			},
+		},
+		{
+			name: "RevokeClient",
+			call: func(d *DualStore) error {
+				return d.RevokeClient(ctx, "t-1")
+			},
+		},
+		{
+			name: "ArchiveOldJobs",
+			call: func(d *DualStore) error {
+				_, err := d.ArchiveOldJobs(ctx, time.Now())
+				return err
+			},
+		},
+		{
+			name: "MoveToDLQ",
+			call: func(d *DualStore) error {
+				return d.MoveToDLQ(ctx, "j-dlq", "timeout")
+			},
+		},
+		{
+			name: "DeleteDLQBefore",
+			call: func(d *DualStore) error {
+				_, err := d.DeleteDLQBefore(ctx, "t-1", "email", time.Now())
+				return err
+			},
+		},
+		{
+			name: "DeleteFromDLQ",
+			call: func(d *DualStore) error {
+				return d.DeleteFromDLQ(ctx, "j-dlq")
+			},
+		},
+	}
+
+	for _, tc := range ops {
+		t.Run(tc.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+
+			primary := newMockStore()
+			// Ensure Dequeue returns a job from primary so that secondary sync is attempted
+			if tc.name == "Dequeue" {
+				primary.jobs["j-deq"] = &jobs.Job{ID: "j-deq", TenantID: "t-1", Status: jobs.StatusPending, ProcessedBy: "w-1"}
+			}
+
+			secondary := newFailingSecondaryStore(injectedErr)
+			d := NewDualStoreWithLogger(primary, secondary, logger)
+
+			beforeCount := testutil.ToFloat64(metrics.DualStoreSyncErrorsTotal.WithLabelValues(tc.name))
+
+			// Execution must NOT return error to caller even though secondary failed
+			err := tc.call(d)
+			if err != nil {
+				t.Fatalf("expected nil error despite secondary failure, got: %v", err)
+			}
+
+			// Verify Prometheus metric incremented by 1
+			afterCount := testutil.ToFloat64(metrics.DualStoreSyncErrorsTotal.WithLabelValues(tc.name))
+			if afterCount != beforeCount+1 {
+				t.Fatalf("expected metric to increment from %v to %v, got %v", beforeCount, beforeCount+1, afterCount)
+			}
+
+			// Verify structured log output
+			logOutput := logBuf.String()
+			if !strings.Contains(logOutput, "dual_store: secondary store sync failed") {
+				t.Fatalf("expected log output to contain failure warning, got: %s", logOutput)
+			}
+			if !strings.Contains(logOutput, tc.name) {
+				t.Fatalf("expected log output to contain operation %q, got: %s", tc.name, logOutput)
+			}
+			if !strings.Contains(logOutput, injectedErr.Error()) {
+				t.Fatalf("expected log output to contain error %q, got: %s", injectedErr.Error(), logOutput)
+			}
+		})
+	}
+}
+
+func TestDualStorePrimaryFailureStopsSecondary(t *testing.T) {
+	ctx := context.Background()
+	primaryErr := errors.New("primary db down")
+
+	primary := newFailingSecondaryStore(primaryErr)
+	secondary := newMockStore()
+	d := NewDualStore(primary, secondary)
+
+	// Save should fail because primary failed
+	err := d.Save(ctx, &jobs.Job{ID: "j-1"})
+	if !errors.Is(err, primaryErr) {
+		t.Fatalf("expected primary error %v, got %v", primaryErr, err)
+	}
+	if secondary.saveCalled != 0 {
+		t.Fatalf("expected secondary.Save not called when primary fails, got %d", secondary.saveCalled)
+	}
+}
+
+func TestDualStoreNilSecondary(t *testing.T) {
+	ctx := context.Background()
+	primary := newMockStore()
+	d := NewDualStore(primary, nil)
+
+	if err := d.Save(ctx, &jobs.Job{ID: "j-nil"}); err != nil {
+		t.Fatalf("Save with nil secondary failed: %v", err)
+	}
+	if err := d.UpdateStatus(ctx, "j-nil", jobs.StatusCompleted, "w1"); err != nil {
+		t.Fatalf("UpdateStatus with nil secondary failed: %v", err)
+	}
+	if err := d.MoveToDLQ(ctx, "j-nil", "reason"); err != nil {
+		t.Fatalf("MoveToDLQ with nil secondary failed: %v", err)
+	}
+	if err := d.DeleteJob(ctx, "j-nil"); err != nil {
+		t.Fatalf("DeleteJob with nil secondary failed: %v", err)
+	}
+}
+
